@@ -18,7 +18,9 @@
  */
 
 import { FullscreenOverlayContainer, OverlayContainer } from '@angular/cdk/overlay';
+import { HttpClientModule } from '@angular/common/http';
 import { NgModule } from '@angular/core';
+import { NgChartsModule } from 'ng2-charts';
 import { AppSharedModule } from '../../shared/shared.module';
 import { RdioScannerComponent } from './rdio-scanner.component';
 import { RdioScannerService } from './rdio-scanner.service';
@@ -27,18 +29,24 @@ import { RdioScannerSupportComponent } from './main/support/support.component';
 import { RdioScannerNativeModule } from './native/native.module';
 import { RdioScannerSearchComponent } from './search/search.component';
 import { RdioScannerSelectComponent } from './select/select.component';
+import { RdioScannerPresetDialogComponent } from './select/preset-dialog.component';
+import { RdioScannerPublicStatsComponent } from './stats/public-stats.component';
 
 @NgModule({
     declarations: [
         RdioScannerComponent,
         RdioScannerMainComponent,
+        RdioScannerPublicStatsComponent,
         RdioScannerSearchComponent,
         RdioScannerSelectComponent,
+        RdioScannerPresetDialogComponent,
         RdioScannerSupportComponent,
     ],
     exports: [RdioScannerComponent],
     imports: [
         AppSharedModule,
+        HttpClientModule,
+        NgChartsModule,
         RdioScannerNativeModule,
     ],
     providers: [

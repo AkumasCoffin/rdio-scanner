@@ -36,6 +36,8 @@ import {
     RdioScannerLivefeedMap,
     RdioScannerLivefeedMode,
     RdioScannerPlaybackList,
+    RdioScannerPreset,
+    RdioScannerPresetExport,
     RdioScannerSearchOptions,
 } from './rdio-scanner';
 
@@ -74,8 +76,12 @@ export class RdioScannerService implements OnDestroy {
 
     private audioSource: AudioBufferSourceNode | undefined;
     private audioSourceStartTime = NaN;
+    private gainNode: GainNode | undefined;
 
     private beepContext: AudioContext | undefined;
+
+    private volume = 1.0;
+    private muted = false;
 
     private call: RdioScannerCall | undefined;
     private callPrevious: RdioScannerCall | undefined;
@@ -116,6 +122,7 @@ export class RdioScannerService implements OnDestroy {
         private router: Router,
         @Inject(DOCUMENT) private document: Document,
     ) {
+        this.loadVolumeSettings();
         this.bootstrapAudio();
 
         this.initializeInstanceId();
@@ -235,7 +242,7 @@ export class RdioScannerService implements OnDestroy {
 
             const gn = context.createGain();
 
-            gn.gain.value = .1;
+            gn.gain.value = .04 * RdioScannerService.MAX_GAIN;
 
             gn.connect(context.destination);
 
@@ -410,6 +417,19 @@ export class RdioScannerService implements OnDestroy {
         this.getCall(id, WebsocketCallFlag.Download);
     }
 
+    async downloadMultiple(ids: number[]): Promise<void> {
+        if (!ids || ids.length === 0) {
+            return;
+        }
+
+        // Download calls sequentially with a small delay to avoid overwhelming the server
+        for (const id of ids) {
+            this.getCall(id, WebsocketCallFlag.Download);
+            // Small delay between downloads to ensure browser handles each download
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+    }
+
     loadAndPlay(id: number): void {
         if (!id) {
             return;
@@ -460,6 +480,173 @@ export class RdioScannerService implements OnDestroy {
         this.event.emit({ pause: this.livefeedPaused });
     }
 
+    setVolume(volume: number): void {
+        this.volume = Math.max(0, Math.min(1, volume));
+        this.updateGainNode();
+        this.saveVolumeSettings();
+        this.event.emit({ volume: this.volume, muted: this.muted });
+    }
+
+    setMute(muted: boolean): void {
+        this.muted = muted;
+        this.updateGainNode();
+        this.saveVolumeSettings();
+        this.event.emit({ volume: this.volume, muted: this.muted });
+    }
+
+    getVolume(): number {
+        return this.volume;
+    }
+
+    isMuted(): boolean {
+        return this.muted;
+    }
+
+    // Maximum gain value to prevent audio from being too loud
+    // Slider at 100% = 0.35 actual gain (about 35% of max browser volume)
+    private static readonly MAX_GAIN = 0.35;
+
+    private updateGainNode(): void {
+        if (this.gainNode) {
+            this.gainNode.gain.value = this.muted ? 0 : this.volume * RdioScannerService.MAX_GAIN;
+        }
+    }
+
+    private loadVolumeSettings(): void {
+        try {
+            const stored = window?.localStorage?.getItem('rdio-scanner-volume');
+            if (stored) {
+                const settings = JSON.parse(stored);
+                if (typeof settings.volume === 'number') {
+                    this.volume = Math.max(0, Math.min(1, settings.volume));
+                }
+                if (typeof settings.muted === 'boolean') {
+                    this.muted = settings.muted;
+                }
+            }
+        } catch (e) {
+            // Ignore parse errors
+        }
+    }
+
+    private saveVolumeSettings(): void {
+        try {
+            window?.localStorage?.setItem('rdio-scanner-volume', JSON.stringify({
+                volume: this.volume,
+                muted: this.muted,
+            }));
+        } catch (e) {
+            // Ignore storage errors
+        }
+    }
+
+    // Preset management methods
+    getPresets(): RdioScannerPreset[] {
+        try {
+            const stored = window?.localStorage?.getItem('rdio-scanner-presets');
+            if (stored) {
+                return JSON.parse(stored);
+            }
+        } catch (e) {
+            // Ignore parse errors
+        }
+        return [];
+    }
+
+    savePreset(preset: RdioScannerPreset): void {
+        const presets = this.getPresets();
+        const index = presets.findIndex(p => p.id === preset.id);
+        if (index >= 0) {
+            presets[index] = preset;
+        } else {
+            presets.push(preset);
+        }
+        this.savePresets(presets);
+    }
+
+    deletePreset(presetId: string): void {
+        const presets = this.getPresets().filter(p => p.id !== presetId);
+        this.savePresets(presets);
+    }
+
+    applyPreset(preset: RdioScannerPreset, activate: boolean): void {
+        if (!this.config?.systems) {
+            return;
+        }
+
+        // Apply preset to all talkgroups
+        preset.talkgroups.forEach(({ systemId, talkgroupId }) => {
+            const system = this.config?.systems?.find(s => s.id === systemId);
+            const talkgroup = system?.talkgroups?.find(tg => tg.id === talkgroupId);
+            if (system && talkgroup) {
+                // Ensure the map structure exists
+                if (!this.livefeedMap[systemId]) {
+                    this.livefeedMap[systemId] = {};
+                }
+                if (!this.livefeedMap[systemId][talkgroupId]) {
+                    this.livefeedMap[systemId][talkgroupId] = {
+                        active: false,
+                        minutes: undefined,
+                        timer: undefined,
+                    };
+                }
+
+                const lfm = this.livefeedMap[systemId][talkgroupId];
+                lfm.active = activate;
+                if (lfm.timer) {
+                    lfm.timer.unsubscribe();
+                    lfm.timer = undefined;
+                }
+                lfm.minutes = undefined;
+            }
+        });
+
+        this.rebuildCategories();
+        this.saveLivefeedMap();
+        this.cleanQueue();
+
+        if (this.livefeedMode === RdioScannerLivefeedMode.Online) {
+            this.startLivefeed();
+        }
+
+        this.event.emit({
+            categories: this.categories,
+            map: this.livefeedMap,
+            queue: this.callQueue.length,
+        });
+    }
+
+    exportPresets(): string {
+        const presets = this.getPresets();
+        const exportData: RdioScannerPresetExport = {
+            version: '1.0',
+            presets: presets,
+            exportedAt: Date.now(),
+        };
+        return JSON.stringify(exportData, null, 2);
+    }
+
+    importPresets(json: string): { success: boolean; error?: string; count?: number } {
+        try {
+            const data: RdioScannerPresetExport = JSON.parse(json);
+            if (!data.presets || !Array.isArray(data.presets)) {
+                return { success: false, error: 'Invalid preset format' };
+            }
+            this.savePresets(data.presets);
+            return { success: true, count: data.presets.length };
+        } catch (e) {
+            return { success: false, error: e instanceof Error ? e.message : 'Parse error' };
+        }
+    }
+
+    private savePresets(presets: RdioScannerPreset[]): void {
+        try {
+            window?.localStorage?.setItem('rdio-scanner-presets', JSON.stringify(presets));
+        } catch (e) {
+            // Ignore storage errors
+        }
+    }
+
     play(call?: RdioScannerCall | undefined): void {
         if (this.livefeedPaused || this.skipDelay) {
             return;
@@ -500,7 +687,15 @@ export class RdioScannerService implements OnDestroy {
 
             this.audioSource = this.audioContext.createBufferSource();
             this.audioSource.buffer = buffer;
-            this.audioSource.connect(this.audioContext.destination);
+            
+            // Create gain node if it doesn't exist
+            if (!this.gainNode) {
+                this.gainNode = this.audioContext.createGain();
+                this.gainNode.connect(this.audioContext.destination);
+                this.updateGainNode();
+            }
+            
+            this.audioSource.connect(this.gainNode);
             this.audioSource.onended = () => this.skip({ delay: true });
             this.audioSource.start();
 
@@ -721,6 +916,12 @@ export class RdioScannerService implements OnDestroy {
 
             if (!this.beepContext) {
                 this.beepContext = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+            }
+
+            if (this.audioContext && !this.gainNode) {
+                this.gainNode = this.audioContext.createGain();
+                this.gainNode.connect(this.audioContext.destination);
+                this.updateGainNode();
             }
 
             if (this.audioContext) {

@@ -1,19 +1,28 @@
 <mat-card class="rdio-list">
     <mat-table [dataSource]="results">
         <ng-container matColumnDef="control">
-            <mat-header-cell *matHeaderCellDef></mat-header-cell>
+            <mat-header-cell *matHeaderCellDef>
+                <mat-checkbox *ngIf="downloadMode" 
+                    [checked]="areAllVisibleSelected()" 
+                    [indeterminate]="areSomeVisibleSelected()"
+                    (change)="toggleSelectAll()"
+                    color="primary">
+                </mat-checkbox>
+            </mat-header-cell>
             <mat-cell *matCellDef="let row">
-                <button *ngIf="downloadMode.checked && row" mat-icon-button (click)="download(+row.id)">
-                    <mat-icon>save_alt</mat-icon>
-                </button>
-                <button *ngIf="row && !downloadMode.checked && !paused && row?.id != call?.id && row?.id != callPending"
+                <mat-checkbox *ngIf="downloadMode && row" 
+                    [checked]="isCallSelected(+row.id)"
+                    (change)="toggleCallSelection(+row.id)"
+                    color="primary">
+                </mat-checkbox>
+                <button *ngIf="row && !downloadMode && !paused && row?.id != call?.id && row?.id != callPending"
                     mat-icon-button (click)="play(+row.id)">
                     <mat-icon>play_arrow</mat-icon>
                 </button>
-                <button *ngIf="row && !downloadMode.checked && row?.id == callPending" mat-icon-button>
+                <button *ngIf="row && !downloadMode && row?.id == callPending" mat-icon-button>
                     <mat-icon class="spin">cached</mat-icon>
                 </button>
-                <button *ngIf="row && !downloadMode.checked && row?.id == call?.id" mat-icon-button (click)="stop()">
+                <button *ngIf="row && !downloadMode && row?.id == call?.id" mat-icon-button (click)="stop()">
                     <mat-icon>stop</mat-icon>
                 </button>
             </mat-cell>
@@ -66,9 +75,21 @@
     <mat-progress-bar color="primary" [mode]="resultsPending ? 'query' : 'determinate'">
     </mat-progress-bar>
     <div class="paginator">
-        <mat-slide-toggle #downloadMode color="primary" labelPosition="before">
-            <mat-icon>save_alt</mat-icon>
-        </mat-slide-toggle>
+        <div class="download-controls">
+            <mat-slide-toggle [checked]="downloadMode" (change)="toggleDownloadMode()" color="primary" labelPosition="before">
+                <mat-icon>save_alt</mat-icon>
+            </mat-slide-toggle>
+            <button *ngIf="downloadMode && getSelectedCount() > 0" 
+                mat-raised-button 
+                color="primary" 
+                class="download-selected-btn"
+                [disabled]="isDownloading"
+                (click)="downloadSelected()">
+                <mat-icon *ngIf="!isDownloading">download</mat-icon>
+                <mat-icon *ngIf="isDownloading" class="spin">cached</mat-icon>
+                <span>Download ({{ getSelectedCount() }})</span>
+            </button>
+        </div>
         <mat-paginator [disabled]="livefeedPlayback || resultsPending" [length]="playbackList?.count"
             [hidePageSize]="true" [pageSize]="results.value.length" [showFirstLastButtons]="true"
             (page)="refreshResults()">

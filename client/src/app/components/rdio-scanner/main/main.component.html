@@ -158,6 +158,21 @@
             SELECT<br>TG
         </button>
     </div>
+    <div class="row">
+        <button class="rdio-button" (click)="showStatsPanel()">
+            STATS
+        </button>
+    </div>
+    <div class="rdio-volume-controls">
+        <button class="rdio-button-mini mute-button" (click)="toggleMute()" [ngClass]="{ muted: isMuted }">
+            <mat-icon>{{ isMuted ? 'volume_off' : 'volume_up' }}</mat-icon>
+        </button>
+        <div class="volume-slider-container">
+            <input type="range" class="volume-slider" min="0" max="100" [value]="volume * 100" 
+                   (input)="onVolumeChange($event)" (change)="onVolumeChange($event)">
+            <span class="volume-label">{{ Math.round(volume * 100) }}%</span>
+        </div>
+    </div>
 </div>
 <div class="rdio-help" *ngIf="email">
     <button mat-icon-button (click)="showHelp()">

@@ -114,6 +114,10 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
     timeFormat = 'HH:mm';
 
+    volume = 1.0;
+    isMuted = false;
+    Math = Math;
+
     get showListenersCount(): boolean {
         return this.config?.showListenersCount || false;
     }
@@ -121,6 +125,8 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     @Output() openSearchPanel = new EventEmitter<void>();
 
     @Output() openSelectPanel = new EventEmitter<void>();
+
+    @Output() openStatsPanel = new EventEmitter<void>();
 
     @Output() toggleFullscreen = new EventEmitter<void>();
 
@@ -250,6 +256,8 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
     ngOnInit(): void {
         this.syncClock();
+        this.volume = this.rdioScannerService.getVolume();
+        this.isMuted = this.rdioScannerService.isMuted();
     }
 
     pause(): void {
@@ -270,6 +278,16 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
             this.updateDimmer();
         }
+    }
+
+    toggleMute(): void {
+        this.rdioScannerService.setMute(!this.isMuted);
+    }
+
+    onVolumeChange(event: Event): void {
+        const target = event.target as HTMLInputElement;
+        const volume = parseFloat(target.value) / 100;
+        this.rdioScannerService.setVolume(volume);
     }
 
     replay(): void {
@@ -344,6 +362,17 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
             this.rdioScannerService.beep();
 
             this.openSelectPanel.emit();
+        }
+    }
+
+    showStatsPanel(): void {
+        if (this.auth) {
+            this.authFocus();
+
+        } else {
+            this.rdioScannerService.beep();
+
+            this.openStatsPanel.emit();
         }
     }
 
@@ -452,6 +481,14 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
         if ('pause' in event) {
             this.livefeedPaused = event.pause || false;
+        }
+
+        if ('volume' in event && typeof event.volume === 'number') {
+            this.volume = event.volume;
+        }
+
+        if ('muted' in event && typeof event.muted === 'boolean') {
+            this.isMuted = event.muted;
         }
 
         if ('queue' in event) {

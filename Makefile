@@ -23,8 +23,8 @@ client := $(wildcard client/*.json client/*.ts)
 server := $(wildcard server/*.go)
 
 build = @cd server && GOOS=$(1) GOARCH=$(3) go build -o ../dist/$(2)-$(3)/$(4)
-pandoc = @test -d dist/$(1)-$(2) || mkdir -p dist/$(1)-$(2) && pandoc -f markdown -o dist/$(1)-$(2)/$(3) --resource-path docs:docs/platforms $(4) docs/webapp.md docs/faq.md CHANGELOG.md
-zip = @cd dist/$(1)-$(2) && zip -q ../$(app)-$(1)-$(2)-v$(ver).zip * && cd ..
+pandoc = @test -d dist/$(1)-$(2) || mkdir -p dist/$(1)-$(2) && (command -v pandoc >/dev/null 2>&1 && pandoc -f markdown -o dist/$(1)-$(2)/$(3) --resource-path docs:docs/platforms $(4) docs/webapp.md docs/faq.md CHANGELOG.md || echo "Warning: pandoc not found, skipping PDF generation")
+zip = cd dist/$(1)-$(2) && zip -r ../$(app)-$(1)-$(2)-v$(ver).zip . -q && cd .. && echo "Created: dist/$(app)-$(1)-$(2)-v$(ver).zip"
 
 .PHONY: all clean container dist sed
 .PHONY: freebsd freebsd-amd64
@@ -79,7 +79,14 @@ dist/$(app)-linux-386-v$(ver).zip: $(server)
 dist/$(app)-linux-amd64-v$(ver).zip: $(server)
 	$(call pandoc,linux,amd64,rdio-scanner.pdf,docs/platforms/linux.md)
 	$(call build,linux,linux,amd64,$(app))
-	$(call zip,linux,amd64,$(app))
+	@if command -v zip >/dev/null 2>&1; then \
+		cd dist/linux-amd64 && zip -r ../$(app)-linux-amd64-v$(ver).zip . -q && cd ../.. && echo "Created: dist/$(app)-linux-amd64-v$(ver).zip"; \
+	else \
+		echo "Error: zip command not found. Please install zip package."; \
+		echo "On Debian/Ubuntu: apt-get install zip"; \
+		echo "On Fedora/RHEL: dnf install zip"; \
+		exit 1; \
+	fi
 
 dist/$(app)-linux-arm-v$(ver).zip: $(server)
 	$(call pandoc,linux,arm,rdio-scanner.pdf,docs/platforms/linux.md)

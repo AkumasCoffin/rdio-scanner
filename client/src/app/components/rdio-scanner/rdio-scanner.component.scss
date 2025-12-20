@@ -1,17 +1,17 @@
-$background-color: rgb(30, 30, 30);
-
 :host {
-  background-color: $background-color;
-  color: rgb(255, 255, 255);
+  background-color: var(--bg);
+  color: var(--text-main);
   display: block;
   height: 100%;
   min-width: 320px;
   position: relative;
 
   .mat-sidenav {
-    background-color: inherit;
+    background-color: var(--bg-elevated);
+    border-right: 1px solid var(--border-subtle);
     color: inherit;
     width: 100%;
+    backdrop-filter: blur(12px);
   }
 
   .mat-sidenav-container {
@@ -25,17 +25,34 @@ $background-color: rgb(30, 30, 30);
     display: flex;
     flex-direction: row;
     justify-content: center;
+    background: var(--bg);
   }
 }
 
 .panel {
-  background-color: $background-color;
+  background-color: var(--bg-elevated);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   height: 100%;
+  box-shadow: var(--shadow-soft);
 
   &.search .mat-toolbar > div {
     justify-content: flex-end;
+  }
+
+  &.stats .mat-toolbar {
+    display: flex;
+    align-items: center;
+    
+    .toolbar-title {
+      flex: 1;
+      font-size: 1.1rem;
+      font-weight: 500;
+      color: #00bcd4;
+      margin-left: 8px;
+    }
   }
 
   > div {
@@ -45,10 +62,12 @@ $background-color: rgb(30, 30, 30);
   }
 
   .mat-toolbar {
-    background-color: inherit;
-    box-shadow: 0 4px 8px rgba($background-color, 0.8);
-    color: currentColor;
+    background-color: var(--bg-elevated);
+    border-bottom: 1px solid var(--border-subtle);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    color: var(--text-main);
     z-index: 2;
+    backdrop-filter: blur(8px);
 
     > div {
       display: flex;

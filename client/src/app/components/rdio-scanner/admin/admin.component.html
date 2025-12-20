@@ -4,6 +4,15 @@
 <ng-container *ngIf="authenticated">
     <rdio-scanner-admin-todos></rdio-scanner-admin-todos>
     <mat-accordion displayMode="flat">
+        <mat-expansion-panel (afterExpand)="statsComponent.refresh()">
+            <mat-expansion-panel-header>
+                <mat-panel-title>
+                    <mat-icon>analytics</mat-icon>
+                    Statistics
+                </mat-panel-title>
+            </mat-expansion-panel-header>
+            <rdio-scanner-admin-stats #statsComponent></rdio-scanner-admin-stats>
+        </mat-expansion-panel>
         <mat-expansion-panel #configPanel (afterCollapse)="configComponent?.closeAll()">
             <mat-expansion-panel-header>
                 <mat-panel-title>

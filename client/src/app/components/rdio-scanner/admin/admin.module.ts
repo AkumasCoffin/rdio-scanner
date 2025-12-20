@@ -19,6 +19,7 @@
 
 import { HttpClientModule } from '@angular/common/http';
 import { NgModule } from '@angular/core';
+import { NgChartsModule } from 'ng2-charts';
 import { AppSharedModule } from '../../../shared/shared.module';
 import { RdioScannerAdminComponent } from './admin.component';
 import { RdioScannerAdminService } from './admin.service';
@@ -37,6 +38,7 @@ import { RdioScannerAdminUnitComponent } from './config/systems/unit/unit.compon
 import { RdioScannerAdminTagsComponent } from './config/tags/tags.component';
 import { RdioScannerAdminLoginComponent } from './login/login.component';
 import { RdioScannerAdminLogsComponent } from './logs/logs.component';
+import { RdioScannerAdminStatsComponent } from './stats/stats.component';
 import { RdioScannerAdminTodosComponent } from './todos/todos.component';
 import { RdioScannerAdminToolsComponent } from './tools/tools.component';
 import { RdioScannerAdminImportExportConfigComponent } from './tools/import-export-config/import-export-config.component';
@@ -60,6 +62,7 @@ import { RdioScannerAdminPasswordComponent } from './tools/password/password.com
         RdioScannerAdminLogsComponent,
         RdioScannerAdminOptionsComponent,
         RdioScannerAdminPasswordComponent,
+        RdioScannerAdminStatsComponent,
         RdioScannerAdminSystemComponent,
         RdioScannerAdminSystemsComponent,
         RdioScannerAdminSystemsSelectComponent,
@@ -71,7 +74,7 @@ import { RdioScannerAdminPasswordComponent } from './tools/password/password.com
     ],
     entryComponents: [RdioScannerAdminSystemsSelectComponent],
     exports: [RdioScannerAdminComponent],
-    imports: [AppSharedModule, HttpClientModule],
+    imports: [AppSharedModule, HttpClientModule, NgChartsModule],
     providers: [RdioScannerAdminService],
 })
 export class RdioScannerAdminModule { }

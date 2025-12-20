@@ -24,6 +24,7 @@ import { timer } from 'rxjs';
 import { RdioScannerEvent, RdioScannerLivefeedMode } from './rdio-scanner';
 import { RdioScannerService } from './rdio-scanner.service';
 import { RdioScannerNativeComponent } from './native/native.component';
+import { RdioScannerPublicStatsComponent } from './stats/public-stats.component';
 
 @Component({
     selector: 'rdio-scanner',
@@ -38,6 +39,10 @@ export class RdioScannerComponent implements OnDestroy, OnInit {
     @ViewChild('searchPanel') private searchPanel: MatSidenav | undefined;
 
     @ViewChild('selectPanel') private selectPanel: MatSidenav | undefined;
+
+    @ViewChild('statsPanel') private statsPanel: MatSidenav | undefined;
+
+    @ViewChild('statsComponent') public statsComponent: RdioScannerPublicStatsComponent | undefined;
 
     constructor(
         private matSnackBar: MatSnackBar,
@@ -94,6 +99,7 @@ export class RdioScannerComponent implements OnDestroy, OnInit {
 
         this.searchPanel?.close();
         this.selectPanel?.close();
+        this.statsPanel?.close();
     }
 
     toggleFullscreen(): void {

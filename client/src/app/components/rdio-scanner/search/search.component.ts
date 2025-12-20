@@ -68,6 +68,11 @@ export class RdioScannerSearchComponent implements OnDestroy {
 
     time12h = false;
 
+    // Multi-select download state
+    selectedCalls = new Set<number>();
+    downloadMode = false;
+    isDownloading = false;
+
     private config: RdioScannerConfig | undefined;
 
     private eventSubscription = this.rdioScannerService.event.subscribe((event: RdioScannerEvent) => this.eventHandler(event));
@@ -86,6 +91,80 @@ export class RdioScannerSearchComponent implements OnDestroy {
 
     download(id: number): void {
         this.rdioScannerService.loadAndDownload(id);
+    }
+
+    // Multi-select methods
+    toggleDownloadMode(): void {
+        this.downloadMode = !this.downloadMode;
+        if (!this.downloadMode) {
+            this.selectedCalls.clear();
+        }
+    }
+
+    toggleCallSelection(id: number): void {
+        if (this.selectedCalls.has(id)) {
+            this.selectedCalls.delete(id);
+        } else {
+            this.selectedCalls.add(id);
+        }
+    }
+
+    isCallSelected(id: number): boolean {
+        return this.selectedCalls.has(id);
+    }
+
+    selectAllVisible(): void {
+        const currentResults = this.results.value;
+        currentResults.forEach(call => {
+            if (call?.id) {
+                this.selectedCalls.add(call.id);
+            }
+        });
+    }
+
+    deselectAllVisible(): void {
+        const currentResults = this.results.value;
+        currentResults.forEach(call => {
+            if (call?.id) {
+                this.selectedCalls.delete(call.id);
+            }
+        });
+    }
+
+    areAllVisibleSelected(): boolean {
+        const currentResults = this.results.value.filter(call => call?.id);
+        if (currentResults.length === 0) return false;
+        return currentResults.every(call => call?.id && this.selectedCalls.has(call.id));
+    }
+
+    areSomeVisibleSelected(): boolean {
+        const currentResults = this.results.value.filter(call => call?.id);
+        const selectedCount = currentResults.filter(call => call?.id && this.selectedCalls.has(call.id)).length;
+        return selectedCount > 0 && selectedCount < currentResults.length;
+    }
+
+    toggleSelectAll(): void {
+        if (this.areAllVisibleSelected()) {
+            this.deselectAllVisible();
+        } else {
+            this.selectAllVisible();
+        }
+    }
+
+    async downloadSelected(): Promise<void> {
+        if (this.selectedCalls.size === 0 || this.isDownloading) return;
+        
+        this.isDownloading = true;
+        const ids = Array.from(this.selectedCalls);
+        
+        await this.rdioScannerService.downloadMultiple(ids);
+        
+        this.isDownloading = false;
+        this.selectedCalls.clear();
+    }
+
+    getSelectedCount(): number {
+        return this.selectedCalls.size;
     }
 
     formChangeHandler(): void {

@@ -15,6 +15,23 @@
             </div>
         </div>
     </mat-sidenav>
+    <mat-sidenav #statsPanel [autoFocus]="false" [disableClose]="true" position="start" class="stats-sidenav">
+        <div class="panel stats">
+            <mat-toolbar>
+                <div>
+                    <button mat-icon-button (click)="statsPanel.close()">
+                        <mat-icon>arrow_forward</mat-icon>
+                    </button>
+                </div>
+                <span class="toolbar-title">Statistics</span>
+            </mat-toolbar>
+            <div #scrollableStats>
+                <div>
+                    <rdio-scanner-public-stats #statsComponent></rdio-scanner-public-stats>
+                </div>
+            </div>
+        </div>
+    </mat-sidenav>
     <mat-sidenav #selectPanel [autoFocus]="false" [disableClose]="true" position="end">
         <div class="panel select">
             <mat-toolbar>
@@ -35,6 +52,7 @@
         <rdio-scanner-main
             (openSearchPanel)="scrollTop(scrollableSearch); searchPanel.open(); searchComponent.searchCalls()"
             (openSelectPanel)="scrollTop(scrollableSelect); selectPanel.open();"
+            (openStatsPanel)="scrollTop(scrollableStats); statsPanel.open(); statsComponent.refresh()"
             (toggleFullscreen)="toggleFullscreen()">
         </rdio-scanner-main>
     </mat-sidenav-content>

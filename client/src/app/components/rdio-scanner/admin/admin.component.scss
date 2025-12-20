@@ -1,15 +1,23 @@
 rdio-scanner-admin {
   .mat-expansion-panel-header {
     user-select: none;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
   }
 
   .mat-expansion-panel-header-title {
     align-items: center;
+    color: var(--text-main);
 
     .mat-icon:not(.mat-warn):first-of-type {
-      color: rgba(0, 0, 0, 0.7);
+      color: var(--accent);
       margin-right: 12px;
     }
+  }
+
+  .mat-expansion-panel-body {
+    background: var(--bg-elevated);
+    color: var(--text-main);
   }
 }
 

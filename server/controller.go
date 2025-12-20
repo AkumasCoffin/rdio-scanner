@@ -41,6 +41,7 @@ type Controller struct {
 	Logs        *Logs
 	Options     *Options
 	Scheduler   *Scheduler
+	Stats       *Stats
 	Systems     *Systems
 	Tags        *Tags
 	Clients     *Clients
@@ -74,6 +75,7 @@ func NewController(config *Config) *Controller {
 	controller.Api = NewApi(controller)
 	controller.Database = NewDatabase(config)
 	controller.Scheduler = NewScheduler(controller)
+	controller.Stats = NewStats(controller)
 
 	controller.Logs.setDaemon(config.daemon)
 	controller.Logs.setDatabase(controller.Database)

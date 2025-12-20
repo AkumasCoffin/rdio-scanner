@@ -1,3 +1,45 @@
+<div class="presets-section">
+    <div class="presets-header">
+        <h3>Presets</h3>
+        <div class="presets-actions">
+            <button class="rdio-button-mini" (click)="createPreset()" title="Create new preset">
+                <mat-icon>add</mat-icon> ADD
+            </button>
+            <button class="rdio-button-mini" (click)="exportPresets()" title="Export presets">
+                <mat-icon>download</mat-icon> EXPORT
+            </button>
+            <button class="rdio-button-mini" (click)="importPresets()" title="Import presets">
+                <mat-icon>upload</mat-icon> IMPORT
+            </button>
+        </div>
+    </div>
+    <div class="presets-list" *ngIf="presets.length > 0">
+        <div *ngFor="let preset of presets" class="preset-item">
+            <div class="preset-info">
+                <span class="preset-name">{{ preset.name }}</span>
+                <span class="preset-count">{{ preset.talkgroups.length }} talkgroup(s)</span>
+            </div>
+            <div class="preset-controls">
+                <button class="rdio-button-mini preset-on" (click)="applyPreset(preset, true)" title="Turn on all talkgroups in preset">
+                    ON
+                </button>
+                <button class="rdio-button-mini preset-off" (click)="applyPreset(preset, false)" title="Turn off all talkgroups in preset">
+                    OFF
+                </button>
+                <button class="rdio-button-mini preset-edit" (click)="editPreset(preset)" title="Edit preset">
+                    <mat-icon>edit</mat-icon>
+                </button>
+                <button class="rdio-button-mini preset-delete" (click)="deletePreset(preset)" title="Delete preset">
+                    <mat-icon>delete</mat-icon>
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="presets-empty" *ngIf="presets.length === 0">
+        No presets. Click "ADD" to create one.
+    </div>
+</div>
+
 <fieldset *ngIf="categories?.length && (categories?.length || 0) >= 2" class="fieldset">
     <div>
         <button *ngFor="let category of categories" class="rdio-button" [ngClass]="category.status"

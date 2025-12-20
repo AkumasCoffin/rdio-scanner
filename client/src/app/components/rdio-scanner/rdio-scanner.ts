@@ -118,12 +118,14 @@ export interface RdioScannerEvent {
     listeners?: number;
     livefeedMode?: RdioScannerLivefeedMode;
     map?: RdioScannerLivefeedMap;
+    muted?: boolean;
     pause?: boolean;
     playbackList?: RdioScannerPlaybackList;
     playbackPending?: number;
     queue?: number;
     time?: number;
     tooMany?: boolean;
+    volume?: number;
 }
 
 export interface RdioScannerKeypadBeeps {
@@ -191,4 +193,20 @@ export interface RdioScannerTalkgroup {
 export interface RdioScannerUnit {
     id: number;
     label: string;
+}
+
+export interface RdioScannerPreset {
+    id: string;
+    name: string;
+    talkgroups: Array<{
+        systemId: number;
+        talkgroupId: number;
+    }>;
+    createdAt: number;
+}
+
+export interface RdioScannerPresetExport {
+    version: string;
+    presets: RdioScannerPreset[];
+    exportedAt: number;
 }

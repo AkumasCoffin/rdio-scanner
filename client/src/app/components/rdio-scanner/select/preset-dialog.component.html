@@ -1,0 +1,60 @@
+<h2 mat-dialog-title>{{ data.preset ? 'Edit Preset' : 'Create Preset' }}</h2>
+
+<mat-dialog-content>
+    <form [formGroup]="form">
+        <mat-form-field appearance="outline" class="full-width">
+            <mat-label>Preset Name</mat-label>
+            <input matInput formControlName="name" placeholder="Enter preset name" required>
+            <mat-error *ngIf="form.get('name')?.hasError('required')">Name is required</mat-error>
+        </mat-form-field>
+
+        <div class="preset-selection">
+            <div class="preset-header">
+                <h3>Select Talkgroups</h3>
+                <div class="preset-actions">
+                    <button mat-button type="button" (click)="selectAll()" class="select-all-btn">
+                        Select All
+                    </button>
+                    <button mat-button type="button" (click)="deselectAll()" class="deselect-all-btn">
+                        Deselect All
+                    </button>
+                </div>
+            </div>
+
+            <div class="systems-list">
+                <div *ngFor="let system of data.systems" class="system-group">
+                    <div class="system-header">
+                        <mat-checkbox
+                            [checked]="isSystemFullySelected(system.id)"
+                            [indeterminate]="isSystemPartiallySelected(system.id)"
+                            (change)="toggleSystem(system.id, $event.checked)">
+                            <strong>{{ system.label }}</strong>
+                        </mat-checkbox>
+                    </div>
+                    <div class="talkgroups-list">
+                        <button
+                            *ngFor="let talkgroup of system.talkgroups"
+                            type="button"
+                            class="talkgroup-btn"
+                            [ngClass]="{ 'selected': isTalkgroupSelected(system.id, talkgroup.id) }"
+                            (click)="toggleTalkgroup(system.id, talkgroup.id)">
+                            {{ talkgroup.label }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="selected-count" *ngIf="selectedTalkgroups.length > 0">
+                {{ selectedTalkgroups.length }} talkgroup(s) selected
+            </div>
+        </div>
+    </form>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+    <button mat-button type="button" (click)="cancel()">Cancel</button>
+    <button mat-button type="button" color="primary" (click)="save()" [disabled]="!form.valid || selectedTalkgroups.length === 0">
+        {{ data.preset ? 'Update' : 'Create' }}
+    </button>
+</mat-dialog-actions>
+

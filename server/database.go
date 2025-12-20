@@ -77,16 +77,40 @@ func NewDatabase(config *Config) *Database {
 }
 
 func (db *Database) ParseDateTime(f any) (time.Time, error) {
+	var dateTimeStr string
+	
 	switch v := f.(type) {
 	case []uint8:
-		return time.Parse(db.DateTimeFormat, string(v))
+		dateTimeStr = string(v)
 	case string:
-		return time.Parse(db.DateTimeFormat, v)
+		dateTimeStr = v
 	case time.Time:
 		return v, nil
 	default:
 		return time.Time{}, fmt.Errorf("unknown datetime format %T", v)
 	}
+	
+	// Try multiple datetime formats (database may store in different formats)
+	formats := []string{
+		time.RFC3339,                      // "2006-01-02T15:04:05Z07:00" - ISO 8601 with timezone
+		"2006-01-02T15:04:05Z",            // ISO 8601 UTC
+		"2006-01-02T15:04:05.000Z",        // ISO 8601 UTC with milliseconds
+		"2006-01-02T15:04:05.999999Z",     // ISO 8601 UTC with microseconds
+		db.DateTimeFormat,                 // Database's expected format
+		"2006-01-02 15:04:05",             // MySQL standard format
+		"2006-01-02 15:04:05.000",         // With milliseconds, no timezone
+	}
+	
+	var lastErr error
+	for _, format := range formats {
+		if t, err := time.Parse(format, dateTimeStr); err == nil {
+			return t, nil
+		} else {
+			lastErr = err
+		}
+	}
+	
+	return time.Time{}, fmt.Errorf("unable to parse datetime '%s': %v", dateTimeStr, lastErr)
 }
 
 func (db *Database) migrate() error {

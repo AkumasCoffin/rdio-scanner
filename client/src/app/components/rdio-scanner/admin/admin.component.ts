@@ -17,8 +17,9 @@
  * ****************************************************************************
  */
 
-import { Component, OnDestroy, ViewEncapsulation } from '@angular/core';
+import { Component, OnDestroy, ViewChild, ViewEncapsulation } from '@angular/core';
 import { AdminEvent, RdioScannerAdminService, Group, Tag } from './admin.service';
+import { RdioScannerAdminStatsComponent } from './stats/stats.component';
 
 @Component({
     encapsulation: ViewEncapsulation.None,
@@ -27,6 +28,8 @@ import { AdminEvent, RdioScannerAdminService, Group, Tag } from './admin.service
     templateUrl: './admin.component.html',
 })
 export class RdioScannerAdminComponent implements OnDestroy {
+    @ViewChild('statsComponent') statsComponent!: RdioScannerAdminStatsComponent;
+
     authenticated = this.adminService.authenticated;
 
     groups: Group[] = [];

@@ -1,0 +1,166 @@
+<div class="stats-container">
+    <div *ngIf="loading && !stats" class="loading">
+        <mat-spinner diameter="40"></mat-spinner>
+        <p>Loading statistics...</p>
+    </div>
+
+    <div *ngIf="error" class="error">
+        <mat-icon>error_outline</mat-icon>
+        <p>Failed to load statistics</p>
+        <button mat-raised-button color="primary" (click)="refresh()">Retry</button>
+    </div>
+
+    <div *ngIf="stats && !error" class="stats-content">
+        <!-- Last Hour Talkgroups -->
+        <mat-card class="table-card last-hour-card" *ngIf="stats.lastHourTalkgroups?.length">
+            <div class="table-header">
+                <mat-icon>history</mat-icon>
+                <span>Last Hour (Click Talkgroup for Units)</span>
+            </div>
+            <div class="talkgroups-list last-hour-list">
+                <div *ngFor="let tg of stats.lastHourTalkgroups" 
+                     class="talkgroup-item clickable" 
+                     (click)="showTalkgroupUnits(tg)">
+                    <div class="tg-info">
+                        <span class="tg-name">{{ tg.talkgroupName || tg.talkgroupLabel }}</span>
+                        <span class="tg-system">{{ tg.systemLabel }} • {{ formatTimeAgo(tg.lastCall) }}</span>
+                    </div>
+                    <span class="call-count">{{ tg.count }}</span>
+                    <mat-icon class="chevron">chevron_right</mat-icon>
+                </div>
+            </div>
+        </mat-card>
+
+        <!-- Overview Cards -->
+        <div class="overview-cards">
+            <div *ngFor="let card of overviewCards" class="stat-card" [style.border-left-color]="card.color">
+                <div class="stat-icon" [style.background-color]="card.color">
+                    <mat-icon>{{ card.icon }}</mat-icon>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value">{{ card.value }}</span>
+                    <span class="stat-label">{{ card.label }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Activity Chart -->
+        <mat-card class="chart-card">
+            <div class="chart-container small">
+                <canvas baseChart
+                    [type]="recentChartType"
+                    [data]="recentChartData"
+                    [options]="recentChartOptions">
+                </canvas>
+            </div>
+        </mat-card>
+
+        <!-- Hourly Distribution Chart -->
+        <mat-card class="chart-card">
+            <div class="chart-container small">
+                <canvas baseChart
+                    [type]="hourlyChartType"
+                    [data]="hourlyChartData"
+                    [options]="hourlyChartOptions">
+                </canvas>
+            </div>
+        </mat-card>
+
+        <!-- Daily Volume Chart -->
+        <mat-card class="chart-card">
+            <div class="chart-container">
+                <canvas baseChart
+                    [type]="dailyChartType"
+                    [data]="dailyChartData"
+                    [options]="dailyChartOptions">
+                </canvas>
+            </div>
+        </mat-card>
+
+        <!-- Top Systems Chart -->
+        <mat-card class="chart-card" *ngIf="stats.topSystems?.length">
+            <div class="chart-container doughnut">
+                <canvas baseChart
+                    [type]="systemsChartType"
+                    [data]="systemsChartData"
+                    [options]="systemsChartOptions">
+                </canvas>
+            </div>
+        </mat-card>
+
+        <!-- Top Talkgroups List -->
+        <mat-card class="table-card" *ngIf="stats.topTalkgroups?.length">
+            <div class="table-header">
+                <mat-icon>leaderboard</mat-icon>
+                <span>Top Talkgroups (7 Days)</span>
+            </div>
+            <div class="talkgroups-list">
+                <div *ngFor="let tg of stats.topTalkgroups; let i = index" class="talkgroup-item">
+                    <span class="rank">{{ i + 1 }}</span>
+                    <div class="tg-info">
+                        <span class="tg-name">{{ tg.talkgroupName || tg.talkgroupLabel }}</span>
+                        <span class="tg-system">{{ tg.systemLabel }}</span>
+                    </div>
+                    <span class="call-count">{{ tg.count }}</span>
+                </div>
+            </div>
+        </mat-card>
+
+        <!-- Top Units List -->
+        <mat-card class="table-card" *ngIf="stats.topUnits?.length">
+            <div class="table-header">
+                <mat-icon>badge</mat-icon>
+                <span>Top Units (7 Days)</span>
+            </div>
+            <div class="talkgroups-list">
+                <div *ngFor="let unit of stats.topUnits; let i = index" class="talkgroup-item">
+                    <span class="rank">{{ i + 1 }}</span>
+                    <div class="tg-info">
+                        <span class="tg-name">{{ unit.unitLabel }}</span>
+                        <span class="tg-system">{{ unit.systemLabel }}</span>
+                    </div>
+                    <span class="call-count">{{ unit.count }}</span>
+                </div>
+            </div>
+        </mat-card>
+    </div>
+
+    <!-- Units Dialog Overlay -->
+    <div class="units-overlay" *ngIf="selectedTalkgroup" (click)="closeTalkgroupUnits()">
+        <div class="units-dialog" (click)="$event.stopPropagation()">
+            <div class="units-header">
+                <div class="header-content">
+                    <mat-icon>{{ loadingUnits ? 'hourglass_empty' : 'badge' }}</mat-icon>
+                    <div>
+                        <h3>{{ selectedTalkgroup.talkgroupName || selectedTalkgroup.talkgroupLabel }}</h3>
+                        <span class="subtitle">{{ selectedTalkgroup.systemLabel }} • Last Hour • By Recent Activity</span>
+                    </div>
+                </div>
+                <button mat-icon-button (click)="closeTalkgroupUnits()">
+                    <mat-icon>close</mat-icon>
+                </button>
+            </div>
+            <div class="units-content">
+                <div *ngIf="loadingUnits" class="loading-units">
+                    <mat-spinner diameter="40"></mat-spinner>
+                    <p>Loading units...</p>
+                </div>
+                <div *ngIf="!loadingUnits && talkgroupUnits.length === 0" class="no-units">
+                    <mat-icon>info</mat-icon>
+                    <p>No units found for this talkgroup</p>
+                </div>
+                <div *ngIf="!loadingUnits && talkgroupUnits.length > 0" class="units-list">
+                    <div *ngFor="let unit of talkgroupUnits; let i = index" class="unit-item">
+                        <span class="rank">{{ i + 1 }}</span>
+                        <div class="unit-info">
+                            <span class="unit-label">{{ unit.unitLabel }}</span>
+                            <span class="unit-last-call">Last call: {{ formatTimeAgo(unit.lastCall) }}</span>
+                        </div>
+                        <span class="call-count">{{ unit.count }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+

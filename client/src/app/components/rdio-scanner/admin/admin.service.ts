@@ -182,12 +182,85 @@ export interface Unit {
     order?: number;
 }
 
+export interface StatsOverview {
+    totalCalls: number;
+    todayCalls: number;
+    weekCalls: number;
+    monthCalls: number;
+    activeSystems: number;
+    activeTalkgroups: number;
+    avgCallsPerDay: number;
+    peakHour: number;
+}
+
+export interface StatsCallsByHour {
+    hour: number;
+    count: number;
+}
+
+export interface StatsCallsByDay {
+    date: string;
+    count: number;
+}
+
+export interface StatsTopTalkgroup {
+    systemId: number;
+    systemLabel: string;
+    talkgroupId: number;
+    talkgroupLabel: string;
+    talkgroupName: string;
+    count: number;
+}
+
+export interface StatsTopSystem {
+    systemId: number;
+    systemLabel: string;
+    count: number;
+}
+
+export interface StatsTopUnit {
+    systemId: number;
+    systemLabel: string;
+    unitId: number;
+    unitLabel: string;
+    count: number;
+}
+
+export interface StatsLastHourTalkgroup {
+    systemId: number;
+    systemLabel: string;
+    talkgroupId: number;
+    talkgroupLabel: string;
+    talkgroupName: string;
+    count: number;
+    lastCall: string;
+}
+
+export interface StatsTalkgroupUnit {
+    unitId: number;
+    unitLabel: string;
+    count: number;
+    lastCall: string;
+}
+
+export interface StatsResponse {
+    overview: StatsOverview;
+    callsByHour: StatsCallsByHour[];
+    callsByDay: StatsCallsByDay[];
+    topTalkgroups: StatsTopTalkgroup[];
+    topSystems: StatsTopSystem[];
+    topUnits: StatsTopUnit[];
+    recentActivity: StatsCallsByHour[];
+    lastHourTalkgroups: StatsLastHourTalkgroup[];
+}
+
 enum url {
     config = 'config',
     login = 'login',
     logout = 'logout',
     logs = 'logs',
     password = 'password',
+    stats = 'stats',
 }
 
 const SESSION_STORAGE_KEY = 'rdio-scanner-admin-token';
@@ -298,6 +371,38 @@ export class RdioScannerAdminService implements OnDestroy {
             const res = await firstValueFrom(this.ngHttpClient.post<LogsQuery>(
                 this.getUrl(url.logs),
                 options,
+                { headers: this.getHeaders(), responseType: 'json' },
+            ));
+
+            return res;
+
+        } catch (error) {
+            this.errorHandler(error);
+
+            return undefined;
+        }
+    }
+
+    async getStats(): Promise<StatsResponse | undefined> {
+        try {
+            const res = await firstValueFrom(this.ngHttpClient.get<StatsResponse>(
+                this.getUrl(url.stats),
+                { headers: this.getHeaders(), responseType: 'json' },
+            ));
+
+            return res;
+
+        } catch (error) {
+            this.errorHandler(error);
+
+            return undefined;
+        }
+    }
+
+    async getTalkgroupUnits(systemId: number, talkgroupId: number): Promise<StatsTalkgroupUnit[] | undefined> {
+        try {
+            const res = await firstValueFrom(this.ngHttpClient.get<StatsTalkgroupUnit[]>(
+                `${this.getUrl(url.stats)}/talkgroup-units?system=${systemId}&talkgroup=${talkgroupId}`,
                 { headers: this.getHeaders(), responseType: 'json' },
             ));
 

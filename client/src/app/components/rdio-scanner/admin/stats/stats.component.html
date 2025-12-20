@@ -1,0 +1,241 @@
+<div class="stats-container">
+    <div class="stats-header">
+        <h2>
+            <mat-icon>analytics</mat-icon>
+            Statistics Dashboard
+        </h2>
+        <button mat-icon-button (click)="refresh()" [disabled]="loading" matTooltip="Refresh Stats">
+            <mat-icon [class.spin]="loading">refresh</mat-icon>
+        </button>
+    </div>
+
+    <div *ngIf="loading && !stats" class="loading">
+        <mat-spinner diameter="50"></mat-spinner>
+        <p>Loading statistics...</p>
+    </div>
+
+    <div *ngIf="error" class="error">
+        <mat-icon>error_outline</mat-icon>
+        <p>Failed to load statistics. Please try again.</p>
+        <button mat-raised-button color="primary" (click)="refresh()">Retry</button>
+    </div>
+
+    <div *ngIf="stats && !error" class="stats-content">
+        <!-- Last Hour Talkgroups -->
+        <mat-card class="table-card last-hour-card" *ngIf="stats.lastHourTalkgroups?.length">
+            <mat-card-header>
+                <mat-card-title>
+                    <mat-icon>history</mat-icon>
+                    Last Hour Activity (Click Talkgroup for Units)
+                </mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+                <table mat-table [dataSource]="stats.lastHourTalkgroups" class="talkgroups-table clickable-table">
+                    <ng-container matColumnDef="talkgroup">
+                        <th mat-header-cell *matHeaderCellDef>Talkgroup</th>
+                        <td mat-cell *matCellDef="let tg">{{ tg.talkgroupName || tg.talkgroupLabel }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="system">
+                        <th mat-header-cell *matHeaderCellDef>System</th>
+                        <td mat-cell *matCellDef="let tg">{{ tg.systemLabel }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="lastCall">
+                        <th mat-header-cell *matHeaderCellDef>Last Call</th>
+                        <td mat-cell *matCellDef="let tg">{{ formatTimeAgo(tg.lastCall) }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="count">
+                        <th mat-header-cell *matHeaderCellDef>Calls</th>
+                        <td mat-cell *matCellDef="let tg">
+                            <span class="call-count">{{ tg.count }}</span>
+                        </td>
+                    </ng-container>
+                    <tr mat-header-row *matHeaderRowDef="['talkgroup', 'system', 'lastCall', 'count']"></tr>
+                    <tr mat-row *matRowDef="let row; columns: ['talkgroup', 'system', 'lastCall', 'count']" 
+                        (click)="showTalkgroupUnits(row)" class="clickable-row"></tr>
+                </table>
+            </mat-card-content>
+        </mat-card>
+
+        <!-- Overview Cards -->
+        <div class="overview-cards">
+            <mat-card *ngFor="let card of overviewCards" class="stat-card" [style.border-left-color]="card.color">
+                <div class="stat-icon" [style.background-color]="card.color">
+                    <mat-icon>{{ card.icon }}</mat-icon>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value">{{ card.value }}</span>
+                    <span class="stat-label">{{ card.label }}</span>
+                </div>
+            </mat-card>
+        </div>
+
+        <!-- Charts Row 1 -->
+        <div class="charts-row">
+            <mat-card class="chart-card">
+                <div class="chart-container">
+                    <canvas baseChart
+                        [type]="hourlyChartType"
+                        [data]="hourlyChartData"
+                        [options]="hourlyChartOptions">
+                    </canvas>
+                </div>
+            </mat-card>
+            <mat-card class="chart-card">
+                <div class="chart-container">
+                    <canvas baseChart
+                        [type]="recentChartType"
+                        [data]="recentChartData"
+                        [options]="recentChartOptions">
+                    </canvas>
+                </div>
+            </mat-card>
+        </div>
+
+        <!-- Charts Row 2 -->
+        <div class="charts-row">
+            <mat-card class="chart-card wide">
+                <div class="chart-container">
+                    <canvas baseChart
+                        [type]="dailyChartType"
+                        [data]="dailyChartData"
+                        [options]="dailyChartOptions">
+                    </canvas>
+                </div>
+            </mat-card>
+            <mat-card class="chart-card narrow">
+                <div class="chart-container doughnut">
+                    <canvas baseChart
+                        [type]="systemsChartType"
+                        [data]="systemsChartData"
+                        [options]="systemsChartOptions">
+                    </canvas>
+                </div>
+            </mat-card>
+        </div>
+
+        <!-- Top Talkgroups Table -->
+        <mat-card class="table-card">
+            <mat-card-header>
+                <mat-card-title>
+                    <mat-icon>leaderboard</mat-icon>
+                    Top Talkgroups (Last 7 Days)
+                </mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+                <table mat-table [dataSource]="stats.topTalkgroups" class="talkgroups-table">
+                    <ng-container matColumnDef="rank">
+                        <th mat-header-cell *matHeaderCellDef>#</th>
+                        <td mat-cell *matCellDef="let tg; let i = index">{{ i + 1 }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="system">
+                        <th mat-header-cell *matHeaderCellDef>System</th>
+                        <td mat-cell *matCellDef="let tg">{{ tg.systemLabel }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="talkgroup">
+                        <th mat-header-cell *matHeaderCellDef>Talkgroup</th>
+                        <td mat-cell *matCellDef="let tg">{{ tg.talkgroupLabel }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="name">
+                        <th mat-header-cell *matHeaderCellDef>Name</th>
+                        <td mat-cell *matCellDef="let tg">{{ tg.talkgroupName }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="count">
+                        <th mat-header-cell *matHeaderCellDef>Calls</th>
+                        <td mat-cell *matCellDef="let tg">
+                            <span class="call-count">{{ tg.count }}</span>
+                        </td>
+                    </ng-container>
+                    <tr mat-header-row *matHeaderRowDef="['rank', 'system', 'talkgroup', 'name', 'count']"></tr>
+                    <tr mat-row *matRowDef="let row; columns: ['rank', 'system', 'talkgroup', 'name', 'count']"></tr>
+                </table>
+                <div *ngIf="!stats.topTalkgroups?.length" class="no-data">
+                    <mat-icon>info</mat-icon>
+                    <span>No talkgroup data available</span>
+                </div>
+            </mat-card-content>
+        </mat-card>
+
+        <!-- Top Units Table -->
+        <mat-card class="table-card" *ngIf="stats.topUnits?.length">
+            <mat-card-header>
+                <mat-card-title>
+                    <mat-icon>badge</mat-icon>
+                    Top Units (Last 7 Days)
+                </mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+                <table mat-table [dataSource]="stats.topUnits" class="talkgroups-table">
+                    <ng-container matColumnDef="rank">
+                        <th mat-header-cell *matHeaderCellDef>#</th>
+                        <td mat-cell *matCellDef="let unit; let i = index">{{ i + 1 }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="system">
+                        <th mat-header-cell *matHeaderCellDef>System</th>
+                        <td mat-cell *matCellDef="let unit">{{ unit.systemLabel }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="unit">
+                        <th mat-header-cell *matHeaderCellDef>Unit</th>
+                        <td mat-cell *matCellDef="let unit">{{ unit.unitLabel }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="count">
+                        <th mat-header-cell *matHeaderCellDef>Calls</th>
+                        <td mat-cell *matCellDef="let unit">
+                            <span class="call-count">{{ unit.count }}</span>
+                        </td>
+                    </ng-container>
+                    <tr mat-header-row *matHeaderRowDef="['rank', 'system', 'unit', 'count']"></tr>
+                    <tr mat-row *matRowDef="let row; columns: ['rank', 'system', 'unit', 'count']"></tr>
+                </table>
+            </mat-card-content>
+        </mat-card>
+    </div>
+
+    <!-- Units Dialog Overlay -->
+    <div class="units-overlay" *ngIf="selectedTalkgroup" (click)="closeTalkgroupUnits()">
+        <mat-card class="units-dialog" (click)="$event.stopPropagation()">
+            <mat-card-header>
+                <mat-card-title>
+                    <mat-icon>{{ loadingUnits ? 'hourglass_empty' : 'badge' }}</mat-icon>
+                    {{ selectedTalkgroup.talkgroupName || selectedTalkgroup.talkgroupLabel }}
+                    <span class="subtitle">{{ selectedTalkgroup.systemLabel }} • Last Hour • Sorted by Most Recent</span>
+                </mat-card-title>
+                <button mat-icon-button (click)="closeTalkgroupUnits()">
+                    <mat-icon>close</mat-icon>
+                </button>
+            </mat-card-header>
+            <mat-card-content>
+                <div *ngIf="loadingUnits" class="loading">
+                    <mat-spinner diameter="40"></mat-spinner>
+                    <p>Loading units...</p>
+                </div>
+                <div *ngIf="!loadingUnits && talkgroupUnits.length === 0" class="no-data">
+                    <mat-icon>info</mat-icon>
+                    <p>No units found for this talkgroup</p>
+                </div>
+                <table mat-table [dataSource]="talkgroupUnits" class="units-table" *ngIf="!loadingUnits && talkgroupUnits.length > 0">
+                    <ng-container matColumnDef="rank">
+                        <th mat-header-cell *matHeaderCellDef>#</th>
+                        <td mat-cell *matCellDef="let unit; let i = index">{{ i + 1 }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="unit">
+                        <th mat-header-cell *matHeaderCellDef>Unit</th>
+                        <td mat-cell *matCellDef="let unit">{{ unit.unitLabel }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="lastCall">
+                        <th mat-header-cell *matHeaderCellDef>Last Call</th>
+                        <td mat-cell *matCellDef="let unit">{{ formatTimeAgo(unit.lastCall) }}</td>
+                    </ng-container>
+                    <ng-container matColumnDef="count">
+                        <th mat-header-cell *matHeaderCellDef>Calls</th>
+                        <td mat-cell *matCellDef="let unit">
+                            <span class="call-count">{{ unit.count }}</span>
+                        </td>
+                    </ng-container>
+                    <tr mat-header-row *matHeaderRowDef="['rank', 'unit', 'lastCall', 'count']"></tr>
+                    <tr mat-row *matRowDef="let row; columns: ['rank', 'unit', 'lastCall', 'count']"></tr>
+                </table>
+            </mat-card-content>
+        </mat-card>
+    </div>
+</div>
+

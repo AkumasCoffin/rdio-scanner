@@ -119,6 +119,14 @@ func main() {
 
 	http.HandleFunc("/api/admin/user-remove", controller.Admin.UserRemoveHandler)
 
+	http.HandleFunc("/api/admin/stats", controller.Stats.Handler)
+
+	http.HandleFunc("/api/admin/stats/talkgroup-units", controller.Stats.TalkgroupUnitsHandler)
+
+	http.HandleFunc("/api/stats", controller.Stats.PublicHandler)
+
+	http.HandleFunc("/api/stats/talkgroup-units", controller.Stats.PublicTalkgroupUnitsHandler)
+
 	http.HandleFunc("/api/call-upload", controller.Api.CallUploadHandler)
 
 	http.HandleFunc("/api/trunk-recorder-call-upload", controller.Api.TrunkRecorderCallUploadHandler)
