@@ -1,5 +1,6 @@
 .DS_Store
 .vscode
+.cursor
 *.token
 /build
 /dist
