@@ -503,8 +503,8 @@ export class RdioScannerService implements OnDestroy {
     }
 
     // Maximum gain value to prevent audio from being too loud
-    // Slider at 100% = 0.35 actual gain (about 35% of max browser volume)
-    private static readonly MAX_GAIN = 0.35;
+    // Slider at 100% = 0.5 actual gain (about 50% of max browser volume)
+    private static readonly MAX_GAIN = 0.5;
 
     private updateGainNode(): void {
         if (this.gainNode) {
