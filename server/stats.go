@@ -116,7 +116,7 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 	now := time.Now()
 
 	// Total calls
-	err := db.Sql.QueryRow("SELECT COUNT(*) FROM `rdioScannerCalls`").Scan(&overview.TotalCalls)
+	err := db.QueryRow("SELECT COUNT(*) FROM `rdioScannerCalls`").Scan(&overview.TotalCalls)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.overview.totalCalls: %v", err)
 	}
@@ -124,7 +124,7 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 	// Today's calls - using datetime comparison for accuracy
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	todayEnd := todayStart.AddDate(0, 0, 1)
-	err = db.Sql.QueryRow(
+	err = db.QueryRow(
 		"SELECT COUNT(*) FROM `rdioScannerCalls` WHERE `dateTime` >= ? AND `dateTime` < ?",
 		todayStart.Format(db.DateTimeFormat), todayEnd.Format(db.DateTimeFormat),
 	).Scan(&overview.TodayCalls)
@@ -134,7 +134,7 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 
 	// This week's calls (last 7 days)
 	weekAgo := now.AddDate(0, 0, -7)
-	err = db.Sql.QueryRow(
+	err = db.QueryRow(
 		"SELECT COUNT(*) FROM `rdioScannerCalls` WHERE `dateTime` >= ?",
 		weekAgo.Format(db.DateTimeFormat),
 	).Scan(&overview.WeekCalls)
@@ -144,7 +144,7 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 
 	// This month's calls (last 30 days)
 	monthAgo := now.AddDate(0, 0, -30)
-	err = db.Sql.QueryRow(
+	err = db.QueryRow(
 		"SELECT COUNT(*) FROM `rdioScannerCalls` WHERE `dateTime` >= ?",
 		monthAgo.Format(db.DateTimeFormat),
 	).Scan(&overview.MonthCalls)
@@ -154,7 +154,7 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 
 	// Active systems (systems with calls in last 24 hours)
 	dayAgo := now.AddDate(0, 0, -1)
-	err = db.Sql.QueryRow(
+	err = db.QueryRow(
 		"SELECT COUNT(DISTINCT `system`) FROM `rdioScannerCalls` WHERE `dateTime` >= ?",
 		dayAgo.Format(db.DateTimeFormat),
 	).Scan(&overview.ActiveSystems)
@@ -163,7 +163,7 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 	}
 
 	// Active talkgroups (talkgroups with calls in last 24 hours)
-	err = db.Sql.QueryRow(
+	err = db.QueryRow(
 		"SELECT COUNT(DISTINCT `talkgroup`) FROM `rdioScannerCalls` WHERE `dateTime` >= ?",
 		dayAgo.Format(db.DateTimeFormat),
 	).Scan(&overview.ActiveTalkgroups)
@@ -174,15 +174,13 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 	// Average calls per day (last 30 days)
 	overview.AvgCallsPerDay = float64(overview.MonthCalls) / 30.0
 
-	// Peak hour (most active hour in last 7 days) - use substr to extract hour
-	rows, err := db.Sql.Query(`
-		SELECT CAST(substr(dateTime, 12, 2) AS INTEGER) as hour, COUNT(*) as cnt 
-		FROM rdioScannerCalls 
-		WHERE dateTime >= ? 
-		GROUP BY hour 
-		ORDER BY cnt DESC 
-		LIMIT 1
-	`, weekAgo.Format(db.DateTimeFormat))
+	var peakHourQuery string
+	if db.Config.DbType == DbTypePostgres {
+		peakHourQuery = `SELECT EXTRACT(HOUR FROM "dateTime")::integer as hour, COUNT(*) as cnt FROM "rdioScannerCalls" WHERE "dateTime" >= $1 GROUP BY hour ORDER BY cnt DESC LIMIT 1`
+	} else {
+		peakHourQuery = "SELECT CAST(substr(`dateTime`, 12, 2) AS INTEGER) as hour, COUNT(*) as cnt FROM `rdioScannerCalls` WHERE `dateTime` >= ? GROUP BY hour ORDER BY cnt DESC LIMIT 1"
+	}
+	rows, err := db.Sql.Query(peakHourQuery, weekAgo.Format(db.DateTimeFormat))
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.overview.peakHour: %v", err)
 	}
@@ -207,13 +205,7 @@ func (stats *Stats) GetCallsByHour(db *Database) ([]StatsCallsByHour, error) {
 
 	weekAgo := time.Now().AddDate(0, 0, -7)
 
-	// Get recent calls (15k calls/day max * 7 days * 1.5 safety = ~157k calls)
-	rows, err := db.Sql.Query(`
-		SELECT dateTime
-		FROM rdioScannerCalls 
-		ORDER BY dateTime DESC
-		LIMIT 200000
-	`)
+	rows, err := db.Query("SELECT `dateTime` FROM `rdioScannerCalls` ORDER BY `dateTime` DESC LIMIT 200000")
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.callsByHour: %v", err)
 	}
@@ -260,13 +252,7 @@ func (stats *Stats) GetCallsByDay(db *Database, days int) ([]StatsCallsByDay, er
 	now := time.Now()
 	daysAgo := now.AddDate(0, 0, -days)
 
-	// Get recent calls (15k calls/day max * 30 days * 1.5 safety = ~675k calls)
-	rows, err := db.Sql.Query(`
-		SELECT dateTime
-		FROM rdioScannerCalls 
-		ORDER BY dateTime DESC
-		LIMIT 700000
-	`)
+	rows, err := db.Query("SELECT `dateTime` FROM `rdioScannerCalls` ORDER BY `dateTime` DESC LIMIT 700000")
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.callsByDay: %v", err)
 	}
@@ -319,13 +305,7 @@ func (stats *Stats) GetTopTalkgroups(db *Database, limit int) ([]StatsTopTalkgro
 
 	weekAgo := time.Now().AddDate(0, 0, -7)
 
-	// Get recent calls (15k calls/day max * 7 days * 1.5 safety = ~157k calls)
-	rows, err := db.Sql.Query(`
-		SELECT system, talkgroup, dateTime
-		FROM rdioScannerCalls 
-		ORDER BY dateTime DESC
-		LIMIT 200000
-	`)
+	rows, err := db.Query("SELECT `system`, `talkgroup`, `dateTime` FROM `rdioScannerCalls` ORDER BY `dateTime` DESC LIMIT 200000")
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.topTalkgroups: %v", err)
 	}
@@ -420,13 +400,7 @@ func (stats *Stats) GetTopSystems(db *Database, limit int) ([]StatsTopSystem, er
 
 	weekAgo := time.Now().AddDate(0, 0, -7)
 
-	// Get recent calls (15k calls/day max * 7 days * 1.5 safety = ~157k calls)
-	rows, err := db.Sql.Query(`
-		SELECT system, dateTime
-		FROM rdioScannerCalls 
-		ORDER BY dateTime DESC
-		LIMIT 200000
-	`)
+	rows, err := db.Query("SELECT `system`, `dateTime` FROM `rdioScannerCalls` ORDER BY `dateTime` DESC LIMIT 200000")
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.topSystems: %v", err)
 	}
@@ -505,14 +479,7 @@ func (stats *Stats) GetTopUnits(db *Database, limit int) ([]StatsTopUnit, error)
 
 	weekAgo := time.Now().AddDate(0, 0, -7)
 
-	// Get recent calls (15k calls/day max * 7 days * 1.5 safety = ~157k calls)
-	rows, err := db.Sql.Query(`
-		SELECT system, source, dateTime
-		FROM rdioScannerCalls 
-		WHERE source IS NOT NULL AND source > 0
-		ORDER BY dateTime DESC
-		LIMIT 200000
-	`)
+	rows, err := db.Query("SELECT `system`, `source`, `dateTime` FROM `rdioScannerCalls` WHERE `source` IS NOT NULL AND `source` > 0 ORDER BY `dateTime` DESC LIMIT 200000")
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.topUnits: %v", err)
 	}
@@ -607,13 +574,7 @@ func (stats *Stats) GetLastHourTalkgroups(db *Database) ([]StatsLastHourTalkgrou
 	now := time.Now()
 	hourAgo := now.Add(-1 * time.Hour)
 
-	// Get recent calls (15k calls/day / 24 = ~625/hour max, use 2000 for safety)
-	rows, err := db.Sql.Query(`
-		SELECT system, talkgroup, dateTime
-		FROM rdioScannerCalls 
-		ORDER BY dateTime DESC
-		LIMIT 2000
-	`)
+	rows, err := db.Query("SELECT `system`, `talkgroup`, `dateTime` FROM `rdioScannerCalls` ORDER BY `dateTime` DESC LIMIT 2000")
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.lastHourTalkgroups: %v", err)
 	}
@@ -724,14 +685,7 @@ func (stats *Stats) GetTalkgroupUnits(db *Database, systemId uint, talkgroupId u
 
 	hourAgo := time.Now().Add(-1 * time.Hour)
 
-	// Get all calls for this system/talkgroup and parse them in Go
-	rows, err := db.Sql.Query(`
-		SELECT source, dateTime
-		FROM rdioScannerCalls 
-		WHERE system = ? AND talkgroup = ? AND source IS NOT NULL AND source > 0
-		ORDER BY dateTime DESC
-		LIMIT 500
-	`, systemId, talkgroupId)
+	rows, err := db.Query("SELECT `source`, `dateTime` FROM `rdioScannerCalls` WHERE `system` = ? AND `talkgroup` = ? AND `source` IS NOT NULL AND `source` > 0 ORDER BY `dateTime` DESC LIMIT 500", systemId, talkgroupId)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.talkgroupUnits: %v", err)
 	}
@@ -835,13 +789,7 @@ func (stats *Stats) GetRecentActivity(db *Database) ([]StatsCallsByHour, error) 
 
 	dayAgo := time.Now().Add(-24 * time.Hour)
 
-	// Get recent calls (15k calls/day max * 1.5 safety = ~22k calls)
-	rows, err := db.Sql.Query(`
-		SELECT dateTime
-		FROM rdioScannerCalls 
-		ORDER BY dateTime DESC
-		LIMIT 25000
-	`)
+	rows, err := db.Query("SELECT `dateTime` FROM `rdioScannerCalls` ORDER BY `dateTime` DESC LIMIT 25000")
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.recentActivity: %v", err)
 	}

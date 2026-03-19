@@ -399,7 +399,7 @@ func (downstreams *Downstreams) Read(db *Database) error {
 		return fmt.Errorf("downstreams.read: %v", err)
 	}
 
-	if rows, err = db.Sql.Query("select `_id`, `apiKey`, `disabled`, `order`, `systems`, `url` from `rdioScannerDownstreams`"); err != nil {
+	if rows, err = db.Query("select `_id`, `apiKey`, `disabled`, `order`, `systems`, `url` from `rdioScannerDownstreams`"); err != nil {
 		return formatError(err)
 	}
 
@@ -474,7 +474,7 @@ func (downstreams *Downstreams) Write(db *Database) error {
 		return fmt.Errorf("downstreams.write: %v", err)
 	}
 
-	if rows, err = db.Sql.Query("select `_id` from `rdioScannerDownstreams`"); err != nil {
+	if rows, err = db.Query("select `_id` from `rdioScannerDownstreams`"); err != nil {
 		return formatError(err)
 	}
 
@@ -507,7 +507,7 @@ func (downstreams *Downstreams) Write(db *Database) error {
 			s = strings.ReplaceAll(s, "[", "(")
 			s = strings.ReplaceAll(s, "]", ")")
 			q := fmt.Sprintf("delete from `rdioScannerDownstreams` where `_id` in %v", s)
-			if _, err = db.Sql.Exec(q); err != nil {
+			if _, err = db.Exec(q); err != nil {
 				return formatError(err)
 			}
 		}
@@ -521,16 +521,22 @@ func (downstreams *Downstreams) Write(db *Database) error {
 			systems = downstream.Systems
 		}
 
-		if err = db.Sql.QueryRow("select count(*) from `rdioScannerDownstreams` where `_id` = ?", downstream.Id).Scan(&count); err != nil {
+		if err = db.QueryRow("select count(*) from `rdioScannerDownstreams` where `_id` = ?", downstream.Id).Scan(&count); err != nil {
 			break
 		}
 
 		if count == 0 {
-			if _, err = db.Sql.Exec("insert into `rdioScannerDownstreams` (`_id`, `apiKey`, `disabled`, `order`, `systems`, `url`) values (?, ?, ?, ?, ?, ?)", downstream.Id, downstream.Apikey, downstream.Disabled, downstream.Order, systems, downstream.Url); err != nil {
+			idVal, hasId := downstream.Id.(uint)
+			if db.Config.DbType == DbTypePostgres && (!hasId || idVal == 0) {
+				_, err = db.Exec("insert into `rdioScannerDownstreams` (`apiKey`, `disabled`, `order`, `systems`, `url`) values (?, ?, ?, ?, ?)", downstream.Apikey, downstream.Disabled, downstream.Order, systems, downstream.Url)
+			} else {
+				_, err = db.Exec("insert into `rdioScannerDownstreams` (`_id`, `apiKey`, `disabled`, `order`, `systems`, `url`) values (?, ?, ?, ?, ?, ?)", downstream.Id, downstream.Apikey, downstream.Disabled, downstream.Order, systems, downstream.Url)
+			}
+			if err != nil {
 				break
 			}
 
-		} else if _, err = db.Sql.Exec("update `rdioScannerDownstreams` set `_id` = ?, `apiKey` = ?, `disabled` = ?, `order` = ?, `systems` = ?, `url` = ? where `_id` = ?", downstream.Id, downstream.Apikey, downstream.Disabled, downstream.Order, systems, downstream.Url, downstream.Id); err != nil {
+		} else if _, err = db.Exec("update `rdioScannerDownstreams` set `_id` = ?, `apiKey` = ?, `disabled` = ?, `order` = ?, `systems` = ?, `url` = ? where `_id` = ?", downstream.Id, downstream.Apikey, downstream.Disabled, downstream.Order, systems, downstream.Url, downstream.Id); err != nil {
 			break
 		}
 	}

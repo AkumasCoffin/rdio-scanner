@@ -24,6 +24,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
 )
 
@@ -54,6 +55,16 @@ func NewDatabase(config *Config) *Database {
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", config.DbUsername, config.DbPassword, config.DbHost, config.DbPort, config.DbName)
 
 		if database.Sql, err = sql.Open("mysql", dsn); err != nil {
+			log.Fatal(err)
+		}
+
+	case DbTypePostgres:
+		database.DateTimeFormat = "2006-01-02 15:04:05"
+
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+			config.DbHost, config.DbPort, config.DbUsername, config.DbPassword, config.DbName)
+
+		if database.Sql, err = sql.Open("postgres", dsn); err != nil {
 			log.Fatal(err)
 		}
 
@@ -113,6 +124,36 @@ func (db *Database) ParseDateTime(f any) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unable to parse datetime '%s': %v", dateTimeStr, lastErr)
 }
 
+func (db *Database) formatQuery(query string) string {
+	if db.Config.DbType != DbTypePostgres {
+		return query
+	}
+	query = strings.ReplaceAll(query, "`", "\"")
+	var result strings.Builder
+	counter := 0
+	for i := 0; i < len(query); i++ {
+		if query[i] == '?' {
+			counter++
+			result.WriteString(fmt.Sprintf("$%d", counter))
+		} else {
+			result.WriteByte(query[i])
+		}
+	}
+	return result.String()
+}
+
+func (db *Database) Exec(query string, args ...any) (sql.Result, error) {
+	return db.Sql.Exec(db.formatQuery(query), args...)
+}
+
+func (db *Database) Query(query string, args ...any) (*sql.Rows, error) {
+	return db.Sql.Query(db.formatQuery(query), args...)
+}
+
+func (db *Database) QueryRow(query string, args ...any) *sql.Row {
+	return db.Sql.QueryRow(db.formatQuery(query), args...)
+}
+
 func (db *Database) migrate() error {
 	var (
 		err     error
@@ -167,7 +208,7 @@ func (db *Database) migrateWithSchema(name string, schemas []string, verbose boo
 		return fmt.Errorf("%s while doing %s", err.Error(), query)
 	}
 
-	query = fmt.Sprintf("select count(*) from `rdioScannerMeta` where `name` = '%s'", name)
+	query = db.formatQuery(fmt.Sprintf("select count(*) from `rdioScannerMeta` where `name` = '%s'", name))
 	if err = db.Sql.QueryRow(query).Scan(&count); err != nil {
 		return formatError(err, query)
 	}
@@ -179,13 +220,13 @@ func (db *Database) migrateWithSchema(name string, schemas []string, verbose boo
 
 		if tx, err = db.Sql.Begin(); err == nil {
 			for _, query = range schemas {
-				if _, err = tx.Exec(query); err != nil {
+				if _, err = tx.Exec(db.formatQuery(query)); err != nil {
 					tx.Rollback()
 					return formatError(err, query)
 				}
 			}
 
-			query = fmt.Sprintf("insert into `rdioScannerMeta` (`name`) values ('%s')", name)
+			query = db.formatQuery(fmt.Sprintf("insert into `rdioScannerMeta` (`name`) values ('%s')", name))
 			if _, err = tx.Exec(query); err != nil {
 				tx.Rollback()
 				return formatError(err, query)
@@ -203,12 +244,18 @@ func (db *Database) migrateWithSchema(name string, schemas []string, verbose boo
 
 func (db *Database) migration20191028144433(verbose bool) error {
 	var queries []string
-	if db.Config.DbType == DbTypeSqlite {
+	switch db.Config.DbType {
+	case DbTypeSqlite:
 		queries = []string{
 			"create table `rdioScannerSystems` (`id` integer primary key autoincrement, `createdAt` datetime not null, `updatedAt` datetime not null, `name` varchar(255) not null, `system` integer not null, `talkgroups` json not null)",
 			"create unique index `rdio_scanner_systems_system` on `rdioScannerSystems` (`system`)",
 		}
-	} else {
+	case DbTypePostgres:
+		queries = []string{
+			`create table "rdioScannerSystems" ("id" serial primary key, "createdAt" timestamp not null, "updatedAt" timestamp not null, "name" varchar(255) not null, "system" integer not null, "talkgroups" text not null)`,
+			`create unique index "rdio_scanner_systems_system" on "rdioScannerSystems" ("system")`,
+		}
+	default:
 		queries = []string{
 			"create table `rdioScannerSystems` (`id` integer primary key auto_increment, `createdAt` datetime not null, `updatedAt` datetime not null, `name` varchar(255) not null, `system` integer not null, `talkgroups` json not null)",
 			"create unique index `rdio_scanner_systems_system` on `rdioScannerSystems` (`system`)",
@@ -219,14 +266,22 @@ func (db *Database) migration20191028144433(verbose bool) error {
 
 func (db *Database) migration20191029092201(verbose bool) error {
 	var queries []string
-	if db.Config.DbType == DbTypeSqlite {
+	switch db.Config.DbType {
+	case DbTypeSqlite:
 		queries = []string{
 			"create table `rdioScannerCalls` (`id` integer primary key autoincrement, `createdAt` datetime not null, `updatedAt` datetime not null, `audio` longblob not null, `emergency` tinyint(1) not null, `freq` integer not null, `freqList` json not null, `startTime` datetime not null, `stopTime` datetime not null, `srcList` json not null, `system` integer not null, `talkgroup` integer not null)",
 			"create index `rdio_scanner_calls_start_time` on `rdioScannerCalls` (`startTime`)",
 			"create index `rdio_scanner_calls_system` on `rdioScannerCalls` (`system`)",
 			"create index `rdio_scanner_calls_talkgroup` on `rdioScannerCalls` (`talkgroup`)",
 		}
-	} else {
+	case DbTypePostgres:
+		queries = []string{
+			`create table "rdioScannerCalls" ("id" serial primary key, "createdAt" timestamp not null, "updatedAt" timestamp not null, "audio" bytea not null, "emergency" boolean not null, "freq" integer not null, "freqList" text not null, "startTime" timestamp not null, "stopTime" timestamp not null, "srcList" text not null, "system" integer not null, "talkgroup" integer not null)`,
+			`create index "rdio_scanner_calls_start_time" on "rdioScannerCalls" ("startTime")`,
+			`create index "rdio_scanner_calls_system" on "rdioScannerCalls" ("system")`,
+			`create index "rdio_scanner_calls_talkgroup" on "rdioScannerCalls" ("talkgroup")`,
+		}
+	default:
 		queries = []string{
 			"create table `rdioScannerCalls` (`id` integer primary key auto_increment, `createdAt` datetime not null, `updatedAt` datetime not null, `audio` longblob not null, `emergency` tinyint(1) not null, `freq` integer not null, `freqList` json not null, `startTime` datetime not null, `stopTime` datetime not null, `srcList` json not null, `system` integer not null, `talkgroup` integer not null)",
 			"create index `rdio_scanner_calls_start_time` on `rdioScannerCalls` (`startTime`)",
@@ -239,12 +294,13 @@ func (db *Database) migration20191029092201(verbose bool) error {
 
 func (db *Database) migration20191126135515(verbose bool) error {
 	var queries []string
-	if db.Config.DbType == DbTypeSqlite {
+	switch db.Config.DbType {
+	case DbTypeSqlite, DbTypePostgres:
 		queries = []string{
 			"drop index `rdio_scanner_calls_system`",
 			"drop index `rdio_scanner_calls_talkgroup`",
 		}
-	} else {
+	default:
 		queries = []string{
 			"drop index `rdio_scanner_calls_system` on `rdioScannerCalls`",
 			"drop index `rdio_scanner_calls_talkgroup` on `rdioScannerCalls`",
@@ -255,13 +311,14 @@ func (db *Database) migration20191126135515(verbose bool) error {
 
 func (db *Database) migration20191220093214(verbose bool) error {
 	var queries []string
-	if db.Config.DbType == DbTypeSqlite {
+	switch db.Config.DbType {
+	case DbTypePostgres:
 		queries = []string{
-			"alter table `rdioScannerCalls` add column `audioName` varchar(255)",
-			"alter table `rdioScannerCalls` add column `audioType` varchar(255)",
-			"alter table `rdioScannerSystems` add column `aliases` json not null",
+			`alter table "rdioScannerCalls" add column "audioName" varchar(255)`,
+			`alter table "rdioScannerCalls" add column "audioType" varchar(255)`,
+			`alter table "rdioScannerSystems" add column "aliases" text not null default '[]'`,
 		}
-	} else {
+	default:
 		queries = []string{
 			"alter table `rdioScannerCalls` add column `audioName` varchar(255)",
 			"alter table `rdioScannerCalls` add column `audioType` varchar(255)",
@@ -272,24 +329,17 @@ func (db *Database) migration20191220093214(verbose bool) error {
 }
 
 func (db *Database) migration20200123094105(verbose bool) error {
-	var queries []string
-	if db.Config.DbType == DbTypeSqlite {
-		queries = []string{
-			"create index `rdio_scanner_calls_system` on `rdioScannerCalls` (`system`)",
-			"create index `rdio_scanner_calls_system_talkgroup` on `rdioScannerCalls` (`system`, `talkgroup`)",
-		}
-	} else {
-		queries = []string{
-			"create index `rdio_scanner_calls_system` on `rdioScannerCalls` (`system`)",
-			"create index `rdio_scanner_calls_system_talkgroup` on `rdioScannerCalls` (`system`, `talkgroup`)",
-		}
+	queries := []string{
+		"create index `rdio_scanner_calls_system` on `rdioScannerCalls` (`system`)",
+		"create index `rdio_scanner_calls_system_talkgroup` on `rdioScannerCalls` (`system`, `talkgroup`)",
 	}
 	return db.migrateWithSchema("20200123094105-optimize-rdio-scanner-calls", queries, verbose)
 }
 
 func (db *Database) migration20200428132918(verbose bool) error {
 	var queries []string
-	if db.Config.DbType == DbTypeSqlite {
+	switch db.Config.DbType {
+	case DbTypeSqlite:
 		queries = []string{
 			"drop table `rdioScannerSystems`",
 			"create table `rdioScannerCalls2` (`id` integer primary key autoincrement, `audio` longblob not null, `audioName` varchar(255), `audioType` varchar(255), `dateTime` datetime not null, `frequencies` json not null, `frequency` integer, `source` integer, `sources` json not null, `system` integer not null, `talkgroup` integer not null)",
@@ -298,7 +348,16 @@ func (db *Database) migration20200428132918(verbose bool) error {
 			"alter table `rdioScannerCalls2` rename to `rdioScannerCalls`",
 			"create index `rdio_scanner_calls_date_time_system_talkgroup` on `rdioScannerCalls` (`dateTime`, `system`, `talkgroup`)",
 		}
-	} else {
+	case DbTypePostgres:
+		queries = []string{
+			`drop table "rdioScannerSystems"`,
+			`create table "rdioScannerCalls2" ("id" serial primary key, "audio" bytea not null, "audioName" varchar(255), "audioType" varchar(255), "dateTime" timestamp not null, "frequencies" text not null, "frequency" integer, "source" integer, "sources" text not null, "system" integer not null, "talkgroup" integer not null)`,
+			`insert into "rdioScannerCalls2" select "id", "audio", "audioName", "audioType", "startTime", "freqList", "freq", null, "srcList", "system", "talkgroup" from "rdioScannerCalls"`,
+			`drop table "rdioScannerCalls"`,
+			`alter table "rdioScannerCalls2" rename to "rdioScannerCalls"`,
+			`create index "rdio_scanner_calls_date_time_system_talkgroup" on "rdioScannerCalls" ("dateTime", "system", "talkgroup")`,
+		}
+	default:
 		queries = []string{
 			"drop table `rdioScannerSystems`",
 			"create table `rdioScannerCalls2` (`id` integer primary key auto_increment, `audio` longblob not null, `audioName` varchar(255), `audioType` varchar(255), `dateTime` datetime not null, `frequencies` json not null, `frequency` integer, `source` integer, `sources` json not null, `system` integer not null, `talkgroup` integer not null)",
@@ -313,7 +372,8 @@ func (db *Database) migration20200428132918(verbose bool) error {
 
 func (db *Database) migration20210115105958(verbose bool) error {
 	var queries []string
-	if db.Config.DbType == DbTypeSqlite {
+	switch db.Config.DbType {
+	case DbTypeSqlite:
 		queries = []string{
 			"create table `rdioScannerAccesses` (`_id` integer primary key autoincrement, `code` varchar(255) not null unique, `expiration` datetime, `ident` varchar(255), `limit` integer, `order` integer, `systems` text not null)",
 			"create table `rdioScannerApiKeys` (`_id` integer primary key autoincrement, `disabled` tinyint(1) default 0, `ident` varchar(255), `key` varchar(255) not null unique, `order` integer, `systems` text not null)",
@@ -332,7 +392,26 @@ func (db *Database) migration20210115105958(verbose bool) error {
 			"create table `rdioScannerSystems` (`_id` integer primary key autoincrement, `autoPopulate` tinyint(1) default 0, `blacklists` text not null, `id` integer not null unique, `label` varchar(255) not null, `led` varchar(255), `order` integer, `talkgroups` text not null, `units` text not null)",
 			"create table `rdioScannerTags` (`_id` integer primary key autoincrement, `label` varchar(255) not null)",
 		}
-	} else {
+	case DbTypePostgres:
+		queries = []string{
+			`create table "rdioScannerAccesses" ("_id" serial primary key, "code" varchar(255) not null unique, "expiration" timestamp, "ident" varchar(255), "limit" integer, "order" integer, "systems" text not null)`,
+			`create table "rdioScannerApiKeys" ("_id" serial primary key, "disabled" boolean default false, "ident" varchar(255), "key" varchar(255) not null unique, "order" integer, "systems" text not null)`,
+			`create table "rdioScannerCalls2" ("id" serial primary key, "audio" bytea not null, "audioName" varchar(255), "audioType" varchar(255), "dateTime" timestamp not null, "frequencies" text not null, "frequency" integer, "source" integer, "sources" text not null, "system" integer not null, "talkgroup" integer not null)`,
+			`create index "rdio_scanner_calls2_date_time_system_talkgroup" on "rdioScannerCalls2" ("dateTime", "system", "talkgroup")`,
+			`insert into "rdioScannerCalls2" select "id", "audio", "audioName", "audioType", "dateTime", "frequencies", "frequency", "source", "sources", "system", "talkgroup" from "rdioScannerCalls"`,
+			`drop table "rdioScannerCalls"`,
+			`alter table "rdioScannerCalls2" rename to "rdioScannerCalls"`,
+			`create table "rdioScannerConfigs" ("_id" serial primary key, "key" varchar(255) not null unique, "val" text not null)`,
+			`create index "rdio_scanner_configs_key" on "rdioScannerConfigs" ("key")`,
+			`create table "rdioScannerDirWatches" ("_id" serial primary key, "delay" integer default 0, "deleteAfter" boolean default false, "directory" varchar(255) not null unique, "disabled" boolean default false, "extension" varchar(255), "frequency" integer, "mask" varchar(255), "order" integer, "systemId" integer, "talkgroupId" integer, "type" varchar(255), "usePolling" boolean default false)`,
+			`create table "rdioScannerDownstreams" ("_id" serial primary key, "apiKey" varchar(255) not null unique, "disabled" boolean default false, "order" integer, "systems" text not null, "url" varchar(255) not null)`,
+			`create table "rdioScannerGroups" ("_id" serial primary key, "label" varchar(255) not null)`,
+			`create table "rdioScannerLogs" ("_id" serial primary key, "dateTime" timestamp not null, "level" varchar(255) not null, "message" varchar(255) not null)`,
+			`create index "rdio_scanner_logs_date_time_level" on "rdioScannerLogs" ("dateTime", "level")`,
+			`create table "rdioScannerSystems" ("_id" serial primary key, "autoPopulate" boolean default false, "blacklists" text not null, "id" integer not null unique, "label" varchar(255) not null, "led" varchar(255), "order" integer, "talkgroups" text not null, "units" text not null)`,
+			`create table "rdioScannerTags" ("_id" serial primary key, "label" varchar(255) not null)`,
+		}
+	default:
 		queries = []string{
 			"create table `rdioScannerAccesses` (`_id` integer primary key auto_increment, `code` varchar(255) not null unique, `expiration` datetime, `ident` varchar(255), `limit` integer, `order` integer, `systems` text not null)",
 			"create table `rdioScannerApiKeys` (`_id` integer primary key auto_increment, `disabled` tinyint(1) default 0, `ident` varchar(255), `key` varchar(255) not null unique, `order` integer, `systems` text not null)",
@@ -357,7 +436,8 @@ func (db *Database) migration20210115105958(verbose bool) error {
 
 func (db *Database) migration20210830092027(verbose bool) error {
 	var queries []string
-	if db.Config.DbType == DbTypeSqlite {
+	switch db.Config.DbType {
+	case DbTypeSqlite:
 		queries = []string{
 			"create table `rdioScannerSystems2` (`_id` integer primary key autoincrement, `autoPopulate` tinyint(1) default 0, `blacklists` text not null, `id` integer not null unique, `label` varchar(255) not null, `led` varchar(255), `order` integer, `talkgroups` longtext not null, `units` longtext not null)",
 			"insert into `rdioScannerSystems2` select `_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`, `talkgroups`, `units` from `rdioScannerSystems`",
@@ -366,8 +446,14 @@ func (db *Database) migration20210830092027(verbose bool) error {
 			"drop index `rdio_scanner_calls2_date_time_system_talkgroup`",
 			"create index `rdio_scanner_calls_date_time_system_talkgroup` on `rdioScannerCalls` (`dateTime`, `system`, `talkgroup`)",
 		}
-
-	} else {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerSystems" alter column "talkgroups" type text`,
+			`alter table "rdioScannerSystems" alter column "units" type text`,
+			`drop index "rdio_scanner_calls2_date_time_system_talkgroup"`,
+			`create index "rdio_scanner_calls_date_time_system_talkgroup" on "rdioScannerCalls" ("dateTime", "system", "talkgroup")`,
+		}
+	default:
 		queries = []string{
 			"alter table `rdioScannerSystems` modify `talkgroups` longtext null not null",
 			"alter table `rdioScannerSystems` modify `units` longtext null not null",
@@ -380,14 +466,22 @@ func (db *Database) migration20210830092027(verbose bool) error {
 
 func (db *Database) migration20211202094819(verbose bool) error {
 	var queries []string
-	if db.Config.DbType == DbTypeSqlite {
+	switch db.Config.DbType {
+	case DbTypeSqlite:
 		queries = []string{
 			"alter table `rdioScannerDownstreams` rename to `rdioScannerDownstreams2`",
 			"create table `rdioScannerDownstreams` (`_id` integer primary key autoincrement, `apiKey` varchar(255) not null, `disabled` tinyint(1) default 0, `order` integer, `systems` text not null, `url` varchar(255) not null)",
 			"insert into `rdioScannerDownstreams` select * from `rdioScannerDownstreams2`",
 			"drop table `rdioScannerDownstreams2`",
 		}
-	} else {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerDownstreams" rename to "rdioScannerDownstreams2"`,
+			`create table "rdioScannerDownstreams" ("_id" serial primary key, "apiKey" varchar(255) not null, "disabled" boolean default false, "order" integer, "systems" text not null, "url" varchar(255) not null)`,
+			`insert into "rdioScannerDownstreams" select * from "rdioScannerDownstreams2"`,
+			`drop table "rdioScannerDownstreams2"`,
+		}
+	default:
 		queries = []string{
 			"alter table `rdioScannerDownstreams` rename to `rdioScannerDownstreams2`",
 			"create table `rdioScannerDownstreams` (`_id` integer primary key auto_increment, `apiKey` varchar(255) not null, `disabled` tinyint(1) default 0, `order` integer, `systems` text not null, `url` varchar(255) not null)",
@@ -413,7 +507,8 @@ func (db *Database) migration20220101070000(verbose bool) error {
 		talkgroups []*Talkgroup
 		units      []*Unit
 	)
-	if db.Config.DbType == DbTypeSqlite {
+	switch db.Config.DbType {
+	case DbTypeSqlite:
 		queries = []string{
 			"create table `rdioScannerCalls2` (`id` integer primary key autoincrement, `audio` longblob not null, `audioName` varchar(255), `audioType` varchar(255), `dateTime` datetime not null, `frequencies` text not null, `frequency` integer, `patches` text not null, `source` integer, `sources` text not null, `system` integer not null, `talkgroup` integer not null)",
 			"insert into `rdioScannerCalls2` select `id`, `audio`, `audioName`, `audioType`, `dateTime`, `frequencies`, `frequency`, '[]', `source`, `sources`, `system`, `talkgroup` from `rdioScannerCalls`",
@@ -429,7 +524,17 @@ func (db *Database) migration20220101070000(verbose bool) error {
 			"create table `rdioScannerUnits` (`_id` integer primary key autoincrement, `id` integer not null, `label` varchar(255) not null, `order` integer, `systemId` integer not null)",
 			"create unique index `rdio_scanner_units_system_id_id` on `rdioScannerUnits` (`systemId`, `id`)",
 		}
-	} else {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerCalls" add column "patches" text not null default '[]'`,
+			`alter table "rdioScannerSystems" drop column "talkgroups"`,
+			`alter table "rdioScannerSystems" drop column "units"`,
+			`create table "rdioScannerTalkgroups" ("_id" serial primary key, "frequency" integer, "groupId" integer not null, "id" integer not null, "label" varchar(255) not null, "led" varchar(255), "name" varchar(255) not null, "order" integer, "systemId" integer not null, "tagId" integer not null)`,
+			`create unique index "rdio_scanner_talkgroups_system_id_id" on "rdioScannerTalkgroups" ("systemId", "id")`,
+			`create table "rdioScannerUnits" ("_id" serial primary key, "id" integer not null, "label" varchar(255) not null, "order" integer, "systemId" integer not null)`,
+			`create unique index "rdio_scanner_units_system_id_id" on "rdioScannerUnits" ("systemId", "id")`,
+		}
+	default:
 		queries = []string{
 			"alter table `rdioScannerCalls` add column `patches` text not null",
 			"alter table `rdioScannerSystems` drop column `talkgroups`",
@@ -440,7 +545,7 @@ func (db *Database) migration20220101070000(verbose bool) error {
 			"create unique index `rdio_scanner_units_system_id_id` on `rdioScannerUnits` (`systemId`, `id`)",
 		}
 	}
-	if rows, err = db.Sql.Query("select `id`, `talkgroups`, `units` from `rdioScannerSystems`"); err == nil {
+	if rows, err = db.Query("select `id`, `talkgroups`, `units` from `rdioScannerSystems`"); err == nil {
 		for rows.Next() {
 			if err = rows.Scan(&id, &stra, &strb); err != nil {
 				break
@@ -487,20 +592,15 @@ func (db *Database) prepareMigration() (bool, error) {
 	var (
 		err     error
 		verbose bool = true
-		query   string
 	)
 
-	query = "select count(*) as count from `rdioScannerMeta`"
-	if _, err = db.Sql.Exec(query); err != nil {
-		query = "select count(*) as count from `SequelizeMeta`"
-		if _, err = db.Sql.Exec(query); err == nil {
+	if _, err = db.Exec("select count(*) as count from `rdioScannerMeta`"); err != nil {
+		if _, err = db.Exec("select count(*) as count from `SequelizeMeta`"); err == nil {
 			log.Println("Preparing for database migration")
-			query = "alter table `SequelizeMeta` rename to `rdioScannerMeta`"
-			_, err = db.Sql.Exec(query)
+			_, err = db.Exec("alter table `SequelizeMeta` rename to `rdioScannerMeta`")
 		} else {
 			verbose = false
-			query = "create table `rdioScannerMeta` (name varchar(255) not null unique primary key)"
-			_, err = db.Sql.Exec(query)
+			_, err = db.Exec("create table `rdioScannerMeta` (name varchar(255) not null unique primary key)")
 		}
 	}
 
@@ -526,14 +626,14 @@ func (db *Database) seedGroups() error {
 		return fmt.Errorf("database.seedgroups: %s", err.Error())
 	}
 
-	if err := db.Sql.QueryRow("select count(*) from `rdioScannerGroups`").Scan(&count); err != nil {
+	if err := db.QueryRow("select count(*) from `rdioScannerGroups`").Scan(&count); err != nil {
 		return formatError(err)
 	}
 
 	if count == 0 {
 		if tx, err := db.Sql.Begin(); err == nil {
 			for _, group := range defaults.groups {
-				if _, err := tx.Exec("insert into `rdioScannerGroups` (`label`) values (?)", group); err != nil {
+				if _, err := tx.Exec(db.formatQuery("insert into `rdioScannerGroups` (`label`) values (?)"), group); err != nil {
 					tx.Rollback()
 					return formatError(err)
 				}
@@ -558,14 +658,14 @@ func (db *Database) seedTags() error {
 		return fmt.Errorf("database.seedtags: %s", err.Error())
 	}
 
-	if err := db.Sql.QueryRow("select count(*) from `rdioScannerTags`").Scan(&count); err != nil {
+	if err := db.QueryRow("select count(*) from `rdioScannerTags`").Scan(&count); err != nil {
 		return formatError(err)
 	}
 
 	if count == 0 {
 		if tx, err := db.Sql.Begin(); err == nil {
 			for _, group := range defaults.tags {
-				if _, err := tx.Exec("insert into `rdioScannerTags` (`label`) values (?)", group); err != nil {
+				if _, err := tx.Exec(db.formatQuery("insert into `rdioScannerTags` (`label`) values (?)"), group); err != nil {
 					tx.Rollback()
 					return formatError(err)
 				}

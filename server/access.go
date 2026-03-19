@@ -225,7 +225,7 @@ func (accesses *Accesses) Read(db *Database) error {
 		return fmt.Errorf("accesses.read: %v", err)
 	}
 
-	if rows, err = db.Sql.Query("select `_id`, `code`, `expiration`, `ident`, `limit`, `order`, `systems` from `rdioScannerAccesses`"); err != nil {
+	if rows, err = db.Query("select `_id`, `code`, `expiration`, `ident`, `limit`, `order`, `systems` from `rdioScannerAccesses`"); err != nil {
 		return formatError(err)
 	}
 
@@ -308,7 +308,7 @@ func (accesses *Accesses) Write(db *Database) error {
 		return fmt.Errorf("accesses.write: %v", err)
 	}
 
-	if rows, err = db.Sql.Query("select `_id` from `rdioScannerAccesses`"); err != nil {
+	if rows, err = db.Query("select `_id` from `rdioScannerAccesses`"); err != nil {
 		return formatError(err)
 	}
 
@@ -341,7 +341,7 @@ func (accesses *Accesses) Write(db *Database) error {
 			s = strings.ReplaceAll(s, "[", "(")
 			s = strings.ReplaceAll(s, "]", ")")
 			q := fmt.Sprintf("delete from `rdioScannerAccesses` where `_id` in %v", s)
-			if _, err = db.Sql.Exec(q); err != nil {
+			if _, err = db.Exec(q); err != nil {
 				return formatError(err)
 			}
 		}
@@ -355,16 +355,22 @@ func (accesses *Accesses) Write(db *Database) error {
 			systems = access.Systems
 		}
 
-		if err = db.Sql.QueryRow("select count(*) from `rdioScannerAccesses` where `_id` = ?", access.Id).Scan(&count); err != nil {
+		if err = db.QueryRow("select count(*) from `rdioScannerAccesses` where `_id` = ?", access.Id).Scan(&count); err != nil {
 			break
 		}
 
 		if count == 0 {
-			if _, err = db.Sql.Exec("insert into `rdioScannerAccesses` (`_id`, `code`, `expiration`, `ident`, `limit`, `order`, `systems`) values (?, ?, ?, ?, ?, ?, ?)", access.Id, access.Code, access.Expiration, access.Ident, access.Limit, access.Order, systems); err != nil {
+			idVal, hasId := access.Id.(uint)
+			if db.Config.DbType == DbTypePostgres && (!hasId || idVal == 0) {
+				_, err = db.Exec("insert into `rdioScannerAccesses` (`code`, `expiration`, `ident`, `limit`, `order`, `systems`) values (?, ?, ?, ?, ?, ?)", access.Code, access.Expiration, access.Ident, access.Limit, access.Order, systems)
+			} else {
+				_, err = db.Exec("insert into `rdioScannerAccesses` (`_id`, `code`, `expiration`, `ident`, `limit`, `order`, `systems`) values (?, ?, ?, ?, ?, ?, ?)", access.Id, access.Code, access.Expiration, access.Ident, access.Limit, access.Order, systems)
+			}
+			if err != nil {
 				break
 			}
 
-		} else if _, err = db.Sql.Exec("update `rdioScannerAccesses` set `_id` = ?, `code` = ?, `expiration` = ?, `ident` = ?, `limit` = ?, `order` = ?, `systems` = ? where `_id` = ?", access.Id, access.Code, access.Expiration, access.Ident, access.Limit, access.Order, systems, access.Id); err != nil {
+		} else if _, err = db.Exec("update `rdioScannerAccesses` set `_id` = ?, `code` = ?, `expiration` = ?, `ident` = ?, `limit` = ?, `order` = ?, `systems` = ? where `_id` = ?", access.Id, access.Code, access.Expiration, access.Ident, access.Limit, access.Order, systems, access.Id); err != nil {
 			break
 		}
 	}

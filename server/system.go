@@ -339,7 +339,7 @@ func (systems *Systems) Read(db *Database) error {
 		return fmt.Errorf("systems.read: %v", err)
 	}
 
-	if rows, err = db.Sql.Query("select `_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `order` from `rdioScannerSystems`"); err != nil {
+	if rows, err = db.Query("select `_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `order` from `rdioScannerSystems`"); err != nil {
 		return formatError(err)
 	}
 
@@ -412,7 +412,7 @@ func (systems *Systems) Write(db *Database) error {
 		return fmt.Errorf("systems.write: %v", err)
 	}
 
-	if rows, err = db.Sql.Query("select `_id`, `id` from `rdioScannerSystems`"); err != nil {
+	if rows, err = db.Query("select `_id`, `id` from `rdioScannerSystems`"); err != nil {
 		return formatError(err)
 	}
 
@@ -447,7 +447,7 @@ func (systems *Systems) Write(db *Database) error {
 			s = strings.ReplaceAll(s, "[", "(")
 			s = strings.ReplaceAll(s, "]", ")")
 			q := fmt.Sprintf("delete from `rdioScannerSystems` where `_id` in %v", s)
-			if _, err = db.Sql.Exec(q); err != nil {
+			if _, err = db.Exec(q); err != nil {
 				return formatError(err)
 			}
 		}
@@ -459,11 +459,11 @@ func (systems *Systems) Write(db *Database) error {
 			s = strings.ReplaceAll(s, "[", "(")
 			s = strings.ReplaceAll(s, "]", ")")
 			q := fmt.Sprintf("delete from `rdioScannerTalkgroups` where `systemId` in %v", s)
-			if _, err = db.Sql.Exec(q); err != nil {
+			if _, err = db.Exec(q); err != nil {
 				return formatError(err)
 			}
 			q = fmt.Sprintf("delete from `rdioScannerUnits` where `systemId` in %v", s)
-			if _, err = db.Sql.Exec(q); err != nil {
+			if _, err = db.Exec(q); err != nil {
 				return formatError(err)
 			}
 		}
@@ -476,16 +476,22 @@ func (systems *Systems) Write(db *Database) error {
 			blacklists = "[]"
 		}
 
-		if err = db.Sql.QueryRow("select count(*) from `rdioScannerSystems` where `_id` = ?", system.RowId).Scan(&count); err != nil {
+		if err = db.QueryRow("select count(*) from `rdioScannerSystems` where `_id` = ?", system.RowId).Scan(&count); err != nil {
 			break
 		}
 
 		if count == 0 {
-			if _, err = db.Sql.Exec("insert into `rdioScannerSystems` (`_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`) values (?, ?, ?, ?, ?, ?, ?)", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order); err != nil {
+			rowIdVal, hasRowId := system.RowId.(uint)
+			if db.Config.DbType == DbTypePostgres && (!hasRowId || rowIdVal == 0) {
+				_, err = db.Exec("insert into `rdioScannerSystems` (`autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`) values (?, ?, ?, ?, ?, ?)", system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order)
+			} else {
+				_, err = db.Exec("insert into `rdioScannerSystems` (`_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`) values (?, ?, ?, ?, ?, ?, ?)", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order)
+			}
+			if err != nil {
 				break
 			}
 
-		} else if _, err = db.Sql.Exec("update `rdioScannerSystems` set `_id` = ?, `autoPopulate` = ?, `blacklists` = ?, `id` = ?, `label` = ?, `led` = ?, `order` = ? where `_id` = ?", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order, system.RowId); err != nil {
+		} else if _, err = db.Exec("update `rdioScannerSystems` set `_id` = ?, `autoPopulate` = ?, `blacklists` = ?, `id` = ?, `label` = ?, `led` = ?, `order` = ? where `_id` = ?", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order, system.RowId); err != nil {
 			break
 		}
 

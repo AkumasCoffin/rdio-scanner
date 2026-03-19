@@ -170,7 +170,7 @@ func (apikeys *Apikeys) Read(db *Database) error {
 		return fmt.Errorf("apikeys.read: %v", err)
 	}
 
-	if rows, err = db.Sql.Query("select `_id`, `disabled`, `ident`, `key`, `order`, `systems` from `rdioScannerApiKeys`"); err != nil {
+	if rows, err = db.Query("select `_id`, `disabled`, `ident`, `key`, `order`, `systems` from `rdioScannerApiKeys`"); err != nil {
 		return formatError(err)
 	}
 
@@ -229,7 +229,7 @@ func (apikeys *Apikeys) Write(db *Database) error {
 		return fmt.Errorf("apikeys.write %v", err)
 	}
 
-	if rows, err = db.Sql.Query("select `_id` from `rdioScannerApiKeys`"); err != nil {
+	if rows, err = db.Query("select `_id` from `rdioScannerApiKeys`"); err != nil {
 		return formatError(err)
 	}
 
@@ -262,7 +262,7 @@ func (apikeys *Apikeys) Write(db *Database) error {
 			s = strings.ReplaceAll(s, "[", "(")
 			s = strings.ReplaceAll(s, "]", ")")
 			q := fmt.Sprintf("delete from `rdioScannerApikeys` where `_id` in %v", s)
-			if _, err = db.Sql.Exec(q); err != nil {
+			if _, err = db.Exec(q); err != nil {
 				return formatError(err)
 			}
 		}
@@ -276,16 +276,22 @@ func (apikeys *Apikeys) Write(db *Database) error {
 			systems = apikey.Systems
 		}
 
-		if err = db.Sql.QueryRow("select count(*) from `rdioScannerApiKeys` where `_id` = ?", apikey.Id).Scan(&count); err != nil {
+		if err = db.QueryRow("select count(*) from `rdioScannerApiKeys` where `_id` = ?", apikey.Id).Scan(&count); err != nil {
 			break
 		}
 
 		if count == 0 {
-			if _, err = db.Sql.Exec("insert into `rdioScannerApiKeys` (`_id`, `disabled`, `ident`, `key`, `order`, `systems`) values (?, ?, ?, ?, ?, ?)", apikey.Id, apikey.Disabled, apikey.Ident, apikey.Key, apikey.Order, systems); err != nil {
+			idVal, hasId := apikey.Id.(uint)
+			if db.Config.DbType == DbTypePostgres && (!hasId || idVal == 0) {
+				_, err = db.Exec("insert into `rdioScannerApiKeys` (`disabled`, `ident`, `key`, `order`, `systems`) values (?, ?, ?, ?, ?)", apikey.Disabled, apikey.Ident, apikey.Key, apikey.Order, systems)
+			} else {
+				_, err = db.Exec("insert into `rdioScannerApiKeys` (`_id`, `disabled`, `ident`, `key`, `order`, `systems`) values (?, ?, ?, ?, ?, ?)", apikey.Id, apikey.Disabled, apikey.Ident, apikey.Key, apikey.Order, systems)
+			}
+			if err != nil {
 				break
 			}
 
-		} else if _, err = db.Sql.Exec("update `rdioScannerApiKeys` set `_id` = ?, `disabled` = ?, `ident` = ?, `key` = ?, `order` = ?, `systems` = ? where `_id` = ?", apikey.Id, apikey.Disabled, apikey.Ident, apikey.Key, apikey.Order, systems, apikey.Id); err != nil {
+		} else if _, err = db.Exec("update `rdioScannerApiKeys` set `_id` = ?, `disabled` = ?, `ident` = ?, `key` = ?, `order` = ?, `systems` = ? where `_id` = ?", apikey.Id, apikey.Disabled, apikey.Ident, apikey.Key, apikey.Order, systems, apikey.Id); err != nil {
 			break
 		}
 	}

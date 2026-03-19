@@ -10,6 +10,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/websocket v1.5.0
 	github.com/kardianos/service v1.2.1
+	github.com/lib/pq v1.10.9
 	golang.org/x/crypto v0.0.0-20220926161630-eccd6366d1be
 	gopkg.in/ini.v1 v1.67.0
 	modernc.org/sqlite v1.19.1
