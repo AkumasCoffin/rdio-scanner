@@ -190,11 +190,15 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	switch v := m["umamiUrl"].(type) {
 	case string:
 		options.UmamiUrl = v
+	default:
+		options.UmamiUrl = ""
 	}
 
 	switch v := m["umamiWebsiteId"].(type) {
 	case string:
 		options.UmamiWebsiteId = v
+	default:
+		options.UmamiWebsiteId = ""
 	}
 
 	return options

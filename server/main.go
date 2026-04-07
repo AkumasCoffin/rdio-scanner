@@ -77,11 +77,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if h, err := os.Hostname(); err == nil {
-		hostname = h
-	} else {
-		hostname = defaultAddr
-	}
+	hostname = defaultAddr
 
 	if s := strings.Split(config.Listen, ":"); len(s) > 1 {
 		addr = s[0]
