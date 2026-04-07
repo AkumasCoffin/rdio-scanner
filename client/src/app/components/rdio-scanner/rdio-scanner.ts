@@ -104,6 +104,8 @@ export interface RdioScannerConfig {
     tags: { [key: string]: { [key: number]: number[] } };
     tagsToggle: boolean;
     time12hFormat: boolean;
+    umamiUrl?: string;
+    umamiWebsiteId?: string;
 }
 
 export interface RdioScannerEvent {

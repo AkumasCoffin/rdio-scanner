@@ -42,6 +42,8 @@ type Options struct {
 	SortTalkgroups              bool   `json:"sortTalkgroups"`
 	TagsToggle                  bool   `json:"tagsToggle"`
 	Time12hFormat               bool   `json:"time12hFormat"`
+	UmamiUrl                    string `json:"umamiUrl"`
+	UmamiWebsiteId              string `json:"umamiWebsiteId"`
 	adminPassword               string
 	adminPasswordNeedChange     bool
 	mutex                       sync.Mutex
@@ -185,6 +187,16 @@ func (options *Options) FromMap(m map[string]any) *Options {
 		options.Time12hFormat = defaults.options.time12hFormat
 	}
 
+	switch v := m["umamiUrl"].(type) {
+	case string:
+		options.UmamiUrl = v
+	}
+
+	switch v := m["umamiWebsiteId"].(type) {
+	case string:
+		options.UmamiWebsiteId = v
+	}
+
 	return options
 }
 
@@ -320,6 +332,16 @@ func (options *Options) Read(db *Database) error {
 			case bool:
 				options.Time12hFormat = v
 			}
+
+			switch v := m["umamiUrl"].(type) {
+			case string:
+				options.UmamiUrl = v
+			}
+
+			switch v := m["umamiWebsiteId"].(type) {
+			case string:
+				options.UmamiWebsiteId = v
+			}
 		}
 	}
 
@@ -390,6 +412,8 @@ func (options *Options) Write(db *Database) error {
 		"sortTalkgroups":              options.SortTalkgroups,
 		"tagsToggle":                  options.TagsToggle,
 		"time12hFormat":               options.Time12hFormat,
+		"umamiUrl":                    options.UmamiUrl,
+		"umamiWebsiteId":             options.UmamiWebsiteId,
 	}); err != nil {
 		return formatError(err)
 	}
