@@ -21,6 +21,24 @@ _v6.6.3_
 
 - Fixed dirwatch validation for type trunk-recorder (issue #280).
 
+_v6.6.4_
+
+- API call upload log messages now display the API key's ident name for easier source identification.
+- Added PostgreSQL database support.
+
+_v6.6.5_
+
+- New Umami analytics integration, configurable from the admin options page.
+- Dynamic script injection for Umami tracking, loaded/removed when settings change.
+- Event tracking for livefeed start/stop, call playback, call search, and call download.
+
+_v6.6.6_
+
+- Fixed admin config save race condition that could freeze the webapp and prevent settings from displaying.
+- Fixed server log showing system hostname instead of actual listen address.
+- Fixed handling of empty/null Umami analytics fields when saving from admin panel.
+- Binaries now include the fully built Angular webapp.
+
 ## Version 6.5
 
 - Fixed API looping on malformed or invalid multipart content (issue #181, #212).
