@@ -195,6 +195,11 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 		payload["afs"] = options.AfsSystems
 	}
 
+	if len(options.UmamiUrl) > 0 && len(options.UmamiWebsiteId) > 0 {
+		payload["umamiUrl"] = options.UmamiUrl
+		payload["umamiWebsiteId"] = options.UmamiWebsiteId
+	}
+
 	client.Send <- &Message{Command: MessageCommandConfig, Payload: payload}
 }
 

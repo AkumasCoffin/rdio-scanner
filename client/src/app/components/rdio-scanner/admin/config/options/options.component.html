@@ -195,4 +195,23 @@
             <mat-slide-toggle color="primary" formControlName="tagsToggle"></mat-slide-toggle>
         </div>
     </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Umami Analytics URL</span><br>
+            <span class="mat-caption">The URL of your Umami analytics script (e.g.
+                https://analytics.example.com/script.js). Leave empty to disable.</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <input type="text" matInput formControlName="umamiUrl" placeholder="Umami Script URL">
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Umami Website ID</span><br>
+            <span class="mat-caption">The website ID from your Umami dashboard.</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <input type="text" matInput formControlName="umamiWebsiteId" placeholder="Umami Website ID">
+        </mat-form-field>
+    </div>
 </ng-container>

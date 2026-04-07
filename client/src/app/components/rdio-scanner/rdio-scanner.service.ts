@@ -435,6 +435,8 @@ export class RdioScannerService implements OnDestroy {
             return;
         }
 
+        this.trackUmamiEvent('call-play', { callId: id });
+
         if (this.skipDelay) {
             this.skipDelay.unsubscribe();
 
@@ -756,6 +758,7 @@ export class RdioScannerService implements OnDestroy {
     }
 
     searchCalls(options: RdioScannerSearchOptions): void {
+        this.trackUmamiEvent('call-search');
         this.sendtoWebsocket(WebsocketCommand.ListCall, options);
     }
 
@@ -800,6 +803,8 @@ export class RdioScannerService implements OnDestroy {
 
         this.livefeedMode = RdioScannerLivefeedMode.Online;
 
+        this.trackUmamiEvent('livefeed-start');
+
         this.event.emit({ livefeedMode: this.livefeedMode });
 
         this.sendtoWebsocket(WebsocketCommand.LivefeedMap, lfm);
@@ -826,6 +831,8 @@ export class RdioScannerService implements OnDestroy {
     }
 
     stopLivefeed(): void {
+        this.trackUmamiEvent('livefeed-stop');
+
         this.livefeedMode = RdioScannerLivefeedMode.Offline;
 
         this.clearQueue();
@@ -998,6 +1005,7 @@ export class RdioScannerService implements OnDestroy {
     }
 
     private download(call: RdioScannerCall): void {
+        this.trackUmamiEvent('call-download', { callId: call.id });
         if (call.audio) {
             const file = call.audio.data.reduce((str, val) => str += String.fromCharCode(val), '');
             const fileName = call.audioName || 'unknown.dat';
@@ -1116,7 +1124,11 @@ export class RdioScannerService implements OnDestroy {
                         tags: typeof config.tags !== null && typeof config.tags === 'object' ? config.tags : {},
                         tagsToggle: typeof config.tagsToggle === 'boolean' ? config.tagsToggle : false,
                         time12hFormat: typeof config.time12hFormat === 'boolean' ? config.time12hFormat : false,
+                        umamiUrl: typeof config.umamiUrl === 'string' ? config.umamiUrl : undefined,
+                        umamiWebsiteId: typeof config.umamiWebsiteId === 'string' ? config.umamiWebsiteId : undefined,
                     };
+
+                    this.setupUmami();
 
                     if (typeof config.afs === 'string' && config.afs.length) {
                         this.config['afs'] = config.afs;
@@ -1392,6 +1404,42 @@ export class RdioScannerService implements OnDestroy {
         }
     }
 
+
+    private setupUmami(): void {
+        const doc = this.document;
+        const existingScript = doc.getElementById('umami-script');
+
+        if (this.config.umamiUrl && this.config.umamiWebsiteId) {
+            if (existingScript) {
+                if (existingScript.getAttribute('src') === this.config.umamiUrl
+                    && existingScript.getAttribute('data-website-id') === this.config.umamiWebsiteId) {
+                    return;
+                }
+                existingScript.remove();
+            }
+
+            const script = doc.createElement('script');
+            script.id = 'umami-script';
+            script.async = true;
+            script.defer = true;
+            script.setAttribute('src', this.config.umamiUrl);
+            script.setAttribute('data-website-id', this.config.umamiWebsiteId);
+            doc.head.appendChild(script);
+        } else if (existingScript) {
+            existingScript.remove();
+        }
+    }
+
+    trackUmamiEvent(eventName: string, eventData?: Record<string, string | number>): void {
+        try {
+            const umami = (window as any).umami;
+            if (umami) {
+                umami.track(eventName, eventData);
+            }
+        } catch (_) {
+            //
+        }
+    }
 
     private transformCall(call: RdioScannerCall): RdioScannerCall {
         if (call && Array.isArray(this.config?.systems)) {

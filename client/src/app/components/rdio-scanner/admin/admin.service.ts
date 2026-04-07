@@ -146,6 +146,8 @@ export interface Options {
     sortTalkgroups?: boolean;
     tagsToggle?: boolean;
     time12hFormat?: boolean;
+    umamiUrl?: string;
+    umamiWebsiteId?: string;
 }
 
 export interface System {
@@ -618,6 +620,8 @@ export class RdioScannerAdminService implements OnDestroy {
             sortTalkgroups: [options?.sortTalkgroups],
             tagsToggle: [options?.tagsToggle],
             time12hFormat: [options?.time12hFormat],
+            umamiUrl: [options?.umamiUrl],
+            umamiWebsiteId: [options?.umamiWebsiteId],
         });
     }
 
