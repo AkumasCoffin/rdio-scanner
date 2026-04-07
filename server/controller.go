@@ -110,7 +110,11 @@ func (controller *Controller) IngestCall(call *Call) {
 	)
 
 	logCall := func(call *Call, level string, message string) {
-		controller.Logs.LogEvent(level, fmt.Sprintf("newcall: system=%v talkgroup=%v file=%v %v", call.System, call.Talkgroup, call.AudioName, message))
+		if call.apiKeyIdent != "" {
+			controller.Logs.LogEvent(level, fmt.Sprintf("newcall: [%v] system=%v talkgroup=%v file=%v %v", call.apiKeyIdent, call.System, call.Talkgroup, call.AudioName, message))
+		} else {
+			controller.Logs.LogEvent(level, fmt.Sprintf("newcall: system=%v talkgroup=%v file=%v %v", call.System, call.Talkgroup, call.AudioName, message))
+		}
 	}
 
 	logError := func(err error) {
