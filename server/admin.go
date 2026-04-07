@@ -69,9 +69,7 @@ func NewAdmin(controller *Controller) *Admin {
 
 func (admin *Admin) BroadcastConfig() {
 	if b, err := json.Marshal(admin.GetConfig()); err == nil {
-		for conn := range admin.Conns {
-			conn.WriteMessage(websocket.TextMessage, b)
-		}
+		admin.Broadcast <- &b
 	}
 }
 
