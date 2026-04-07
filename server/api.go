@@ -93,6 +93,7 @@ func (api *Api) HandleCall(key string, call *Call, w http.ResponseWriter) {
 
 	if apikey, ok := api.Controller.Apikeys.GetApikey(key); ok {
 		if apikey.HasAccess(call) {
+			call.apiKeyIdent = apikey.Ident
 			api.Controller.Ingest <- call
 
 		} else {

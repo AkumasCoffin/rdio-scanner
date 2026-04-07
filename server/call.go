@@ -45,6 +45,7 @@ type Call struct {
 	talkgroupName  any
 	talkgroupTag   any
 	units          any
+	apiKeyIdent    string
 }
 
 func NewCall() *Call {
