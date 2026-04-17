@@ -94,6 +94,25 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    // Rename APK outputs to rdio-<versionName>.apk (release) or
+    // rdio-<versionName>-debug.apk so release assets live at predictable
+    // paths. defaultConfig.versionName drives the filename.
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            (this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl)
+                ?.outputFileName = buildString {
+                    append("rdio-")
+                    append(variant.versionName)
+                    if (variant.buildType.name != "release") {
+                        append("-")
+                        append(variant.buildType.name)
+                    }
+                    append(".apk")
+                }
+        }
+    }
 }
 
 dependencies {
