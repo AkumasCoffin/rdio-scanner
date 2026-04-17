@@ -11,5 +11,7 @@ captures/
 *.apk
 *.aab
 *.keystore
+*.jks
+signing.properties
 release/
 app/release/

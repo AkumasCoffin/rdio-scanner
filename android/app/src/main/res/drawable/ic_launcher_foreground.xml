@@ -1,28 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Adaptive-icon foreground: stylized scanner head with orange LED + signal
+    arcs radiating upward. 108dp viewport, safe zone is the center 66dp
+    (everything inside ~21dp margin is guaranteed visible after masking).
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- Outermost signal arc -->
     <path
-        android:fillColor="#E8F1FF"
-        android:pathData="M54,30 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+        android:pathData="M 22 54 a 32 32 0 0 1 64 0"
+        android:strokeWidth="5"
+        android:strokeColor="#3CF97316"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- Middle signal arc -->
     <path
-        android:fillColor="#E8F1FF"
-        android:pathData="M54,30 L54,54" />
+        android:pathData="M 32 54 a 22 22 0 0 1 44 0"
+        android:strokeWidth="5"
+        android:strokeColor="#80F97316"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- Inner signal arc -->
     <path
-        android:strokeColor="#E8F1FF"
-        android:strokeWidth="2"
-        android:pathData="M54,30 L54,54" />
+        android:pathData="M 42 54 a 12 12 0 0 1 24 0"
+        android:strokeWidth="5"
+        android:strokeColor="#F97316"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- LED / antenna dot -->
     <path
-        android:strokeColor="#E8F1FF"
-        android:strokeWidth="3"
-        android:pathData="M38,66 A20,20 0 0,1 70,66" />
+        android:pathData="M 54 52 m -5 0 a 5 5 0 1 0 10 0 a 5 5 0 1 0 -10 0"
+        android:fillColor="#F97316" />
+
+    <!-- Scanner body outline -->
     <path
-        android:strokeColor="#E8F1FF"
-        android:strokeWidth="3"
-        android:pathData="M30,74 A32,32 0 0,1 78,74" />
+        android:pathData="M 30 60 h 48 a 4 4 0 0 1 4 4 v 18 a 4 4 0 0 1 -4 4 h -48 a 4 4 0 0 1 -4 -4 v -18 a 4 4 0 0 1 4 -4 z"
+        android:fillColor="#F9FAFB" />
+
+    <!-- LCD display -->
     <path
-        android:strokeColor="#E8F1FF"
-        android:strokeWidth="3"
-        android:pathData="M22,82 A44,44 0 0,1 86,82" />
+        android:pathData="M 34 64 h 40 a 2 2 0 0 1 2 2 v 10 a 2 2 0 0 1 -2 2 h -40 a 2 2 0 0 1 -2 -2 v -10 a 2 2 0 0 1 2 -2 z"
+        android:fillColor="#0B1220" />
+
+    <!-- LCD bars -->
+    <path
+        android:pathData="M 36 69 h 8 v 2 h -8 z"
+        android:fillColor="#F97316" />
+    <path
+        android:pathData="M 36 73 h 14 v 2 h -14 z"
+        android:fillColor="#6B7280" />
+    <path
+        android:pathData="M 56 69 h 16 v 2 h -16 z"
+        android:fillColor="#6B7280" />
+    <path
+        android:pathData="M 56 73 h 12 v 2 h -12 z"
+        android:fillColor="#6B7280" />
 </vector>

@@ -1,9 +1,26 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
+
+// Load release keystore credentials from signing.properties if present,
+// otherwise from RDIO_KEYSTORE_* environment variables. When neither is
+// available, release builds fall back to the debug keystore so local
+// assembleRelease still works — suitable for CI sideload artifacts but
+// NOT for a Play Store upload.
+val releaseSigningProps: Properties? = rootProject.file("signing.properties")
+    .takeIf { it.exists() }
+    ?.let { file -> Properties().apply { file.inputStream().use(::load) } }
+
+fun signingSetting(key: String): String? =
+    releaseSigningProps?.getProperty(key)?.takeIf { it.isNotBlank() }
+        ?: System.getenv("RDIO_${key.uppercase()}")?.takeIf { it.isNotBlank() }
+
+val hasReleaseKeystore = signingSetting("storeFile") != null
 
 android {
     namespace = "solutions.saubeo.rdioscanner"
@@ -14,8 +31,19 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
         vectorDrawables.useSupportLibrary = true
+    }
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = rootProject.file(signingSetting("storeFile")!!)
+                storePassword = signingSetting("storePassword")
+                keyAlias = signingSetting("keyAlias")
+                keyPassword = signingSetting("keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -30,7 +58,17 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn(
+                    "⚠️  No release keystore found — assembleRelease will sign " +
+                        "with the debug key. Configure signing.properties or the " +
+                        "RDIO_STOREFILE/STOREPASSWORD/KEYALIAS/KEYPASSWORD env " +
+                        "vars before publishing."
+                )
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

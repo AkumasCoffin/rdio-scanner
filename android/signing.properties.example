@@ -1,0 +1,19 @@
+# Copy this to signing.properties (in the android/ directory) and fill in your
+# release keystore details. signing.properties is gitignored so the credentials
+# never end up in source control. Alternatively, set the RDIO_STOREFILE /
+# RDIO_STOREPASSWORD / RDIO_KEYALIAS / RDIO_KEYPASSWORD environment variables
+# (used by CI).
+#
+# Create a keystore:
+#     keytool -genkeypair -v \
+#         -keystore release.keystore \
+#         -keyalg RSA -keysize 4096 -validity 10000 \
+#         -alias rdio
+#
+# Store it somewhere persistent and back it up — losing it means you can't ship
+# further updates to users who installed earlier versions.
+
+storeFile=release.keystore
+storePassword=your_store_password_here
+keyAlias=rdio
+keyPassword=your_key_password_here
