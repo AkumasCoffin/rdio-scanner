@@ -1,165 +1,407 @@
 :host {
   box-sizing: border-box;
-  display: block;
-  padding: 8px;
-  user-select: none;
-}
-
-.rdio-filters form {
   display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-
-  .mat-form-field {
-    @for $i from 1 through 6 {
-      &:nth-of-type(#{$i}) {
-        order: #{$i};
-      }
-    }
-  }
-
-  .reset {
-    display: flex;
-    flex: 100%;
-    flex-direction: row;
-    justify-content: flex-end;
-    order: 7;
-  }
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  user-select: none;
+  background: var(--bg);
+  color: var(--text-main);
+  overflow: hidden;
 }
 
-.rdio-list {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  margin-bottom: 16px;
+.rdio-search {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
-  padding: 0;
-  box-shadow: var(--shadow-soft);
+}
 
-  .mat-cell,
-  .mat-header-cell {
-    &:first-of-type {
-      padding-left: 0;
-    }
+/* ------------------------------ Filter bar ------------------------------ */
 
-    &:last-of-type {
-      padding-right: 8px;
-    }
+.filter-bar {
+  flex: 0 0 auto;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  box-shadow: 0 4px 16px -8px rgba(0, 0, 0, 0.6);
+  padding: 8px 12px 0;
 
-    &:nth-child(1) {
-      flex: 0 0 40px;
-    }
+  .filter-row {
+    /* Deterministic one-row layout. The search field gets the largest share,
+       the date gets a bit extra for its long native widget, the four selects
+       share equal columns, and actions collapse to their intrinsic width.
+       Each column's minmax() floor allows shrinking down to ~100 px before
+       the grid overflows, which never happens at the 1200 px max-width the
+       panel enforces. */
+    display: grid;
+    grid-template-columns:
+      minmax(180px, 2.4fr) /* search */
+      minmax(100px, 1fr)   /* sort */
+      minmax(145px, 1.4fr) /* date */
+      minmax(100px, 1fr)   /* system */
+      minmax(100px, 1fr)   /* talkgroup */
+      minmax(100px, 1fr)   /* group */
+      minmax(100px, 1fr)   /* tag */
+      auto;                /* actions */
+    gap: 6px 8px;
+    align-items: end;
+  }
 
-    &:nth-child(2) {
-      flex: 0 0 50px;
-    }
+  .f {
+    margin: 0;
+    min-width: 0; /* cancel Material's intrinsic 180 px width */
 
-    &:nth-child(3):not(.time12h) {
-      flex: 0 0 50px;
-    }
-
-    &:nth-child(3).time12h {
-      flex: 0 0 70px;
-    }
-
-    &:nth-child(4),
-    &:nth-child(5) {
-      flex: 0 0 20%;
-    }
-
-    > span {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    /* Fill-appearance fields: label lives INSIDE the fill rectangle, so no
+       clipping above the filter-bar. Compact height by trimming the infix
+       padding Material ships by default, and nuke the 180 px default width
+       on the infix itself so fields can share row space. */
+    ::ng-deep {
+      .mat-form-field-wrapper { padding-bottom: 0; margin: 0; }
+      .mat-form-field-flex {
+        padding: 0 10px !important;
+        background: var(--bg-elevated-soft) !important;
+        border-radius: 6px 6px 0 0;
+      }
+      .mat-form-field-infix {
+        padding: 6px 0 6px !important;
+        border-top: 0.6em solid transparent !important;
+        width: auto !important;
+        min-width: 0 !important;
+      }
+      .mat-form-field-underline { bottom: 0 !important; }
+      .mat-form-field-ripple { background-color: var(--accent); }
+      .mat-form-field-label { color: var(--text-muted); }
+      .mat-form-field-label-wrapper { top: -0.75em; padding-top: 0.75em; }
+      .mat-input-element { color: var(--text-main); caret-color: var(--accent); }
+      .mat-select-value { color: var(--text-main); }
+      .mat-select-arrow { color: var(--text-muted); }
+      .mat-icon { color: var(--text-muted); }
+      .mat-form-field-subscript-wrapper { display: none; }
     }
   }
 
-  .paginator {
-    align-items: center;
+  .filter-actions {
     display: flex;
-    flex-direction: row;
-    justify-content: space-between;
-    padding-left: 8px;
+    align-items: center;
+    gap: 8px;
+    padding-top: 4px;
 
-    .download-controls {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-
-      .download-selected-btn {
+    .mat-slide-toggle {
+      ::ng-deep .mat-slide-toggle-content {
+        color: var(--text-muted);
         display: flex;
         align-items: center;
-        gap: 4px;
-        font-size: 12px;
-        padding: 0 12px;
-        height: 32px;
+      }
+    }
 
-        mat-icon {
-          font-size: 18px;
-          width: 18px;
-          height: 18px;
-        }
+    .dl-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      padding: 0 10px;
+      height: 32px;
+      min-width: auto;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+    }
+
+    .reset-btn {
+      height: 32px;
+      line-height: 30px;
+      padding: 0 12px;
+      color: var(--text-muted);
+      border-color: var(--border-subtle);
+
+      &:hover {
+        color: var(--accent);
+        border-color: var(--accent);
       }
     }
   }
 
-  .spin {
-    animation-duration: 1000ms;
-    animation-iteration-count: infinite;
-    animation-name: spin;
-    animation-timing-function: linear;
+  .loading-bar {
+    margin: 0 -12px;
+    width: calc(100% + 24px);
+    height: 2px;
 
-    @keyframes spin {
-      from {
-        transform: rotate(0deg);
+    ::ng-deep .mat-progress-bar-background { fill: transparent; }
+    ::ng-deep .mat-progress-bar-buffer { background: transparent; }
+    ::ng-deep .mat-progress-bar-fill::after { background: var(--accent); }
+  }
+}
+
+/* ------------------------------- Results ------------------------------- */
+
+.results {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Rows take their natural height so full transcripts are visible; if
+     the 10-per-page set is taller than the viewport the container
+     scrolls internally. Outer body scroll is still suppressed via
+     rdio-scanner :host overflow:hidden. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+
+  &::-webkit-scrollbar { width: 6px; }
+  &::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 3px;
+  }
+  &::-webkit-scrollbar-track { background: transparent; }
+
+  .select-all-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 14px;
+    margin: 0 8px 6px;
+    background: var(--bg-elevated-soft);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md, 8px);
+    color: var(--text-muted);
+    font-size: 13px;
+
+    .selected-count {
+      color: var(--accent);
+      font-weight: 600;
+    }
+  }
+
+  .call-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 12px;
+    margin: 0;
+    /* Rows take their natural height — full transcripts shown, no
+       clamping. The outer .results scrolls internally when 10 rows at
+       natural height exceed the viewport. */
+    flex: 0 0 auto;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-left: 3px solid transparent;
+    border-radius: var(--radius-md, 8px);
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
+
+    &:hover {
+      background: var(--bg-elevated-soft);
+      border-left-color: var(--accent);
+    }
+
+    &.replaying {
+      background: var(--accent-soft);
+      border-left-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent) inset;
+
+      .meta-tg, .meta-name { color: var(--accent); }
+    }
+
+    &.highlighted {
+      background: rgba(255, 213, 79, 0.18);
+      border-left-color: #ffb300;
+      animation: highlight-pulse 1.1s ease-out 2;
+    }
+
+    &.empty {
+      min-height: 52px;
+      opacity: 0.4;
+      pointer-events: none;
+    }
+  }
+
+  @keyframes highlight-pulse {
+    0%   { background-color: rgba(255, 213, 79, 0.45); }
+    100% { background-color: rgba(255, 213, 79, 0.18); }
+  }
+
+  .row-actions {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 2px;
+    padding-top: 2px;
+
+    .mat-icon-button {
+      width: 32px;
+      height: 32px;
+      line-height: 32px;
+      color: var(--text-muted);
+
+      .mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        line-height: 18px;
       }
 
-      to {
-        transform: rotate(-360deg);
-      }
+      &:hover { color: var(--accent); }
     }
+
+    .play-btn, .stop-btn {
+      color: var(--accent);
+
+      .mat-icon { font-size: 22px; width: 22px; height: 22px; }
+    }
+
+    .loading-btn { color: var(--text-muted); }
+
+    .transcribe-btn[disabled] { color: var(--text-soft); }
+  }
+
+  .row-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .row-meta {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    font-size: 12px;
+    line-height: 1.2;
+    color: var(--text-muted);
+
+    .meta-date, .meta-time {
+      font-variant-numeric: tabular-nums;
+      color: var(--text-soft);
+    }
+
+    .meta-time.t12 { min-width: 58px; }
+
+    .meta-system {
+      color: var(--text-main);
+      background: var(--bg-elevated-soft);
+      border: 1px solid var(--border-subtle);
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+    }
+
+    .meta-sep { color: var(--text-soft); }
+
+    .meta-tg {
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.01em;
+    }
+
+    .meta-name {
+      color: var(--text-main);
+      white-space: normal;
+      word-break: break-word;
+      font-size: 13px;
+    }
+  }
+
+  .row-transcript {
+    color: var(--text-main);
+    font-size: 13.5px;
+    line-height: 1.4;
+    white-space: normal;
+    word-break: break-word;
+    /* Full transcript, no clamping — the row height grows with content.
+       Results list scrolls vertically if all 10 rows don't fit. */
+    overflow: visible;
+
+    &.placeholder {
+      color: var(--text-soft);
+      font-style: italic;
+      font-size: 12px;
+    }
+
+    .placeholder-text {
+      color: var(--text-soft);
+      font-style: italic;
+      font-size: 12px;
+    }
+  }
+
+  .placeholder-row { min-height: 34px; }
+}
+
+/* ------------------------------- Footer -------------------------------- */
+
+.foot {
+  flex: 0 0 auto;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border-subtle);
+  box-shadow: 0 -4px 16px -8px rgba(0, 0, 0, 0.6);
+
+  ::ng-deep .mat-paginator {
+    background: transparent;
+    color: var(--text-muted);
+  }
+
+  ::ng-deep .mat-paginator-range-label,
+  ::ng-deep .mat-paginator-page-size {
+    color: var(--text-muted);
+  }
+
+  ::ng-deep .mat-icon-button:not([disabled]) { color: var(--accent); }
+}
+
+/* ------------------------------- Animation ----------------------------- */
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+
+/* --------------------------- Responsive tweaks ------------------------- */
+
+@media (max-width: 900px) {
+  .filter-bar .filter-row {
+    /* Drop to a 3-col grid (search spans full width, other fields pair up,
+       actions snap to a trailing full-width row). */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .filter-bar .filter-row .f.f-q { grid-column: 1 / -1; }
+  .filter-bar .filter-row .filter-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
   }
 }
 
-@media (max-width: 459px) {
-  .rdio-filters form .mat-form-field {
-    flex: 100%;
+@media (max-width: 540px) {
+  .filter-bar {
+    padding: 6px 8px 0;
   }
-}
-
-@media (min-width: 460px) and (max-width: 979px) {
-  .rdio-filters form .mat-form-field {
-    flex: calc(50% - 1em);
-
-    &:nth-of-type(2),
-    &:nth-of-type(4),
-    &:nth-of-type(6) {
-      margin-left: 1em;
-    }
+  .filter-bar .filter-row {
+    grid-template-columns: minmax(0, 1fr);
   }
-}
+  .filter-bar .filter-row .f.f-q,
+  .filter-bar .filter-row .filter-actions { grid-column: 1; }
 
-@media (min-width: 980px) {
-  .rdio-filters form .mat-form-field {
-    flex: calc(100% / 3 - 2em);
-
-    &:nth-of-type(2),
-    &:nth-of-type(4),
-    &:nth-of-type(5),
-    &:nth-of-type(6) {
-      margin-left: 1em;
+  .results {
+    .call-row {
+      padding: 8px 10px;
+      margin: 0 4px 6px;
     }
 
-    &:nth-of-type(3) {
-      order: 4;
-    }
-
-    &:nth-of-type(4) {
-      order: 5;
-    }
-
-    &:nth-of-type(5) {
-      order: 3;
-    }
+    .row-meta { font-size: 11px; }
+    .row-transcript { font-size: 13px; }
   }
 }

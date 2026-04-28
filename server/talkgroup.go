@@ -25,22 +25,30 @@ import (
 )
 
 type Talkgroup struct {
-	Frequency any `json:"frequency"`
-	group     string
-	GroupId   uint   `json:"groupId"`
-	Id        uint   `json:"id"`
-	Label     string `json:"label"`
-	Led       any    `json:"led"`
-	Name      string `json:"name"`
-	Order     uint   `json:"order"`
-	TagId     uint   `json:"tagId"`
-	tag       string
+	Frequency  any `json:"frequency"`
+	group      string
+	GroupId    uint   `json:"groupId"`
+	Id         uint   `json:"id"`
+	Label      string `json:"label"`
+	Led        any    `json:"led"`
+	Name       string `json:"name"`
+	Order      uint   `json:"order"`
+	TagId      uint   `json:"tagId"`
+	Transcribe bool   `json:"transcribe"`
+	tag        string
 }
 
 func (talkgroup *Talkgroup) FromMap(m map[string]any) *Talkgroup {
+	talkgroup.Transcribe = true // default-on; overridden below if key is present
+
 	switch v := m["id"].(type) {
 	case float64:
 		talkgroup.Id = uint(v)
+	}
+
+	switch v := m["transcribe"].(type) {
+	case bool:
+		talkgroup.Transcribe = v
 	}
 
 	switch v := m["frequency"].(type) {
@@ -162,14 +170,14 @@ func (talkgroups *Talkgroups) Read(db *Database, systemId uint) error {
 		return fmt.Errorf("talkgroups.read: %v", err)
 	}
 
-	if rows, err = db.Query("select `frequency`, `groupId`, `id`, `label`, `led`, `name`, `order`, `tagId` from `rdioScannerTalkgroups` where `systemId` = ?", systemId); err != nil {
+	if rows, err = db.Query("select `frequency`, `groupId`, `id`, `label`, `led`, `name`, `order`, `tagId`, `transcribe` from `rdioScannerTalkgroups` where `systemId` = ?", systemId); err != nil {
 		return formatError(err)
 	}
 
 	for rows.Next() {
 		talkgroup := &Talkgroup{}
 
-		if err = rows.Scan(&frequency, &talkgroup.GroupId, &talkgroup.Id, &talkgroup.Label, &led, &talkgroup.Name, &talkgroup.Order, &talkgroup.TagId); err != nil {
+		if err = rows.Scan(&frequency, &talkgroup.GroupId, &talkgroup.Id, &talkgroup.Label, &led, &talkgroup.Name, &talkgroup.Order, &talkgroup.TagId, &talkgroup.Transcribe); err != nil {
 			break
 		}
 
@@ -257,11 +265,11 @@ func (talkgroups *Talkgroups) Write(db *Database, systemId uint) error {
 		}
 
 		if count == 0 {
-			if _, err = db.Exec("insert into `rdioScannerTalkgroups` (`frequency`, `groupId`, `id`, `label`, `led`, `name`, `order`, `systemId`, `tagId`) values (?, ?, ?, ?, ?, ?, ?, ?, ?)", talkgroup.Frequency, talkgroup.GroupId, talkgroup.Id, talkgroup.Label, talkgroup.Led, talkgroup.Name, talkgroup.Order, systemId, talkgroup.TagId); err != nil {
+			if _, err = db.Exec("insert into `rdioScannerTalkgroups` (`frequency`, `groupId`, `id`, `label`, `led`, `name`, `order`, `systemId`, `tagId`, `transcribe`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", talkgroup.Frequency, talkgroup.GroupId, talkgroup.Id, talkgroup.Label, talkgroup.Led, talkgroup.Name, talkgroup.Order, systemId, talkgroup.TagId, talkgroup.Transcribe); err != nil {
 				break
 			}
 
-		} else if _, err = db.Exec("update `rdioScannerTalkgroups` set `frequency` = ?, `groupId` = ?, `label` = ?, `led` = ?, `name` = ?, `order` = ?, `tagId` = ? where `id` = ? and `systemId` = ?", talkgroup.Frequency, talkgroup.GroupId, talkgroup.Label, talkgroup.Led, talkgroup.Name, talkgroup.Order, talkgroup.TagId, talkgroup.Id, systemId); err != nil {
+		} else if _, err = db.Exec("update `rdioScannerTalkgroups` set `frequency` = ?, `groupId` = ?, `label` = ?, `led` = ?, `name` = ?, `order` = ?, `tagId` = ?, `transcribe` = ? where `id` = ? and `systemId` = ?", talkgroup.Frequency, talkgroup.GroupId, talkgroup.Label, talkgroup.Led, talkgroup.Name, talkgroup.Order, talkgroup.TagId, talkgroup.Transcribe, talkgroup.Id, systemId); err != nil {
 			break
 		}
 	}

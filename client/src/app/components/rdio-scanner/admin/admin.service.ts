@@ -146,6 +146,17 @@ export interface Options {
     sortTalkgroups?: boolean;
     tagsToggle?: boolean;
     time12hFormat?: boolean;
+    transcriptionEnabled?: boolean;
+    transcriptionProvider?: string;
+    transcriptionBaseUrl?: string;
+    transcriptionApiKey?: string;
+    transcriptionModel?: string;
+    transcriptionLanguage?: string;
+    transcriptionPrompt?: string;
+    transcriptionMaxPerMinute?: number;
+    transcriptionMinAudioBytes?: number;
+    waitForTranscript?: boolean;
+    showRetranscribeButton?: boolean;
     umamiUrl?: string;
     umamiWebsiteId?: string;
 }
@@ -159,6 +170,8 @@ export interface System {
     led?: string | null;
     order?: number | null;
     talkgroups?: Talkgroup[];
+    transcribe?: boolean;
+    transcriptionPrompt?: string;
     units?: Unit[];
 }
 
@@ -176,6 +189,7 @@ export interface Talkgroup {
     name?: string;
     order?: number;
     tagId?: number;
+    transcribe?: boolean;
 }
 
 export interface Unit {
@@ -482,7 +496,12 @@ export class RdioScannerAdminService implements OnDestroy {
             return res.config;
 
         } catch (error) {
-            this.errorHandler(error);
+            if (error instanceof HttpErrorResponse && error.status === 500 && error.error?.errors) {
+                const sections = Object.keys(error.error.errors).join(', ');
+                this.matSnackBar.open(`Config save failed for: ${sections}`, '', { duration: 7000 });
+            } else {
+                this.errorHandler(error);
+            }
 
             return config;
         }
@@ -576,6 +595,8 @@ export class RdioScannerAdminService implements OnDestroy {
             led: [system?.led],
             order: [system?.order],
             talkgroups: this.ngFormBuilder.array(system?.talkgroups?.map((talkgroup) => this.newTalkgroupForm(talkgroup)) || []),
+            transcribe: [system?.transcribe ?? true],
+            transcriptionPrompt: [system?.transcriptionPrompt ?? ''],
             units: this.ngFormBuilder.array(system?.units?.map((unit) => this.newUnitForm(unit)) || []),
         });
     }
@@ -590,6 +611,7 @@ export class RdioScannerAdminService implements OnDestroy {
             name: [talkgroup?.name, Validators.required],
             order: [talkgroup?.order],
             tagId: [talkgroup?.tagId, [Validators.required, this.validateTag()]],
+            transcribe: [talkgroup?.transcribe ?? true],
         });
     }
 
@@ -620,9 +642,37 @@ export class RdioScannerAdminService implements OnDestroy {
             sortTalkgroups: [options?.sortTalkgroups],
             tagsToggle: [options?.tagsToggle],
             time12hFormat: [options?.time12hFormat],
+            transcriptionEnabled: [options?.transcriptionEnabled ?? false],
+            transcriptionProvider: [options?.transcriptionProvider ?? 'groq'],
+            transcriptionBaseUrl: [options?.transcriptionBaseUrl ?? 'https://api.groq.com/openai/v1'],
+            transcriptionApiKey: [options?.transcriptionApiKey ?? ''],
+            transcriptionModel: [options?.transcriptionModel ?? 'whisper-large-v3-turbo'],
+            transcriptionLanguage: [options?.transcriptionLanguage ?? ''],
+            transcriptionPrompt: [options?.transcriptionPrompt ?? ''],
+            transcriptionMaxPerMinute: [options?.transcriptionMaxPerMinute ?? 0, Validators.min(0)],
+            transcriptionMinAudioBytes: [options?.transcriptionMinAudioBytes ?? 0, Validators.min(0)],
+            waitForTranscript: [options?.waitForTranscript ?? false],
+            showRetranscribeButton: [options?.showRetranscribeButton ?? false],
             umamiUrl: [options?.umamiUrl],
             umamiWebsiteId: [options?.umamiWebsiteId],
         });
+    }
+
+    async transcribeCall(id: number, options?: { manual?: boolean; transcript?: string }): Promise<{ id: number; transcript: string } | undefined> {
+        try {
+            return await firstValueFrom(this.ngHttpClient.post<{ id: number; transcript: string }>(
+                `${window.location.href}/../api/admin/transcribe`,
+                {
+                    id,
+                    manual: !!options?.manual,
+                    transcript: options?.transcript ?? '',
+                },
+                { headers: this.getHeaders(), responseType: 'json' },
+            ));
+        } catch (error) {
+            this.errorHandler(error);
+            return undefined;
+        }
     }
 
     private configWebSocketClose(): void {

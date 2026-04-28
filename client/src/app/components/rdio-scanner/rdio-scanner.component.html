@@ -10,7 +10,7 @@
             </mat-toolbar>
             <div #scrollableSearch>
                 <div>
-                    <rdio-scanner-search #searchComponent></rdio-scanner-search>
+                    <rdio-scanner-search #searchComponent (focusedCall)="onSearchFocusedCall(scrollableSearch)"></rdio-scanner-search>
                 </div>
             </div>
         </div>

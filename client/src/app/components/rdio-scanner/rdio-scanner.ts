@@ -59,6 +59,8 @@ export interface RdioScannerCall {
     talkgroup: number;
     talkgroupData?: RdioScannerTalkgroup;
     systemData?: RdioScannerSystem;
+    transcript?: string;
+    hasTranscript?: boolean;
 }
 
 export interface RdioScannerCallFrequency {
@@ -106,6 +108,8 @@ export interface RdioScannerConfig {
     time12hFormat: boolean;
     umamiUrl?: string;
     umamiWebsiteId?: string;
+    waitForTranscript?: boolean;
+    showRetranscribeButton?: boolean;
 }
 
 export interface RdioScannerEvent {
@@ -113,6 +117,8 @@ export interface RdioScannerEvent {
     categories?: RdioScannerCategory[];
     call?: RdioScannerCall;
     config?: RdioScannerConfig;
+    deepLinkCall?: number;
+    transcriptReady?: { id: number; transcript: string };
     expired?: boolean;
     holdSys?: boolean;
     holdTg?: boolean;
@@ -128,6 +134,8 @@ export interface RdioScannerEvent {
     time?: number;
     tooMany?: boolean;
     volume?: number;
+    waitForTranscript?: boolean;
+    showRetranscribeButton?: boolean;
 }
 
 export interface RdioScannerKeypadBeeps {
@@ -167,6 +175,7 @@ export interface RdioScannerSearchOptions {
     group?: string;
     limit: number;
     offset: number;
+    q?: string;
     sort: number;
     system?: number;
     tag?: string;

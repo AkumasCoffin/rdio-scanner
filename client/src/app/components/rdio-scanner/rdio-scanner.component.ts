@@ -17,7 +17,7 @@
  * ****************************************************************************
  */
 
-import { Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { MatSidenav } from '@angular/material/sidenav';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { timer } from 'rxjs';
@@ -25,13 +25,14 @@ import { RdioScannerEvent, RdioScannerLivefeedMode } from './rdio-scanner';
 import { RdioScannerService } from './rdio-scanner.service';
 import { RdioScannerNativeComponent } from './native/native.component';
 import { RdioScannerPublicStatsComponent } from './stats/public-stats.component';
+import { RdioScannerSearchComponent } from './search/search.component';
 
 @Component({
     selector: 'rdio-scanner',
     styleUrls: ['./rdio-scanner.component.scss'],
     templateUrl: './rdio-scanner.component.html',
 })
-export class RdioScannerComponent implements OnDestroy, OnInit {
+export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
     private eventSubscription = this.rdioScannerService.event.subscribe((event: RdioScannerEvent) => this.eventHandler(event));
 
     private livefeedMode: RdioScannerLivefeedMode = RdioScannerLivefeedMode.Offline;
@@ -43,6 +44,10 @@ export class RdioScannerComponent implements OnDestroy, OnInit {
     @ViewChild('statsPanel') private statsPanel: MatSidenav | undefined;
 
     @ViewChild('statsComponent') public statsComponent: RdioScannerPublicStatsComponent | undefined;
+
+    @ViewChild('searchComponent') private searchComponent: RdioScannerSearchComponent | undefined;
+
+    @ViewChild('scrollableSearch') private scrollableSearch: ElementRef | undefined;
 
     constructor(
         private matSnackBar: MatSnackBar,
@@ -57,6 +62,21 @@ export class RdioScannerComponent implements OnDestroy, OnInit {
 
             event.returnValue = 'Live Feed is ON, do you really want to leave?';
         }
+    }
+
+    ngAfterViewInit(): void {
+        // The deepLinkCall event can fire before this component subscribes —
+        // the index.html early-WS can deliver CFG to the service before
+        // Angular has even constructed this component. In that case the
+        // event handler below never sees the emit. Pull any pending
+        // deep-link ID directly so the share-link flow still runs.
+        setTimeout(() => {
+            const id = this.rdioScannerService.consumePendingDeepLink();
+            if (id) {
+                this.searchPanel?.open();
+                setTimeout(() => this.searchComponent?.focusCall(id), 0);
+            }
+        }, 300);
     }
 
     ngOnDestroy(): void {
@@ -142,9 +162,26 @@ export class RdioScannerComponent implements OnDestroy, OnInit {
         }
     }
 
+    onSearchFocusedCall(scrollable: HTMLElement): void {
+        // Called when the search component has highlighted the target call
+        // and wants the sidenav content scrolled to it. The scrollTop(0)
+        // trick resets the scroll, then the component scrolls the row into
+        // view itself via scrollIntoView.
+        scrollable?.scrollTo?.(0, 0);
+    }
+
     private eventHandler(event: RdioScannerEvent): void {
         if (event.livefeedMode) {
             this.livefeedMode = event.livefeedMode;
+        }
+
+        if (typeof event.deepLinkCall === 'number' && event.deepLinkCall > 0) {
+            // Route the deep-link: open the search panel, then ask the search
+            // component to locate/highlight/play the call. Mark it consumed
+            // so the ngAfterViewInit fallback doesn't also run it.
+            const id = this.rdioScannerService.consumePendingDeepLink() ?? event.deepLinkCall;
+            this.searchPanel?.open();
+            setTimeout(() => this.searchComponent?.focusCall(id), 0);
         }
     }
 }

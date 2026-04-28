@@ -65,6 +65,15 @@
             <span class="flag" [ngClass]="{ flaged: patched }">PATCH</span>
         </div>
     </div>
+    <div class="live-transcript" [class.empty]="!displayCall?.transcript"
+        [ngClass]="liveTranscriptColor">
+        <div class="live-transcript-label">
+            <mat-icon class="live-icon">graphic_eq</mat-icon>
+            <span>TRANSCRIPT</span>
+        </div>
+        <div class="live-transcript-text" *ngIf="displayCall?.transcript">{{ displayCall?.transcript }}</div>
+        <div class="live-transcript-text placeholder" *ngIf="!displayCall?.transcript">—</div>
+    </div>
     <div class="wrapper">
         <div class="auth" [ngClass]="{ visible: auth }">
             <form class="mat-elevation-z8" autocomplete="off" [formGroup]="authForm" (ngSubmit)="authenticate()">
@@ -98,21 +107,29 @@
                 </tr>
             </thead>
             <tbody>
-                <tr *ngFor="let previousCall of callHistory"
-                    [ngClass]="{ 'replaying': previousCall?.id !== null && previousCall?.id === call?.id} ">
-                    <td>
-                        <span>{{ previousCall?.dateTime | date:timeFormat }}</span>
-                    </td>
-                    <td>
-                        <span>{{ previousCall?.systemData?.label || previousCall?.system}}</span>
-                    </td>
-                    <td>
-                        <span>{{ previousCall?.talkgroupData?.label || previousCall?.talkgroup }}</span>
-                    </td>
-                    <td>
-                        <span>{{ previousCall?.talkgroupData?.name || previousCall?.frequency }}</span>
-                    </td>
-                </tr>
+                <ng-container *ngFor="let previousCall of callHistory">
+                    <tr
+                        [ngClass]="{ 'replaying': previousCall?.id !== null && previousCall?.id === call?.id} ">
+                        <td>
+                            <span>{{ previousCall?.dateTime | date:timeFormat }}</span>
+                        </td>
+                        <td>
+                            <span>{{ previousCall?.systemData?.label || previousCall?.system}}</span>
+                        </td>
+                        <td>
+                            <span>{{ previousCall?.talkgroupData?.label || previousCall?.talkgroup }}</span>
+                        </td>
+                        <td>
+                            <span>{{ previousCall?.talkgroupData?.name || previousCall?.frequency }}</span>
+                        </td>
+                    </tr>
+                    <tr *ngIf="previousCall?.transcript" class="transcript-row"
+                        [ngClass]="{ 'replaying': previousCall?.id !== null && previousCall?.id === call?.id} ">
+                        <td colspan="4">
+                            <span class="transcript">{{ previousCall?.transcript }}</span>
+                        </td>
+                    </tr>
+                </ng-container>
             </tbody>
         </table>
     </div>

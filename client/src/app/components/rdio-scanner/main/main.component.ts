@@ -55,7 +55,7 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     callDate: Date | undefined;
     callError = '0';
     callFrequency: string = this.formatFrequency(0);
-    callHistory: RdioScannerCall[] = new Array<RdioScannerCall>(5);
+    callHistory: RdioScannerCall[] = new Array<RdioScannerCall>(15);
     callPrevious: RdioScannerCall | undefined;
     callProgress = new Date(0, 0, 0, 0, 0, 0);
     callQueue = 0;
@@ -116,10 +116,20 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
     volume = 1.0;
     isMuted = false;
+    waitForTranscript = false;
+    liveTranscriptColor = '';
     Math = Math;
 
     get showListenersCount(): boolean {
         return this.config?.showListenersCount || false;
+    }
+
+    // displayCall is `call` while one is playing, and falls back to the
+    // previous call once playback stops — same pattern the LCD uses for
+    // talkgroup / system labels so the transcript sticks around on-screen
+    // between calls instead of blinking back to "—".
+    get displayCall(): RdioScannerCall | undefined {
+        return this.call || this.callPrevious;
     }
 
     @Output() openSearchPanel = new EventEmitter<void>();
@@ -139,6 +149,12 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     private dimmerTimer: Subscription | undefined;
 
     private eventSubscription = this.rdioScannerService.event.subscribe((event: RdioScannerEvent) => this.eventHandler(event));
+
+    private transcriptPollTimer: Subscription | undefined;
+    // Per-call retry counter so we don't poll the server forever on calls that
+    // were never going to be transcribed (filtered talkgroup, rate-limited, etc).
+    private transcriptPollAttempts = new Map<number, number>();
+    private static readonly TRANSCRIPT_POLL_MAX_ATTEMPTS = 6;
 
     constructor(
         private rdioScannerService: RdioScannerService,
@@ -250,6 +266,7 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
     ngOnDestroy(): void {
         this.clockTimer?.unsubscribe();
+        this.transcriptPollTimer?.unsubscribe();
 
         this.eventSubscription.unsubscribe();
     }
@@ -258,6 +275,45 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         this.syncClock();
         this.volume = this.rdioScannerService.getVolume();
         this.isMuted = this.rdioScannerService.isMuted();
+        // waitForTranscript is admin-controlled and arrives via the config
+        // event — nothing to initialize from local state here.
+
+        // Fallback: every 8s, ask the server for transcripts of any visible
+        // call that still doesn't have one. Covers cases where the initial
+        // TRX push from the server was missed (client wasn't connected yet,
+        // channel full, etc). Stops after a few attempts per call so we
+        // don't loop on calls that were never transcribed at all.
+        this.transcriptPollTimer = timer(8000, 8000).subscribe(() => this.pollMissingTranscripts());
+    }
+
+    private pollMissingTranscripts(): void {
+        const targets: RdioScannerCall[] = [];
+        if (this.call && !this.call.transcript) targets.push(this.call);
+        if (this.callPrevious && !this.callPrevious.transcript && this.callPrevious.id !== this.call?.id) {
+            targets.push(this.callPrevious);
+        }
+        for (const c of this.callHistory) {
+            if (c && !c.transcript) targets.push(c);
+        }
+
+        const now = Date.now();
+        for (const c of targets) {
+            if (!c.id) continue;
+            const attempts = this.transcriptPollAttempts.get(c.id) ?? 0;
+            if (attempts >= RdioScannerMainComponent.TRANSCRIPT_POLL_MAX_ATTEMPTS) continue;
+            // Only poll calls between 4s and 10 minutes old.
+            const ageMs = now - new Date(c.dateTime).getTime();
+            if (ageMs < 4000 || ageMs > 10 * 60 * 1000) continue;
+
+            this.transcriptPollAttempts.set(c.id, attempts + 1);
+            const callId = c.id;
+            this.rdioScannerService.fetchTranscript(callId).then((text) => {
+                if (text) {
+                    this.transcriptPollAttempts.delete(callId);
+                    this.applyTranscript(callId, text);
+                }
+            }).catch(() => { /* ignored */ });
+        }
     }
 
     pause(): void {
@@ -515,7 +571,36 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
             return;
         }
 
+        if (event.transcriptReady) {
+            this.applyTranscript(event.transcriptReady.id, event.transcriptReady.transcript);
+        }
+
+        if (typeof event.waitForTranscript === 'boolean') {
+            this.waitForTranscript = event.waitForTranscript;
+        }
+
         this.updateDisplay();
+    }
+
+    // applyTranscript splices a transcript into any in-memory reference to
+    // the matching call — the live call, the previous call, and every row
+    // of the LCD history. Called when the server pushes a transcript-ready
+    // TRX message after async Whisper finishes.
+    private applyTranscript(id: number, transcript: string): void {
+        if (!id) return;
+        if (this.call && this.call.id === id) {
+            this.call = { ...this.call, transcript };
+        }
+        if (this.callPrevious && this.callPrevious.id === id) {
+            this.callPrevious = { ...this.callPrevious, transcript };
+        }
+        for (let i = 0; i < this.callHistory.length; i++) {
+            const c = this.callHistory[i];
+            if (c && c.id === id) {
+                this.callHistory[i] = { ...c, transcript };
+            }
+        }
+        this.ngChangeDetectorRef.detectChanges();
     }
 
     private formatAfs(n: number): string {
@@ -652,12 +737,32 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
         this.ledStyle = this.call && this.livefeedPaused ? 'on paused' : this.call ? 'on' : 'off';
 
+        let activeLed = '';
+        // While a call is actually playing, the LCD's own LED pulses in
+        // its color. For the transcript panel color we want it to persist
+        // across to the next call (like the talkgroup label does) so pull
+        // from displayCall, which falls back to callPrevious.
+        const ledCall = this.call || this.callPrevious;
         if (colors.includes(this.call?.talkgroupData?.led as string)) {
-            this.ledStyle = `${this.ledStyle} ${this.call?.talkgroupData?.led}`;
-
+            activeLed = this.call?.talkgroupData?.led as string;
         } else if (colors.includes(this.call?.systemData?.led as string)) {
-            this.ledStyle = `${this.ledStyle} ${this.call?.systemData?.led}`;
+            activeLed = this.call?.systemData?.led as string;
         }
+
+        if (activeLed) {
+            this.ledStyle = `${this.ledStyle} ${activeLed}`;
+        }
+
+        // Color class for the live-transcript panel. Derived from the
+        // most recent call so the frame keeps glowing in the right color
+        // even after playback stops.
+        let panelLed = '';
+        if (colors.includes(ledCall?.talkgroupData?.led as string)) {
+            panelLed = ledCall?.talkgroupData?.led as string;
+        } else if (colors.includes(ledCall?.systemData?.led as string)) {
+            panelLed = ledCall?.systemData?.led as string;
+        }
+        this.liveTranscriptColor = panelLed ? `led-${panelLed}` : '';
 
         this.ngChangeDetectorRef.detectChanges();
     }

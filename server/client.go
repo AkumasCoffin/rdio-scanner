@@ -173,9 +173,23 @@ func (client *Client) GetRemoteAddr() string {
 }
 
 func (client *Client) SendConfig(groups *Groups, options *Options, systems *Systems, tags *Tags) {
-	client.SystemsMap = systems.GetScopedSystems(client, groups, tags, options.SortTalkgroups)
-	client.GroupsMap = groups.GetGroupsMap(&client.SystemsMap)
-	client.TagsMap = tags.GetTagsMap(&client.SystemsMap)
+	// Clients without a restricted access scope (the common case) all see
+	// the same systems/groups/tags view. Reuse a single cached build
+	// instead of rebuilding for every WebSocket connection.
+	unrestricted := client.Access == nil ||
+		client.Access.Systems == nil ||
+		(isString(client.Access.Systems) && client.Access.Systems == "*")
+
+	if unrestricted && client.Controller != nil {
+		cached := client.Controller.getUnrestrictedConfigCache()
+		client.SystemsMap = cached.SystemsMap
+		client.GroupsMap = cached.GroupsMap
+		client.TagsMap = cached.TagsMap
+	} else {
+		client.SystemsMap = systems.GetScopedSystems(client, groups, tags, options.SortTalkgroups)
+		client.GroupsMap = groups.GetGroupsMap(&client.SystemsMap)
+		client.TagsMap = tags.GetTagsMap(&client.SystemsMap)
+	}
 
 	var payload = map[string]any{
 		"branding":           options.Branding,
@@ -189,6 +203,8 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 		"tags":               client.TagsMap,
 		"tagsToggle":         options.TagsToggle,
 		"time12hFormat":      options.Time12hFormat,
+		"waitForTranscript":  options.WaitForTranscript,
+		"showRetranscribeButton": options.ShowRetranscribeButton,
 	}
 
 	if len(options.AfsSystems) > 0 {
@@ -201,6 +217,18 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 	}
 
 	client.Send <- &Message{Command: MessageCommandConfig, Payload: payload}
+
+	// Send the listener count immediately so the LCD doesn't show an empty
+	// "L:" counter for the 3-15 s debounce window used by the controller's
+	// register/unregister broadcaster.
+	if options.ShowListenersCount && client.Controller != nil {
+		client.SendListenersCount(client.Controller.Clients.Count())
+	}
+}
+
+func isString(v any) bool {
+	_, ok := v.(string)
+	return ok
 }
 
 func (client *Client) SendListenersCount(count int) {
@@ -265,6 +293,31 @@ func (clients *Clients) EmitConfig(groups *Groups, options *Options, systems *Sy
 
 		if options.ShowListenersCount {
 			c.SendListenersCount(count)
+		}
+	}
+}
+
+// EmitTranscript pushes a transcript-ready notification to every client that
+// would be allowed to see the underlying call. Used right after an async
+// Whisper run writes a transcript to the DB, so live listeners see their
+// history rows populate without having to refresh.
+func (clients *Clients) EmitTranscript(id uint, system uint, talkgroup uint, transcript string, restricted bool) {
+	probe := &Call{System: system, Talkgroup: talkgroup}
+	payload := map[string]any{
+		"id":         id,
+		"system":     system,
+		"talkgroup":  talkgroup,
+		"transcript": transcript,
+	}
+	for c := range clients.Map {
+		if restricted && c.Access != nil && !c.Access.HasAccess(probe) {
+			continue
+		}
+		select {
+		case c.Send <- &Message{Command: MessageCommandTranscript, Payload: payload}:
+		default:
+			// Drop if the client's send buffer is full rather than
+			// blocking the ingest path.
 		}
 	}
 }

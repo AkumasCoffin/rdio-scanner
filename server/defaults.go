@@ -64,6 +64,12 @@ type DefaultOptions struct {
 	sortTalkgroups              bool
 	tagsToggle                  bool
 	time12hFormat               bool
+	transcriptionEnabled        bool
+	transcriptionProvider       string
+	transcriptionBaseUrl        string
+	transcriptionModel          string
+	transcriptionLanguage       string
+	transcriptionPrompt         string
 }
 
 var defaults Defaults = Defaults{
@@ -109,6 +115,12 @@ var defaults Defaults = Defaults{
 		sortTalkgroups:              false,
 		tagsToggle:                  false,
 		time12hFormat:               false,
+		transcriptionEnabled:        false,
+		transcriptionProvider:       "groq",
+		transcriptionBaseUrl:        "https://api.groq.com/openai/v1",
+		transcriptionModel:          "whisper-large-v3-turbo",
+		transcriptionLanguage:       "",
+		transcriptionPrompt:         "",
 	},
 	systems: []System{},
 	tags: []string{

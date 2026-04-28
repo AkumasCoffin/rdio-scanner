@@ -39,6 +39,7 @@ type Call struct {
 	Sources        any       `json:"sources"`
 	System         uint      `json:"system"`
 	Talkgroup      uint      `json:"talkgroup"`
+	Transcript     any       `json:"transcript,omitempty"`
 	systemLabel    any
 	talkgroupGroup any
 	talkgroupLabel any
@@ -86,7 +87,7 @@ func (call *Call) MarshalJSON() ([]byte, error) {
 	audio := fmt.Sprintf("%v", call.Audio)
 	audio = strings.ReplaceAll(audio, " ", ",")
 
-	return json.Marshal(map[string]any{
+	out := map[string]any{
 		"id": call.Id,
 		"audio": map[string]any{
 			"data": json.RawMessage(audio),
@@ -102,7 +103,13 @@ func (call *Call) MarshalJSON() ([]byte, error) {
 		"sources":     call.Sources,
 		"system":      call.System,
 		"talkgroup":   call.Talkgroup,
-	})
+	}
+
+	if call.Transcript != nil {
+		out["transcript"] = call.Transcript
+	}
+
+	return json.Marshal(out)
 }
 
 func (call *Call) ToJson() (string, error) {
@@ -114,21 +121,54 @@ func (call *Call) ToJson() (string, error) {
 }
 
 type Calls struct {
-	mutex sync.Mutex
+	mutex     sync.Mutex
+	metaMutex sync.Mutex
+	metaCache map[string]*callsSearchMeta
 }
+
+type callsSearchMeta struct {
+	dateStart time.Time
+	dateStop  time.Time
+	count     uint
+	expires   time.Time
+}
+
+const callsSearchMetaTTL = 15 * time.Second
 
 func NewCalls() *Calls {
 	return &Calls{
-		mutex: sync.Mutex{},
+		mutex:     sync.Mutex{},
+		metaMutex: sync.Mutex{},
+		metaCache: make(map[string]*callsSearchMeta),
 	}
+}
+
+func (calls *Calls) InvalidateSearchMeta() {
+	calls.metaMutex.Lock()
+	calls.metaCache = make(map[string]*callsSearchMeta)
+	calls.metaMutex.Unlock()
+}
+
+func (calls *Calls) getSearchMeta(key string) (*callsSearchMeta, bool) {
+	calls.metaMutex.Lock()
+	defer calls.metaMutex.Unlock()
+	m, ok := calls.metaCache[key]
+	if !ok || time.Now().After(m.expires) {
+		return nil, false
+	}
+	return m, true
+}
+
+func (calls *Calls) putSearchMeta(key string, m *callsSearchMeta) {
+	calls.metaMutex.Lock()
+	defer calls.metaMutex.Unlock()
+	calls.metaCache[key] = m
 }
 
 func (calls *Calls) CheckDuplicate(call *Call, msTimeFrame uint, db *Database) bool {
 	var count uint
 
-	calls.mutex.Lock()
-	defer calls.mutex.Unlock()
-
+	// Read-only — rely on the database driver's own concurrency guard.
 	d := time.Duration(msTimeFrame) * time.Millisecond
 	from := call.DateTime.Add(-d)
 	to := call.DateTime.Add(d)
@@ -152,15 +192,17 @@ func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 		patches     string
 		sources     string
 		t           time.Time
+		transcript  sql.NullString
 	)
 
-	calls.mutex.Lock()
-	defer calls.mutex.Unlock()
-
+	// No mutex here: database/sql is already goroutine-safe, and holding a
+	// global lock around the read (which includes the audio blob transfer,
+	// 50–200 KB) means click-to-play has to queue behind every in-flight
+	// WriteCall from the ingest path. Removing the lock drops that queue.
 	call := Call{Id: id}
 
-	query := fmt.Sprintf("select `audio`, `audioName`, `audioType`, `dateTime`, `frequencies`, `frequency`, `patches`, `source`, `sources`, `system`, `talkgroup` from `rdioScannerCalls` where `id` = %v", id)
-	err := db.QueryRow(query).Scan(&call.Audio, &audioName, &audioType, &dateTime, &frequencies, &frequency, &patches, &source, &sources, &call.System, &call.Talkgroup)
+	query := fmt.Sprintf("select `audio`, `audioName`, `audioType`, `dateTime`, `frequencies`, `frequency`, `patches`, `source`, `sources`, `system`, `talkgroup`, `transcript` from `rdioScannerCalls` where `id` = %v", id)
+	err := db.QueryRow(query).Scan(&call.Audio, &audioName, &audioType, &dateTime, &frequencies, &frequency, &patches, &source, &sources, &call.System, &call.Talkgroup, &transcript)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("getcall: %v, %v", err, query)
 	}
@@ -171,6 +213,10 @@ func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 
 	if audioType.Valid {
 		call.AudioType = audioType.String
+	}
+
+	if transcript.Valid {
+		call.Transcript = transcript.String
 	}
 
 	if frequency.Valid && frequency.Float64 > 0 {
@@ -208,10 +254,29 @@ func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 	return &call, nil
 }
 
-func (calls *Calls) Prune(db *Database, pruneDays uint) error {
-	calls.mutex.Lock()
-	defer calls.mutex.Unlock()
+func (calls *Calls) GetTranscript(id uint, db *Database) (system uint, talkgroup uint, transcript string, err error) {
+	var t sql.NullString
 
+	err = db.QueryRow("select `system`, `talkgroup`, `transcript` from `rdioScannerCalls` where `id` = ?", id).Scan(&system, &talkgroup, &t)
+	if err == sql.ErrNoRows {
+		err = nil
+		return
+	}
+	if err != nil {
+		return
+	}
+	if t.Valid {
+		transcript = t.String
+	}
+	return
+}
+
+func (calls *Calls) UpdateTranscript(id uint, transcript string, db *Database) error {
+	_, err := db.Exec("update `rdioScannerCalls` set `transcript` = ? where `id` = ?", transcript, id)
+	return err
+}
+
+func (calls *Calls) Prune(db *Database, pruneDays uint) error {
 	date := time.Now().Add(-24 * time.Hour * time.Duration(pruneDays)).Format(db.DateTimeFormat)
 	_, err := db.Exec("delete from `rdioScannerCalls` where `dateTime` < ?", date)
 
@@ -237,9 +302,7 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		where    string = "true"
 	)
 
-	calls.mutex.Lock()
-	defer calls.mutex.Unlock()
-
+	// Read-only aggregate; no need to serialize behind ingests.
 	db := client.Controller.Database
 
 	formatError := func(err error) error {
@@ -323,24 +386,45 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		}
 	}
 
-	query = fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %v order by `dateTime` asc", where)
-	if err = db.QueryRow(query).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
-		return nil, formatError(fmt.Errorf("%v, %v", err, query))
+	if q, ok := searchOptions.Q.(string); ok && q != "" {
+		esc := strings.ReplaceAll(q, "'", "''")
+		op := "like"
+		if db.Config.DbType == DbTypePostgres {
+			op = "ilike"
+		}
+		where += fmt.Sprintf(" and `transcript` %s '%%%s%%'", op, esc)
 	}
 
-	if t, err = db.ParseDateTime(dateTime); err == nil {
-		searchResults.DateStart = t
-	}
-
-	query = fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %v order by `dateTime` desc", where)
-	if err = db.QueryRow(query).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
-		return nil, formatError(fmt.Errorf("%v, %v", err, query))
-	}
-
-	if t, err = db.ParseDateTime(dateTime); err == nil {
-		searchResults.DateStop = t
+	rangeKey := "range:" + where
+	if cached, ok := calls.getSearchMeta(rangeKey); ok {
+		searchResults.DateStart = cached.dateStart
+		searchResults.DateStop = cached.dateStop
 	} else {
-		searchResults.DateStop = time.Now()
+		query = fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %v order by `dateTime` asc limit 1", where)
+		if err = db.QueryRow(query).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
+			return nil, formatError(fmt.Errorf("%v, %v", err, query))
+		}
+
+		if t, err = db.ParseDateTime(dateTime); err == nil {
+			searchResults.DateStart = t
+		}
+
+		query = fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %v order by `dateTime` desc limit 1", where)
+		if err = db.QueryRow(query).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
+			return nil, formatError(fmt.Errorf("%v, %v", err, query))
+		}
+
+		if t, err = db.ParseDateTime(dateTime); err == nil {
+			searchResults.DateStop = t
+		} else {
+			searchResults.DateStop = time.Now()
+		}
+
+		calls.putSearchMeta(rangeKey, &callsSearchMeta{
+			dateStart: searchResults.DateStart,
+			dateStop:  searchResults.DateStop,
+			expires:   time.Now().Add(callsSearchMetaTTL),
+		})
 	}
 
 	switch v := searchOptions.Sort.(type) {
@@ -386,19 +470,29 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		offset = v
 	}
 
-	query = fmt.Sprintf("select count(*) from `rdioScannerCalls` where %v", where)
-	if err = db.QueryRow(query).Scan(&searchResults.Count); err != nil && err != sql.ErrNoRows {
-		return nil, formatError(fmt.Errorf("%v, %v", err, query))
+	countKey := "count:" + where
+	if cached, ok := calls.getSearchMeta(countKey); ok {
+		searchResults.Count = cached.count
+	} else {
+		query = fmt.Sprintf("select count(*) from `rdioScannerCalls` where %v", where)
+		if err = db.QueryRow(query).Scan(&searchResults.Count); err != nil && err != sql.ErrNoRows {
+			return nil, formatError(fmt.Errorf("%v, %v", err, query))
+		}
+		calls.putSearchMeta(countKey, &callsSearchMeta{
+			count:   searchResults.Count,
+			expires: time.Now().Add(callsSearchMetaTTL),
+		})
 	}
 
-	query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup` from `rdioScannerCalls` where %v order by `dateTime` %v limit %v offset %v", where, order, limit, offset)
+	query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup`, `transcript` from `rdioScannerCalls` where %v order by `dateTime` %v limit %v offset %v", where, order, limit, offset)
 	if rows, err = db.Query(query); err != nil && err != sql.ErrNoRows {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
 
 	for rows.Next() {
 		searchResult := CallsSearchResult{}
-		if err = rows.Scan(&id, &dateTime, &searchResult.System, &searchResult.Talkgroup); err != nil {
+		var transcript sql.NullString
+		if err = rows.Scan(&id, &dateTime, &searchResult.System, &searchResult.Talkgroup, &transcript); err != nil {
 			break
 		}
 
@@ -411,6 +505,11 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 
 		} else {
 			continue
+		}
+
+		if transcript.Valid && transcript.String != "" {
+			searchResult.Transcript = transcript.String
+			searchResult.HasTranscript = true
 		}
 
 		searchResults.Results = append(searchResults.Results, searchResult)
@@ -490,11 +589,57 @@ func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 	}
 }
 
+// WarmSearchMeta populates the unscoped metadata cache with dateStart,
+// dateStop, and count(*) so the first search request doesn't pay the
+// cold-start penalty. Safe to call in a goroutine.
+func (calls *Calls) WarmSearchMeta(db *Database) {
+	const where = "true"
+	var (
+		dateTime any
+		t        time.Time
+	)
+
+	startQuery := fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %s order by `dateTime` asc limit 1", where)
+	var start time.Time
+	if err := db.QueryRow(startQuery).Scan(&dateTime); err == nil {
+		if t, err = db.ParseDateTime(dateTime); err == nil {
+			start = t
+		}
+	}
+
+	stopQuery := fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %s order by `dateTime` desc limit 1", where)
+	var stop time.Time
+	if err := db.QueryRow(stopQuery).Scan(&dateTime); err == nil {
+		if t, err = db.ParseDateTime(dateTime); err == nil {
+			stop = t
+		}
+	}
+	if stop.IsZero() {
+		stop = time.Now()
+	}
+
+	calls.putSearchMeta("range:"+where, &callsSearchMeta{
+		dateStart: start,
+		dateStop:  stop,
+		expires:   time.Now().Add(callsSearchMetaTTL),
+	})
+
+	var count uint
+	countQuery := fmt.Sprintf("select count(*) from `rdioScannerCalls` where %s", where)
+	if err := db.QueryRow(countQuery).Scan(&count); err == nil {
+		calls.putSearchMeta("count:"+where, &callsSearchMeta{
+			count:   count,
+			expires: time.Now().Add(callsSearchMetaTTL),
+		})
+	}
+}
+
 type CallsSearchOptions struct {
 	Date                    any `json:"date,omitempty"`
 	Group                   any `json:"group,omitempty"`
 	Limit                   any `json:"limit,omitempty"`
 	Offset                  any `json:"offset,omitempty"`
+	Q                       any `json:"q,omitempty"`
 	Sort                    any `json:"sort,omitempty"`
 	System                  any `json:"system,omitempty"`
 	Tag                     any `json:"tag,omitempty"`
@@ -545,14 +690,24 @@ func (searchOptions *CallsSearchOptions) fromMap(m map[string]any) error {
 		searchOptions.Talkgroup = uint(v)
 	}
 
+	switch v := m["q"].(type) {
+	case string:
+		s := strings.TrimSpace(v)
+		if s != "" {
+			searchOptions.Q = s
+		}
+	}
+
 	return nil
 }
 
 type CallsSearchResult struct {
-	Id        uint      `json:"id"`
-	DateTime  time.Time `json:"dateTime"`
-	System    uint      `json:"system"`
-	Talkgroup uint      `json:"talkgroup"`
+	Id            uint      `json:"id"`
+	DateTime      time.Time `json:"dateTime"`
+	System        uint      `json:"system"`
+	Talkgroup     uint      `json:"talkgroup"`
+	HasTranscript bool      `json:"hasTranscript,omitempty"`
+	Transcript    string    `json:"transcript,omitempty"`
 }
 
 type CallsSearchResults struct {
