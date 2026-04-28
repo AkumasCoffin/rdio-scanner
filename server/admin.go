@@ -168,115 +168,135 @@ func (admin *Admin) ConfigHandler(w http.ResponseWriter, r *http.Request) {
 
 			admin.Controller.Dirwatches.Stop()
 
-			switch v := m["access"].(type) {
-			case []any:
-				admin.Controller.Accesses.FromMap(v)
-				err := admin.Controller.Accesses.Write(admin.Controller.Database)
+			sectionErrs := map[string]string{}
+			track := func(section string, err error) {
 				if err != nil {
-					logError(err)
-				} else {
-					err = admin.Controller.Accesses.Read(admin.Controller.Database)
-					if err != nil {
-						logError(err)
-					}
+					logError(fmt.Errorf("%s: %v", section, err))
+					sectionErrs[section] = err.Error()
 				}
 			}
 
-			switch v := m["apiKeys"].(type) {
-			case []any:
-				admin.Controller.Apikeys.FromMap(v)
-				err = admin.Controller.Apikeys.Write(admin.Controller.Database)
-				if err != nil {
-					logError(err)
-				} else {
-					err = admin.Controller.Apikeys.Read(admin.Controller.Database)
-					if err != nil {
-						logError(err)
+			// Run all the per-section writes inside one transaction so Postgres
+			// commits once at the end instead of fsync'ing every row. On large
+			// configs this takes the save from ~30s down to ~1s.
+			txErr := admin.Controller.Database.WithTx(func(tx *Database) error {
+				if v, ok := m["access"].([]any); ok {
+					admin.Controller.Accesses.FromMap(v)
+					if err := admin.Controller.Accesses.Write(tx); err != nil {
+						track("access", err)
 					}
 				}
-			}
 
-			switch v := m["dirWatch"].(type) {
-			case []any:
-				admin.Controller.Dirwatches.FromMap(v)
-				err = admin.Controller.Dirwatches.Write(admin.Controller.Database)
-				if err != nil {
-					logError(err)
-				} else {
-					err = admin.Controller.Dirwatches.Read(admin.Controller.Database)
-					if err != nil {
-						logError(err)
+				if v, ok := m["apiKeys"].([]any); ok {
+					admin.Controller.Apikeys.FromMap(v)
+					if err := admin.Controller.Apikeys.Write(tx); err != nil {
+						track("apiKeys", err)
 					}
 				}
-			}
 
-			switch v := m["downstreams"].(type) {
-			case []any:
-				admin.Controller.Downstreams.FromMap(v)
-				err = admin.Controller.Downstreams.Write(admin.Controller.Database)
-				if err != nil {
-					logError(err)
-				} else {
-					err = admin.Controller.Downstreams.Read(admin.Controller.Database)
-					if err != nil {
-						logError(err)
+				if v, ok := m["dirWatch"].([]any); ok {
+					admin.Controller.Dirwatches.FromMap(v)
+					if err := admin.Controller.Dirwatches.Write(tx); err != nil {
+						track("dirWatch", err)
 					}
 				}
-			}
 
-			switch v := m["groups"].(type) {
-			case []any:
-				admin.Controller.Groups.FromMap(v)
-				err = admin.Controller.Groups.Write(admin.Controller.Database)
-				if err != nil {
-					logError(err)
-				} else {
-					err = admin.Controller.Groups.Read(admin.Controller.Database)
-					if err != nil {
-						logError(err)
+				if v, ok := m["downstreams"].([]any); ok {
+					admin.Controller.Downstreams.FromMap(v)
+					if err := admin.Controller.Downstreams.Write(tx); err != nil {
+						track("downstreams", err)
 					}
 				}
-			}
 
-			switch v := m["options"].(type) {
-			case map[string]any:
-				admin.Controller.Options.FromMap(v)
-				err = admin.Controller.Options.Write(admin.Controller.Database)
-				if err != nil {
-					logError(err)
-				}
-			}
-
-			switch v := m["systems"].(type) {
-			case []any:
-				admin.Controller.Systems.FromMap(v)
-				err = admin.Controller.Systems.Write(admin.Controller.Database)
-				if err != nil {
-					logError(err)
-				} else {
-					err = admin.Controller.Systems.Read(admin.Controller.Database)
-					if err != nil {
-						logError(err)
+				if v, ok := m["groups"].([]any); ok {
+					admin.Controller.Groups.FromMap(v)
+					if err := admin.Controller.Groups.Write(tx); err != nil {
+						track("groups", err)
 					}
 				}
+
+				if v, ok := m["options"].(map[string]any); ok {
+					admin.Controller.Options.FromMap(v)
+					if err := admin.Controller.Options.Write(tx); err != nil {
+						track("options", err)
+					}
+				}
+
+				if v, ok := m["systems"].([]any); ok {
+					admin.Controller.Systems.FromMap(v)
+					if err := admin.Controller.Systems.Write(tx); err != nil {
+						track("systems", err)
+					}
+				}
+
+				if v, ok := m["tags"].([]any); ok {
+					admin.Controller.Tags.FromMap(v)
+					if err := admin.Controller.Tags.Write(tx); err != nil {
+						track("tags", err)
+					}
+				}
+
+				// If any section errored, roll the whole tx back — partial
+				// commits are what made "configs save wrong" previously.
+				if len(sectionErrs) > 0 {
+					return fmt.Errorf("section errors: %v", sectionErrs)
+				}
+				return nil
+			})
+			if txErr != nil && len(sectionErrs) == 0 {
+				sectionErrs["_tx"] = txErr.Error()
+				logError(txErr)
 			}
 
-			switch v := m["tags"].(type) {
-			case []any:
-				admin.Controller.Tags.FromMap(v)
-				err = admin.Controller.Tags.Write(admin.Controller.Database)
-				if err != nil {
-					logError(err)
-				} else {
-					err = admin.Controller.Tags.Read(admin.Controller.Database)
-					if err != nil {
-						logError(err)
-					}
+			// Reload in-memory caches from the persisted state, outside the tx.
+			db := admin.Controller.Database
+			if _, ok := m["access"]; ok {
+				if err := admin.Controller.Accesses.Read(db); err != nil {
+					track("access", err)
+				}
+			}
+			if _, ok := m["apiKeys"]; ok {
+				if err := admin.Controller.Apikeys.Read(db); err != nil {
+					track("apiKeys", err)
+				}
+			}
+			if _, ok := m["dirWatch"]; ok {
+				if err := admin.Controller.Dirwatches.Read(db); err != nil {
+					track("dirWatch", err)
+				}
+			}
+			if _, ok := m["downstreams"]; ok {
+				if err := admin.Controller.Downstreams.Read(db); err != nil {
+					track("downstreams", err)
+				}
+			}
+			if _, ok := m["groups"]; ok {
+				if err := admin.Controller.Groups.Read(db); err != nil {
+					track("groups", err)
+				}
+			}
+			if _, ok := m["systems"]; ok {
+				if err := admin.Controller.Systems.Read(db); err != nil {
+					track("systems", err)
+				}
+			}
+			if _, ok := m["tags"]; ok {
+				if err := admin.Controller.Tags.Read(db); err != nil {
+					track("tags", err)
 				}
 			}
 
 			admin.Controller.EmitConfig()
 			admin.Controller.Dirwatches.Start(admin.Controller)
+
+			if len(sectionErrs) > 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				b, _ := json.Marshal(map[string]any{"errors": sectionErrs})
+				w.Write(b)
+				admin.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("configuration save had errors: %v", sectionErrs))
+				return
+			}
 
 			admin.SendConfig(w)
 
@@ -296,15 +316,17 @@ func (admin *Admin) GetConfig() map[string]any {
 	systems := []map[string]any{}
 	for _, system := range admin.Controller.Systems.List {
 		systems = append(systems, map[string]any{
-			"_id":          system.RowId,
-			"autoPopulate": system.AutoPopulate,
-			"blacklists":   system.Blacklists,
-			"id":           system.Id,
-			"label":        system.Label,
-			"led":          system.Led,
-			"order":        system.Order,
-			"talkgroups":   system.Talkgroups.List,
-			"units":        system.Units.List,
+			"_id":                 system.RowId,
+			"autoPopulate":        system.AutoPopulate,
+			"blacklists":          system.Blacklists,
+			"id":                  system.Id,
+			"label":               system.Label,
+			"led":                 system.Led,
+			"order":               system.Order,
+			"talkgroups":          system.Talkgroups.List,
+			"transcribe":          system.Transcribe,
+			"transcriptionPrompt": system.TranscriptionPrompt,
+			"units":               system.Units.List,
 		})
 	}
 
@@ -356,6 +378,7 @@ func (admin *Admin) LogsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		w.Header().Set("Content-Type", "application/json")
 		w.Write(b)
 
 	default:
@@ -450,6 +473,7 @@ func (admin *Admin) LoginHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		w.Header().Set("Content-Type", "application/json")
 		w.Write(b)
 
 	default:
@@ -523,6 +547,7 @@ func (admin *Admin) PasswordHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if b, err = json.Marshal(map[string]any{"passwordNeedChange": admin.Controller.Options.adminPasswordNeedChange}); err == nil {
+			w.Header().Set("Content-Type", "application/json")
 			w.Write(b)
 		} else {
 			w.WriteHeader(http.StatusExpectationFailed)
@@ -549,6 +574,7 @@ func (admin *Admin) SendConfig(w http.ResponseWriter) {
 		}
 	}
 	if b, err := json.Marshal(m); err == nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.Write(b)
 	} else {
 		w.WriteHeader(http.StatusExpectationFailed)
@@ -670,6 +696,76 @@ func (admin *Admin) UserRemoveHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func (admin *Admin) TranscribeHandler(w http.ResponseWriter, r *http.Request) {
+	t := admin.GetAuthorization(r)
+	if !admin.ValidateToken(t) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Id         uint   `json:"id"`
+		Transcript string `json:"transcript"`
+		Manual     bool   `json:"manual"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if body.Id == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"missing id"}`))
+		return
+	}
+
+	if body.Manual {
+		if err := admin.Controller.Calls.UpdateTranscript(body.Id, body.Transcript, admin.Controller.Database); err != nil {
+			admin.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("admin.transcribe manual: %v", err))
+			w.WriteHeader(http.StatusExpectationFailed)
+			return
+		}
+		b, _ := json.Marshal(map[string]any{"id": body.Id, "transcript": body.Transcript})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(b)
+		return
+	}
+
+	if !admin.Controller.Transcriber.Enabled() {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"transcription is not configured"}`))
+		return
+	}
+
+	call, err := admin.Controller.Calls.GetCall(body.Id, admin.Controller.Database)
+	if err != nil || call == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	text, err := admin.Controller.Transcriber.Transcribe(call)
+	if err != nil {
+		admin.Controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("admin.transcribe call %v: %v", body.Id, err))
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(fmt.Sprintf(`{"error":%q}`, err.Error())))
+		return
+	}
+
+	if err = admin.Controller.Calls.UpdateTranscript(body.Id, text, admin.Controller.Database); err != nil {
+		admin.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("admin.transcribe persist %v: %v", body.Id, err))
+		w.WriteHeader(http.StatusExpectationFailed)
+		return
+	}
+
+	b, _ := json.Marshal(map[string]any{"id": body.Id, "transcript": text})
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(b)
 }
 
 func (admin *Admin) ValidateToken(sToken string) bool {

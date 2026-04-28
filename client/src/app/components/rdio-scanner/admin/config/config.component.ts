@@ -156,8 +156,25 @@ export class RdioScannerAdminConfigComponent implements OnDestroy, OnInit {
     }
 
     async save(): Promise<void> {
-        this.form?.markAsPristine();
+        if (!this.form) return;
 
-        await this.adminService.saveConfig(this.form?.getRawValue());
+        const raw = this.form.getRawValue();
+        const original: any = this.config ?? {};
+        const payload: any = {};
+
+        for (const key of Object.keys(raw)) {
+            if (JSON.stringify(raw[key]) !== JSON.stringify(original[key])) {
+                payload[key] = raw[key];
+            }
+        }
+
+        if (Object.keys(payload).length === 0) {
+            this.form.markAsPristine();
+            return;
+        }
+
+        this.form.markAsPristine();
+
+        await this.adminService.saveConfig(payload);
     }
 }

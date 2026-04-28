@@ -23,12 +23,14 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"time"
 )
 
 type Controller struct {
 	Admin       *Admin
 	Api         *Api
+	PublicApi   *PublicApi
 	Calls       *Calls
 	Config      *Config
 	Database    *Database
@@ -44,11 +46,25 @@ type Controller struct {
 	Stats       *Stats
 	Systems     *Systems
 	Tags        *Tags
+	Transcriber *Transcriber
 	Clients     *Clients
 	Register    chan *Client
 	Unregister  chan *Client
 	Ingest      chan *Call
 	running     bool
+
+	// Cached "unrestricted access" view of the systems/groups/tags maps.
+	// Most clients hit the server with no access code so they all get the
+	// same payload — build it once and reuse it instead of re-scoping on
+	// every CFG request.
+	configCacheMu sync.RWMutex
+	configCache   *configCache
+}
+
+type configCache struct {
+	SystemsMap SystemsMap
+	GroupsMap  GroupsMap
+	TagsMap    TagsMap
 }
 
 func NewController(config *Config) *Controller {
@@ -73,14 +89,56 @@ func NewController(config *Config) *Controller {
 
 	controller.Admin = NewAdmin(controller)
 	controller.Api = NewApi(controller)
+	controller.PublicApi = NewPublicApi(controller)
 	controller.Database = NewDatabase(config)
 	controller.Scheduler = NewScheduler(controller)
 	controller.Stats = NewStats(controller)
+	controller.Transcriber = NewTranscriber(controller)
 
 	controller.Logs.setDaemon(config.daemon)
 	controller.Logs.setDatabase(controller.Database)
 
 	return controller
+}
+
+// getUnrestrictedConfigCache returns the cached unrestricted scoping maps
+// for the config payload, building (and remembering) them on first use.
+// Invalidated whenever EmitConfig fires (after an admin save).
+func (controller *Controller) getUnrestrictedConfigCache() *configCache {
+	controller.configCacheMu.RLock()
+	c := controller.configCache
+	controller.configCacheMu.RUnlock()
+	if c != nil {
+		return c
+	}
+
+	controller.configCacheMu.Lock()
+	defer controller.configCacheMu.Unlock()
+	if controller.configCache != nil {
+		return controller.configCache
+	}
+
+	// Build using a synthesized "no access code" probe so GetScopedSystems
+	// returns the full set.
+	probe := &Client{Access: &Access{}}
+	systems := controller.Systems.GetScopedSystems(probe, controller.Groups, controller.Tags, controller.Options.SortTalkgroups)
+	groups := controller.Groups.GetGroupsMap(&systems)
+	tags := controller.Tags.GetTagsMap(&systems)
+	controller.configCache = &configCache{
+		SystemsMap: systems,
+		GroupsMap:  groups,
+		TagsMap:    tags,
+	}
+	return controller.configCache
+}
+
+// InvalidateConfigCache wipes the cached unrestricted maps. Call after any
+// change to systems / groups / tags / options that affects the config
+// payload.
+func (controller *Controller) InvalidateConfigCache() {
+	controller.configCacheMu.Lock()
+	controller.configCache = nil
+	controller.configCacheMu.Unlock()
 }
 
 func (controller *Controller) EmitCall(call *Call) {
@@ -89,6 +147,7 @@ func (controller *Controller) EmitCall(call *Call) {
 }
 
 func (controller *Controller) EmitConfig() {
+	controller.InvalidateConfigCache()
 	go controller.Clients.EmitConfig(controller.Groups, controller.Options, controller.Systems, controller.Tags, controller.Accesses.IsRestricted())
 	go controller.Admin.BroadcastConfig()
 }
@@ -134,6 +193,7 @@ func (controller *Controller) IngestCall(call *Call) {
 
 		system = NewSystem()
 		system.Id = call.System
+		system.Transcribe = true
 
 		switch v := call.systemLabel.(type) {
 		case string:
@@ -222,10 +282,11 @@ func (controller *Controller) IngestCall(call *Call) {
 			}
 
 			talkgroup = &Talkgroup{
-				GroupId: groupId,
-				Id:      call.Talkgroup,
-				Label:   fmt.Sprintf("%d", call.Talkgroup),
-				TagId:   tagId,
+				GroupId:    groupId,
+				Id:         call.Talkgroup,
+				Label:      fmt.Sprintf("%d", call.Talkgroup),
+				TagId:      tagId,
+				Transcribe: true,
 			}
 
 			system.Talkgroups.List = append(system.Talkgroups.List, talkgroup)
@@ -312,6 +373,10 @@ func (controller *Controller) IngestCall(call *Call) {
 
 		controller.EmitCall(call)
 
+		if system.Transcribe && talkgroup.Transcribe {
+			controller.Transcriber.TranscribeCallAsync(id, call)
+		}
+
 	} else {
 		logError(err)
 	}
@@ -348,8 +413,54 @@ func (controller *Controller) ProcessMessage(client *Client, message *Message) e
 		if err := controller.ProcessMessageCommandPin(client, message); err != nil {
 			return err
 		}
+
+	} else if message.Command == MessageCommandTranscript {
+		if err := controller.ProcessMessageCommandTranscript(client, message); err != nil {
+			return err
+		}
 	}
 
+	return nil
+}
+
+func (controller *Controller) ProcessMessageCommandTranscript(client *Client, message *Message) error {
+	var (
+		err error
+		i   int
+		id  uint
+	)
+
+	switch v := message.Payload.(type) {
+	case float64:
+		id = uint(v)
+	case string:
+		if i, err = strconv.Atoi(v); err == nil {
+			id = uint(i)
+		} else {
+			return err
+		}
+	}
+
+	if id == 0 {
+		return nil
+	}
+
+	system, talkgroup, transcript, err := controller.Calls.GetTranscript(id, controller.Database)
+	if err != nil {
+		return err
+	}
+
+	if controller.Accesses.IsRestricted() {
+		probe := &Call{System: system, Talkgroup: talkgroup}
+		if !client.Access.HasAccess(probe) {
+			return nil
+		}
+	}
+
+	client.Send <- &Message{
+		Command: MessageCommandTranscript,
+		Payload: map[string]any{"id": id, "transcript": transcript},
+	}
 	return nil
 }
 
@@ -519,6 +630,14 @@ func (controller *Controller) Start() error {
 		return err
 	}
 
+	// Warm the unrestricted CFG cache so the very first client connect
+	// doesn't pay the build cost.
+	go controller.getUnrestrictedConfigCache()
+
+	// Warm the stats cache so the first hit on /api/admin/stats returns
+	// instantly instead of running ~8 heavy aggregations on a cold table.
+	go controller.Stats.cachedBuild(controller.Database)
+
 	go func() {
 		c := make(chan os.Signal, 8)
 		signal.Notify(c, os.Interrupt)
@@ -530,6 +649,17 @@ func (controller *Controller) Start() error {
 		for {
 			call := <-controller.Ingest
 			controller.IngestCall(call)
+		}
+	}()
+
+	// Keep the unscoped search metadata (dateStart/dateStop/count) warm so the
+	// first user hit never waits on a cold count(*) over the whole table.
+	go func() {
+		controller.Calls.WarmSearchMeta(controller.Database)
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			controller.Calls.WarmSearchMeta(controller.Database)
 		}
 	}()
 

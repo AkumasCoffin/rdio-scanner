@@ -47,6 +47,9 @@ html, body {
 	height: 100%;
 	width: 100%;
 	overflow-x: hidden;
+	/* Vertical overflow is allowed at the body level — the rdio-scanner
+	   component pins its own layout (overflow: hidden on :host) while
+	   longer pages like /admin still scroll naturally. */
 }
 
 body {

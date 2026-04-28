@@ -32,6 +32,18 @@ type Database struct {
 	Config         *Config
 	DateTimeFormat string
 	Sql            *sql.DB
+	// executor, when non-nil, is an ambient transaction that all Exec/Query/
+	// QueryRow calls go through. Use WithTx to acquire one; do NOT set this
+	// by hand — it'd leak a half-open tx if WithTx isn't used to wrap it.
+	executor dbExecutor
+}
+
+// dbExecutor is satisfied by both *sql.DB and *sql.Tx, letting Database
+// transparently run inside or outside a transaction.
+type dbExecutor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 func NewDatabase(config *Config) *Database {
@@ -142,16 +154,53 @@ func (db *Database) formatQuery(query string) string {
 	return result.String()
 }
 
+func (db *Database) runner() dbExecutor {
+	if db.executor != nil {
+		return db.executor
+	}
+	return db.Sql
+}
+
 func (db *Database) Exec(query string, args ...any) (sql.Result, error) {
-	return db.Sql.Exec(db.formatQuery(query), args...)
+	return db.runner().Exec(db.formatQuery(query), args...)
 }
 
 func (db *Database) Query(query string, args ...any) (*sql.Rows, error) {
-	return db.Sql.Query(db.formatQuery(query), args...)
+	return db.runner().Query(db.formatQuery(query), args...)
 }
 
 func (db *Database) QueryRow(query string, args ...any) *sql.Row {
-	return db.Sql.QueryRow(db.formatQuery(query), args...)
+	return db.runner().QueryRow(db.formatQuery(query), args...)
+}
+
+// WithTx runs fn inside a database transaction. The *Database passed to fn
+// has all Exec/Query/QueryRow calls routed through the transaction, so any
+// existing code using the Database's own methods transparently participates.
+// Commits on nil error; rolls back on error or panic.
+func (db *Database) WithTx(fn func(txDb *Database) error) (err error) {
+	tx, err := db.Sql.Begin()
+	if err != nil {
+		return err
+	}
+	txDb := &Database{
+		Config:         db.Config,
+		DateTimeFormat: db.DateTimeFormat,
+		Sql:            db.Sql,
+		executor:       tx,
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		}
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+	if err = fn(txDb); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (db *Database) migrate() error {
@@ -191,6 +240,33 @@ func (db *Database) migrate() error {
 	}
 	if err == nil {
 		err = db.migration20220101070000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260421120000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260421130000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260422140000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260422150000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260422160000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260422170000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260422180000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260424100000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260424110000(verbose)
 	}
 
 	return err
@@ -586,6 +662,273 @@ func (db *Database) migration20220101070000(verbose bool) error {
 		}
 	}
 	return db.migrateWithSchema("20220101070000-v6.1.0", queries, verbose)
+}
+
+// migration20260424110000 retries the transcript trigram GIN creation. The
+// earlier migration (20260422180000) tolerates a missing pg_trgm extension
+// by just logging and moving on — if the DB role gained CREATE-extension
+// permission since then (or you installed the extension manually), this
+// migration picks up where the first attempt left off.
+//
+// Both CREATE statements are IF NOT EXISTS, so this is safe to run even
+// when the extension and index already exist.
+func (db *Database) migration20260424110000(verbose bool) error {
+	const name = "20260424110000-transcript-trgm-idx-retry"
+
+	var count int
+	checkQuery := db.formatQuery(fmt.Sprintf("select count(*) from `rdioScannerMeta` where `name` = '%s'", name))
+	if err := db.Sql.QueryRow(checkQuery).Scan(&count); err != nil {
+		return fmt.Errorf("%s check: %v", name, err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	if verbose {
+		log.Printf("running database migration %s", name)
+	}
+
+	if db.Config.DbType == DbTypePostgres {
+		if _, err := db.Sql.Exec("create extension if not exists pg_trgm"); err != nil {
+			log.Printf("%s: could not install pg_trgm extension, transcript search will fall back to seq scan: %v", name, err)
+		} else {
+			if _, err := db.Sql.Exec(`create index if not exists "rdio_scanner_calls_transcript_trgm" on "rdioScannerCalls" using gin ("transcript" gin_trgm_ops)`); err != nil {
+				log.Printf("%s: could not create transcript trigram index: %v", name, err)
+			} else if verbose {
+				log.Printf("%s: transcript trigram index ensured", name)
+			}
+		}
+	}
+
+	if _, err := db.Sql.Exec(db.formatQuery(fmt.Sprintf("insert into `rdioScannerMeta` (`name`) values ('%s')", name))); err != nil {
+		return fmt.Errorf("%s record: %v", name, err)
+	}
+	return nil
+}
+
+// migration20260424100000 adds a BRIN index on dateTime for Postgres. BRIN
+// is the right fit for naturally-ordered, time-series columns: it's roughly
+// 1% the size of a B-tree, and lets the planner skip whole heap ranges on
+// dateTime filters (overview counts, stats buckets, search date pickers).
+// The existing composite B-tree on (dateTime, system, talkgroup) stays —
+// it's still the best index for the search ORDER BY path.
+//
+// Tolerant like the trigram migration: if the index can't be created we log
+// and move on, and the migration is still recorded so we don't retry every
+// boot.
+func (db *Database) migration20260424100000(verbose bool) error {
+	const name = "20260424100000-dateTime-brin-idx"
+
+	var count int
+	checkQuery := db.formatQuery(fmt.Sprintf("select count(*) from `rdioScannerMeta` where `name` = '%s'", name))
+	if err := db.Sql.QueryRow(checkQuery).Scan(&count); err != nil {
+		return fmt.Errorf("%s check: %v", name, err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	if verbose {
+		log.Printf("running database migration %s", name)
+	}
+
+	if db.Config.DbType == DbTypePostgres {
+		if _, err := db.Sql.Exec(`create index if not exists "rdio_scanner_calls_date_time_brin" on "rdioScannerCalls" using brin ("dateTime") with (pages_per_range = 32)`); err != nil {
+			log.Printf("%s: could not create BRIN index on dateTime: %v", name, err)
+		}
+	}
+
+	if _, err := db.Sql.Exec(db.formatQuery(fmt.Sprintf("insert into `rdioScannerMeta` (`name`) values ('%s')", name))); err != nil {
+		return fmt.Errorf("%s record: %v", name, err)
+	}
+	return nil
+}
+
+// migration20260422180000 adds a GIN trigram index on the transcript column
+// for Postgres, which makes transcript LIKE/ILIKE searches fast on large
+// tables. The pg_trgm extension must exist first; if the DB role can't
+// create extensions or install one, the migration logs and moves on so
+// startup isn't blocked — transcript search then just uses a seq scan.
+func (db *Database) migration20260422180000(verbose bool) error {
+	const name = "20260422180000-transcript-trgm-idx"
+
+	var count int
+	checkQuery := db.formatQuery(fmt.Sprintf("select count(*) from `rdioScannerMeta` where `name` = '%s'", name))
+	if err := db.Sql.QueryRow(checkQuery).Scan(&count); err != nil {
+		return fmt.Errorf("%s check: %v", name, err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	if verbose {
+		log.Printf("running database migration %s", name)
+	}
+
+	if db.Config.DbType == DbTypePostgres {
+		if _, err := db.Sql.Exec("create extension if not exists pg_trgm"); err != nil {
+			log.Printf("%s: could not install pg_trgm extension, transcript search will fall back to seq scan: %v", name, err)
+		} else {
+			if _, err := db.Sql.Exec(`create index if not exists "rdio_scanner_calls_transcript_trgm" on "rdioScannerCalls" using gin ("transcript" gin_trgm_ops)`); err != nil {
+				log.Printf("%s: could not create transcript trigram index: %v", name, err)
+			}
+		}
+	}
+
+	// Always record the migration as complete so we don't retry every boot.
+	if _, err := db.Sql.Exec(db.formatQuery(fmt.Sprintf("insert into `rdioScannerMeta` (`name`) values ('%s')", name))); err != nil {
+		return fmt.Errorf("%s record: %v", name, err)
+	}
+	return nil
+}
+
+func (db *Database) migration20260422170000(verbose bool) error {
+	var queries []string
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerSystems" add column "transcriptionPrompt" text not null default ''`,
+		}
+	default:
+		queries = []string{
+			"alter table `rdioScannerSystems` add column `transcriptionPrompt` text not null default ''",
+		}
+	}
+	return db.migrateWithSchema("20260422170000-system-transcription-prompt", queries, verbose)
+}
+
+func (db *Database) migration20260422160000(verbose bool) error {
+	var queries []string
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerSystems" add column "transcribe" boolean not null default true`,
+		}
+	default:
+		queries = []string{
+			"alter table `rdioScannerSystems` add column `transcribe` tinyint(1) not null default 1",
+		}
+	}
+	return db.migrateWithSchema("20260422160000-system-transcribe", queries, verbose)
+}
+
+func (db *Database) migration20260422150000(verbose bool) error {
+	var queries []string
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerTalkgroups" add column "transcribe" boolean not null default true`,
+		}
+	case DbTypeSqlite:
+		queries = []string{
+			"alter table `rdioScannerTalkgroups` add column `transcribe` tinyint(1) not null default 1",
+		}
+	default:
+		queries = []string{
+			"alter table `rdioScannerTalkgroups` add column `transcribe` tinyint(1) not null default 1",
+		}
+	}
+	return db.migrateWithSchema("20260422150000-talkgroup-transcribe", queries, verbose)
+}
+
+func (db *Database) migration20260422140000(verbose bool) error {
+	var queries []string
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		queries = []string{
+			`create index if not exists "rdio_scanner_calls_system_talkgroup_date_time" on "rdioScannerCalls" ("system", "talkgroup", "dateTime")`,
+		}
+	case DbTypeSqlite:
+		queries = []string{
+			"create index if not exists `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`)",
+		}
+	default:
+		queries = []string{
+			"create index `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`)",
+		}
+	}
+	return db.migrateWithSchema("20260422140000-calls-system-talkgroup-datetime-idx", queries, verbose)
+}
+
+func (db *Database) migration20260421130000(verbose bool) error {
+	const name = "20260421130000-split-option-rows"
+
+	var count int
+	query := db.formatQuery(fmt.Sprintf("select count(*) from `rdioScannerMeta` where `name` = '%s'", name))
+	if err := db.Sql.QueryRow(query).Scan(&count); err != nil {
+		return fmt.Errorf("%s check: %v", name, err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	if verbose {
+		log.Printf("running database migration %s", name)
+	}
+
+	tx, err := db.Sql.Begin()
+	if err != nil {
+		return err
+	}
+
+	var blob string
+	err = tx.QueryRow(db.formatQuery("select `val` from `rdioScannerConfigs` where `key` = 'options'")).Scan(&blob)
+	if err != nil && err != sql.ErrNoRows {
+		tx.Rollback()
+		return fmt.Errorf("%s read: %v", name, err)
+	}
+
+	if err == nil {
+		var m map[string]any
+		if jerr := json.Unmarshal([]byte(blob), &m); jerr == nil {
+			for k, v := range m {
+				raw, jerr := json.Marshal(v)
+				if jerr != nil {
+					continue
+				}
+				rowKey := "option." + k
+
+				res, uerr := tx.Exec(db.formatQuery("update `rdioScannerConfigs` set `val` = ? where `key` = ?"), string(raw), rowKey)
+				if uerr != nil {
+					tx.Rollback()
+					return fmt.Errorf("%s upsert %s: %v", name, k, uerr)
+				}
+				if n, _ := res.RowsAffected(); n == 0 {
+					if _, ierr := tx.Exec(db.formatQuery("insert into `rdioScannerConfigs` (`key`, `val`) values (?, ?)"), rowKey, string(raw)); ierr != nil {
+						tx.Rollback()
+						return fmt.Errorf("%s insert %s: %v", name, k, ierr)
+					}
+				}
+			}
+
+			if _, derr := tx.Exec(db.formatQuery("delete from `rdioScannerConfigs` where `key` = 'options'")); derr != nil {
+				tx.Rollback()
+				return fmt.Errorf("%s cleanup: %v", name, derr)
+			}
+		}
+	}
+
+	if _, err := tx.Exec(db.formatQuery(fmt.Sprintf("insert into `rdioScannerMeta` (`name`) values ('%s')", name))); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("%s record: %v", name, err)
+	}
+
+	return tx.Commit()
+}
+
+func (db *Database) migration20260421120000(verbose bool) error {
+	var queries []string
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerCalls" add column "transcript" text`,
+		}
+	default:
+		queries = []string{
+			"alter table `rdioScannerCalls` add column `transcript` text",
+		}
+	}
+	return db.migrateWithSchema("20260421120000-add-call-transcript", queries, verbose)
 }
 
 func (db *Database) prepareMigration() (bool, error) {

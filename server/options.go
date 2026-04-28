@@ -16,9 +16,9 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"golang.org/x/crypto/bcrypt"
@@ -42,6 +42,17 @@ type Options struct {
 	SortTalkgroups              bool   `json:"sortTalkgroups"`
 	TagsToggle                  bool   `json:"tagsToggle"`
 	Time12hFormat               bool   `json:"time12hFormat"`
+	TranscriptionEnabled        bool   `json:"transcriptionEnabled"`
+	TranscriptionProvider       string `json:"transcriptionProvider"`
+	TranscriptionBaseUrl        string `json:"transcriptionBaseUrl"`
+	TranscriptionApiKey         string `json:"transcriptionApiKey"`
+	TranscriptionModel          string `json:"transcriptionModel"`
+	TranscriptionLanguage       string `json:"transcriptionLanguage"`
+	TranscriptionPrompt         string `json:"transcriptionPrompt"`
+	TranscriptionMaxPerMinute   uint   `json:"transcriptionMaxPerMinute"`
+	TranscriptionMinAudioBytes  uint   `json:"transcriptionMinAudioBytes"`
+	WaitForTranscript           bool   `json:"waitForTranscript"`
+	ShowRetranscribeButton      bool   `json:"showRetranscribeButton"`
 	UmamiUrl                    string `json:"umamiUrl"`
 	UmamiWebsiteId              string `json:"umamiWebsiteId"`
 	adminPassword               string
@@ -55,6 +66,8 @@ const (
 	AUDIO_CONVERSION_ENABLED           = 1
 	AUDIO_CONVERSION_ENABLED_NORM      = 2
 	AUDIO_CONVERSION_ENABLED_LOUD_NORM = 3
+
+	optionRowPrefix = "option."
 )
 
 func NewOptions() *Options {
@@ -63,43 +76,37 @@ func NewOptions() *Options {
 	}
 }
 
+// FromMap overlays any fields present in m onto the current options.
+// Missing fields are intentionally left alone so a partial payload from
+// the admin UI cannot accidentally reset unrelated settings.
 func (options *Options) FromMap(m map[string]any) *Options {
 	options.mutex.Lock()
 	defer options.mutex.Unlock()
 
-	switch v := m["afsSystems"].(type) {
-	case string:
-		options.AfsSystems = v
+	setStr := func(key string, dest *string) {
+		if v, ok := m[key].(string); ok {
+			*dest = v
+		}
+	}
+	setUint := func(key string, dest *uint) {
+		if v, ok := m[key].(float64); ok {
+			*dest = uint(v)
+		}
+	}
+	setBool := func(key string, dest *bool) {
+		if v, ok := m[key].(bool); ok {
+			*dest = v
+		}
 	}
 
-	switch v := m["audioConversion"].(type) {
-	case float64:
-		options.AudioConversion = uint(v)
-	default:
-		options.MaxClients = defaults.options.audioConversion
-	}
+	setStr("afsSystems", &options.AfsSystems)
+	setUint("audioConversion", &options.AudioConversion)
+	setBool("autoPopulate", &options.AutoPopulate)
+	setStr("branding", &options.Branding)
+	setUint("dimmerDelay", &options.DimmerDelay)
 
-	switch v := m["autoPopulate"].(type) {
-	case bool:
-		options.AutoPopulate = v
-	default:
-		options.AutoPopulate = defaults.options.autoPopulate
-	}
-
-	switch v := m["branding"].(type) {
-	case string:
-		options.Branding = v
-	}
-
-	switch v := m["dimmerDelay"].(type) {
-	case float64:
-		options.DimmerDelay = uint(v)
-	default:
-		options.DimmerDelay = defaults.options.dimmerDelay
-	}
-
-	switch v := m["disableAudioConversion"].(type) {
-	case bool:
+	// legacy shorthand used by older clients
+	if v, ok := m["disableAudioConversion"].(bool); ok {
 		if v {
 			options.AudioConversion = 2
 		} else {
@@ -107,101 +114,77 @@ func (options *Options) FromMap(m map[string]any) *Options {
 		}
 	}
 
-	switch v := m["disableDuplicateDetection"].(type) {
-	case bool:
-		options.DisableDuplicateDetection = v
-	default:
-		options.DisableDuplicateDetection = defaults.options.disableDuplicateDetection
-	}
-
-	switch v := m["duplicateDetectionTimeFrame"].(type) {
-	case float64:
-		options.DuplicateDetectionTimeFrame = uint(v)
-	default:
-		options.DuplicateDetectionTimeFrame = defaults.options.duplicateDetectionTimeFrame
-	}
-
-	switch v := m["email"].(type) {
-	case string:
-		options.Email = v
-	}
-
-	switch v := m["keypadBeeps"].(type) {
-	case string:
-		options.KeypadBeeps = v
-	default:
-		options.KeypadBeeps = defaults.options.keypadBeeps
-	}
-
-	switch v := m["maxClients"].(type) {
-	case float64:
-		options.MaxClients = uint(v)
-	default:
-		options.MaxClients = defaults.options.maxClients
-	}
-
-	switch v := m["playbackGoesLive"].(type) {
-	case bool:
-		options.PlaybackGoesLive = v
-	}
-
-	switch v := m["pruneDays"].(type) {
-	case float64:
-		options.PruneDays = uint(v)
-	default:
-		options.PruneDays = defaults.options.pruneDays
-	}
-
-	switch v := m["searchPatchedTalkgroups"].(type) {
-	case bool:
-		options.SearchPatchedTalkgroups = v
-	default:
-		options.SearchPatchedTalkgroups = defaults.options.searchPatchedTalkgroups
-	}
-
-	switch v := m["showListenersCount"].(type) {
-	case bool:
-		options.ShowListenersCount = v
-	default:
-		options.ShowListenersCount = defaults.options.showListenersCount
-	}
-
-	switch v := m["sortTalkgroups"].(type) {
-	case bool:
-		options.SortTalkgroups = v
-	default:
-		options.SortTalkgroups = defaults.options.sortTalkgroups
-	}
-
-	switch v := m["tagsToggle"].(type) {
-	case bool:
-		options.TagsToggle = v
-	default:
-		options.TagsToggle = defaults.options.tagsToggle
-	}
-
-	switch v := m["time12hFormat"].(type) {
-	case bool:
-		options.Time12hFormat = v
-	default:
-		options.Time12hFormat = defaults.options.time12hFormat
-	}
-
-	switch v := m["umamiUrl"].(type) {
-	case string:
-		options.UmamiUrl = v
-	default:
-		options.UmamiUrl = ""
-	}
-
-	switch v := m["umamiWebsiteId"].(type) {
-	case string:
-		options.UmamiWebsiteId = v
-	default:
-		options.UmamiWebsiteId = ""
-	}
+	setBool("disableDuplicateDetection", &options.DisableDuplicateDetection)
+	setUint("duplicateDetectionTimeFrame", &options.DuplicateDetectionTimeFrame)
+	setStr("email", &options.Email)
+	setStr("keypadBeeps", &options.KeypadBeeps)
+	setUint("maxClients", &options.MaxClients)
+	setBool("playbackGoesLive", &options.PlaybackGoesLive)
+	setUint("pruneDays", &options.PruneDays)
+	setBool("searchPatchedTalkgroups", &options.SearchPatchedTalkgroups)
+	setBool("showListenersCount", &options.ShowListenersCount)
+	setBool("sortTalkgroups", &options.SortTalkgroups)
+	setBool("tagsToggle", &options.TagsToggle)
+	setBool("time12hFormat", &options.Time12hFormat)
+	setBool("transcriptionEnabled", &options.TranscriptionEnabled)
+	setStr("transcriptionProvider", &options.TranscriptionProvider)
+	setStr("transcriptionBaseUrl", &options.TranscriptionBaseUrl)
+	setStr("transcriptionApiKey", &options.TranscriptionApiKey)
+	setStr("transcriptionModel", &options.TranscriptionModel)
+	setStr("transcriptionLanguage", &options.TranscriptionLanguage)
+	setStr("transcriptionPrompt", &options.TranscriptionPrompt)
+	setUint("transcriptionMaxPerMinute", &options.TranscriptionMaxPerMinute)
+	setUint("transcriptionMinAudioBytes", &options.TranscriptionMinAudioBytes)
+	setBool("waitForTranscript", &options.WaitForTranscript)
+	setBool("showRetranscribeButton", &options.ShowRetranscribeButton)
+	setStr("umamiUrl", &options.UmamiUrl)
+	setStr("umamiWebsiteId", &options.UmamiWebsiteId)
 
 	return options
+}
+
+// optionKeyValuePairs enumerates the per-row option entries that are
+// read/written individually in rdioScannerConfigs. Used by both Read and
+// Write so the set stays in sync.
+func (options *Options) optionKeyValuePairs() []struct {
+	Key string
+	Val any
+} {
+	return []struct {
+		Key string
+		Val any
+	}{
+		{"afsSystems", options.AfsSystems},
+		{"audioConversion", options.AudioConversion},
+		{"autoPopulate", options.AutoPopulate},
+		{"branding", options.Branding},
+		{"dimmerDelay", options.DimmerDelay},
+		{"disableDuplicateDetection", options.DisableDuplicateDetection},
+		{"duplicateDetectionTimeFrame", options.DuplicateDetectionTimeFrame},
+		{"email", options.Email},
+		{"keypadBeeps", options.KeypadBeeps},
+		{"maxClients", options.MaxClients},
+		{"playbackGoesLive", options.PlaybackGoesLive},
+		{"pruneDays", options.PruneDays},
+		{"searchPatchedTalkgroups", options.SearchPatchedTalkgroups},
+		{"showListenersCount", options.ShowListenersCount},
+		{"sortTalkgroups", options.SortTalkgroups},
+		{"tagsToggle", options.TagsToggle},
+		{"time12hFormat", options.Time12hFormat},
+		{"transcriptionEnabled", options.TranscriptionEnabled},
+		{"transcriptionProvider", options.TranscriptionProvider},
+		{"transcriptionBaseUrl", options.TranscriptionBaseUrl},
+		{"transcriptionApiKey", options.TranscriptionApiKey},
+		{"transcriptionModel", options.TranscriptionModel},
+		{"transcriptionLanguage", options.TranscriptionLanguage},
+		{"transcriptionPrompt", options.TranscriptionPrompt},
+		{"transcriptionMaxPerMinute", options.TranscriptionMaxPerMinute},
+		{"transcriptionMinAudioBytes", options.TranscriptionMinAudioBytes},
+		{"waitForTranscript", options.WaitForTranscript},
+		{"showRetranscribeButton", options.ShowRetranscribeButton},
+		{"umamiUrl", options.UmamiUrl},
+		{"umamiWebsiteId", options.UmamiWebsiteId},
+	}
 }
 
 func (options *Options) Read(db *Database) error {
@@ -231,6 +214,12 @@ func (options *Options) Read(db *Database) error {
 	options.ShowListenersCount = defaults.options.showListenersCount
 	options.SortTalkgroups = defaults.options.sortTalkgroups
 	options.TagsToggle = defaults.options.tagsToggle
+	options.TranscriptionEnabled = defaults.options.transcriptionEnabled
+	options.TranscriptionProvider = defaults.options.transcriptionProvider
+	options.TranscriptionBaseUrl = defaults.options.transcriptionBaseUrl
+	options.TranscriptionModel = defaults.options.transcriptionModel
+	options.TranscriptionLanguage = defaults.options.transcriptionLanguage
+	options.TranscriptionPrompt = defaults.options.transcriptionPrompt
 
 	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'adminPassword'").Scan(&s)
 	if err == nil {
@@ -247,106 +236,73 @@ func (options *Options) Read(db *Database) error {
 		}
 	}
 
-	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'options'").Scan(&s)
+	// Load each option from its own row. Missing rows keep the defaults set above.
+	rows, err := db.Query("select `key`, `val` from `rdioScannerConfigs` where `key` like 'option.%'")
 	if err == nil {
-		var m map[string]any
-
-		if err = json.Unmarshal([]byte(s), &m); err == nil {
-			switch v := m["afsSystems"].(type) {
-			case string:
-				options.AfsSystems = v
-			}
-
-			switch v := m["audioConversion"].(type) {
-			case float64:
-				options.AudioConversion = uint(v)
-			}
-
-			switch v := m["autoPopulate"].(type) {
-			case bool:
-				options.AutoPopulate = v
-			}
-
-			switch v := m["branding"].(type) {
-			case string:
-				options.Branding = v
-			}
-
-			switch v := m["dimmerDelay"].(type) {
-			case float64:
-				options.DimmerDelay = uint(v)
-			}
-
-			switch v := m["disableDuplicateDetection"].(type) {
-			case bool:
-				options.DisableDuplicateDetection = v
-			}
-
-			switch v := m["duplicateDetectionTimeFrame"].(type) {
-			case float64:
-				options.DuplicateDetectionTimeFrame = uint(v)
-			}
-
-			switch v := m["email"].(type) {
-			case string:
-				options.Email = v
-			}
-
-			switch v := m["keypadBeeps"].(type) {
-			case string:
-				options.KeypadBeeps = v
-			}
-
-			switch v := m["maxClients"].(type) {
-			case float64:
-				options.MaxClients = uint(v)
-			}
-
-			switch v := m["playbackGoesLive"].(type) {
-			case bool:
-				options.PlaybackGoesLive = v
-			}
-
-			switch v := m["pruneDays"].(type) {
-			case float64:
-				options.PruneDays = uint(v)
-			}
-
-			switch v := m["searchPatchedTalkgroups"].(type) {
-			case bool:
-				options.SearchPatchedTalkgroups = v
-			}
-
-			switch v := m["showListenersCount"].(type) {
-			case bool:
-				options.ShowListenersCount = v
-			}
-
-			switch v := m["sortTalkgroups"].(type) {
-			case bool:
-				options.SortTalkgroups = v
-			}
-
-			switch v := m["tagsToggle"].(type) {
-			case bool:
-				options.TagsToggle = v
-			}
-
-			switch v := m["time12hFormat"].(type) {
-			case bool:
-				options.Time12hFormat = v
-			}
-
-			switch v := m["umamiUrl"].(type) {
-			case string:
-				options.UmamiUrl = v
-			}
-
-			switch v := m["umamiWebsiteId"].(type) {
-			case string:
-				options.UmamiWebsiteId = v
+		stored := map[string]string{}
+		for rows.Next() {
+			var k, v string
+			if err := rows.Scan(&k, &v); err == nil {
+				stored[strings.TrimPrefix(k, optionRowPrefix)] = v
 			}
 		}
+		rows.Close()
+
+		applyStr := func(key string, dest *string) {
+			if raw, ok := stored[key]; ok {
+				var x string
+				if json.Unmarshal([]byte(raw), &x) == nil {
+					*dest = x
+				}
+			}
+		}
+		applyUint := func(key string, dest *uint) {
+			if raw, ok := stored[key]; ok {
+				var x float64
+				if json.Unmarshal([]byte(raw), &x) == nil {
+					*dest = uint(x)
+				}
+			}
+		}
+		applyBool := func(key string, dest *bool) {
+			if raw, ok := stored[key]; ok {
+				var x bool
+				if json.Unmarshal([]byte(raw), &x) == nil {
+					*dest = x
+				}
+			}
+		}
+
+		applyStr("afsSystems", &options.AfsSystems)
+		applyUint("audioConversion", &options.AudioConversion)
+		applyBool("autoPopulate", &options.AutoPopulate)
+		applyStr("branding", &options.Branding)
+		applyUint("dimmerDelay", &options.DimmerDelay)
+		applyBool("disableDuplicateDetection", &options.DisableDuplicateDetection)
+		applyUint("duplicateDetectionTimeFrame", &options.DuplicateDetectionTimeFrame)
+		applyStr("email", &options.Email)
+		applyStr("keypadBeeps", &options.KeypadBeeps)
+		applyUint("maxClients", &options.MaxClients)
+		applyBool("playbackGoesLive", &options.PlaybackGoesLive)
+		applyUint("pruneDays", &options.PruneDays)
+		applyBool("searchPatchedTalkgroups", &options.SearchPatchedTalkgroups)
+		applyBool("showListenersCount", &options.ShowListenersCount)
+		applyBool("sortTalkgroups", &options.SortTalkgroups)
+		applyBool("tagsToggle", &options.TagsToggle)
+		applyBool("time12hFormat", &options.Time12hFormat)
+		applyBool("transcriptionEnabled", &options.TranscriptionEnabled)
+		applyStr("transcriptionProvider", &options.TranscriptionProvider)
+		applyStr("transcriptionBaseUrl", &options.TranscriptionBaseUrl)
+		applyStr("transcriptionApiKey", &options.TranscriptionApiKey)
+		applyStr("transcriptionModel", &options.TranscriptionModel)
+		applyStr("transcriptionLanguage", &options.TranscriptionLanguage)
+		applyStr("transcriptionPrompt", &options.TranscriptionPrompt)
+		applyUint("transcriptionMaxPerMinute", &options.TranscriptionMaxPerMinute)
+		applyUint("transcriptionMinAudioBytes", &options.TranscriptionMinAudioBytes)
+		applyBool("waitForTranscript", &options.WaitForTranscript)
+		applyBool("showRetranscribeButton", &options.ShowRetranscribeButton)
+		applyStr("umamiUrl", &options.UmamiUrl)
+		applyStr("umamiWebsiteId", &options.UmamiWebsiteId)
 	}
 
 	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'secret'").Scan(&s)
@@ -360,13 +316,6 @@ func (options *Options) Read(db *Database) error {
 }
 
 func (options *Options) Write(db *Database) error {
-	var (
-		b   []byte
-		err error
-		i   int64
-		res sql.Result
-	)
-
 	options.mutex.Lock()
 	defer options.mutex.Unlock()
 
@@ -374,61 +323,48 @@ func (options *Options) Write(db *Database) error {
 		return fmt.Errorf("options.write: %v", err)
 	}
 
-	if b, err = json.Marshal(options.adminPassword); err != nil {
+	upsert := func(key string, raw string) error {
+		res, err := db.Exec("update `rdioScannerConfigs` set `val` = ? where `key` = ?", raw, key)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err == nil && n == 0 {
+			if _, err := db.Exec("insert into `rdioScannerConfigs` (`key`, `val`) values (?, ?)", key, raw); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	b, err := json.Marshal(options.adminPassword)
+	if err != nil {
+		return formatError(err)
+	}
+	if err := upsert("adminPassword", string(b)); err != nil {
 		return formatError(err)
 	}
 
-	if res, err = db.Exec("update `rdioScannerConfigs` set `val` = ? where `key` = 'adminPassword'", string(b)); err != nil {
+	b, err = json.Marshal(options.adminPasswordNeedChange)
+	if err != nil {
+		return formatError(err)
+	}
+	if err := upsert("adminPasswordNeedChange", string(b)); err != nil {
 		return formatError(err)
 	}
 
-	if i, err = res.RowsAffected(); err == nil && i == 0 {
-		db.Exec("insert into `rdioScannerConfigs` (`key`, `val`) values (?, ?)", "adminPassword", string(b))
+	for _, entry := range options.optionKeyValuePairs() {
+		b, err := json.Marshal(entry.Val)
+		if err != nil {
+			return formatError(fmt.Errorf("%s: %v", entry.Key, err))
+		}
+		if err := upsert(optionRowPrefix+entry.Key, string(b)); err != nil {
+			return formatError(fmt.Errorf("%s: %v", entry.Key, err))
+		}
 	}
 
-	if b, err = json.Marshal(options.adminPasswordNeedChange); err != nil {
-		return formatError(err)
-	}
-
-	if res, err = db.Exec("update `rdioScannerConfigs` set `val` = ? where `key` = 'adminPasswordNeedChange'", string(b)); err != nil {
-		return formatError(err)
-	}
-
-	if i, err = res.RowsAffected(); err == nil && i == 0 {
-		db.Exec("insert into `rdioScannerConfigs` (`key`, `val`) values (?, ?)", "adminPasswordNeedChange", string(b))
-	}
-
-	if b, err = json.Marshal(map[string]any{
-		"afsSystems":                  options.AfsSystems,
-		"audioConversion":             options.AudioConversion,
-		"autoPopulate":                options.AutoPopulate,
-		"branding":                    options.Branding,
-		"dimmerDelay":                 options.DimmerDelay,
-		"disableDuplicateDetection":   options.DisableDuplicateDetection,
-		"duplicateDetectionTimeFrame": options.DuplicateDetectionTimeFrame,
-		"email":                       options.Email,
-		"keypadBeeps":                 options.KeypadBeeps,
-		"maxClients":                  options.MaxClients,
-		"playbackGoesLive":            options.PlaybackGoesLive,
-		"pruneDays":                   options.PruneDays,
-		"searchPatchedTalkgroups":     options.SearchPatchedTalkgroups,
-		"showListenersCount":          options.ShowListenersCount,
-		"sortTalkgroups":              options.SortTalkgroups,
-		"tagsToggle":                  options.TagsToggle,
-		"time12hFormat":               options.Time12hFormat,
-		"umamiUrl":                    options.UmamiUrl,
-		"umamiWebsiteId":             options.UmamiWebsiteId,
-	}); err != nil {
-		return formatError(err)
-	}
-
-	if res, err = db.Exec("update `rdioScannerConfigs` set `val` = ? where `key` = 'options'", string(b)); err != nil {
-		return formatError(err)
-	}
-
-	if i, err = res.RowsAffected(); err == nil && i == 0 {
-		db.Exec("insert into `rdioScannerConfigs` (`key`, `val`) values (?, ?)", "options", string(b))
-	}
+	// Sanity: clear any legacy combined blob so there's a single source of truth.
+	_, _ = db.Exec("delete from `rdioScannerConfigs` where `key` = 'options'")
 
 	return nil
 }
+

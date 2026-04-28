@@ -12,11 +12,112 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="translucent">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#1e1e1e">
+    <meta name="theme-color" content="#05070b">
+
+    <style>
+        /* Inline splash so the user sees something immediately, before the
+           5 MB Angular bundle finishes parsing. Removed as soon as
+           <app-root> mounts and paints its own content. */
+        html, body { margin: 0; padding: 0; height: 100%; background: #05070b; }
+        #rdio-splash {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            background: radial-gradient(circle at top left, #111827 0, #05070b 55%), #05070b;
+            color: #a1a5b6;
+            font-family: system-ui, -apple-system, "Inter", Roboto, "Helvetica Neue", sans-serif;
+            z-index: 9999;
+            transition: opacity 0.3s ease;
+        }
+        #rdio-splash .title {
+            color: #f9fafb;
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+        }
+        #rdio-splash .subtitle {
+            font-size: 13px;
+            color: #6b7280;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        #rdio-splash .pulse {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(249,115,22,0.55) 0%, rgba(249,115,22,0) 70%);
+            animation: rdio-pulse 1.4s ease-in-out infinite;
+        }
+        @keyframes rdio-pulse {
+            0%, 100% { transform: scale(0.85); opacity: 0.6; }
+            50%      { transform: scale(1.15); opacity: 1; }
+        }
+        #rdio-splash.gone { opacity: 0; pointer-events: none; }
+        app-root:empty + #rdio-splash { display: flex; }
+        app-root:not(:empty) + #rdio-splash { opacity: 0; pointer-events: none; }
+    </style>
 </head>
 
 <body>
+    <script>
+        // Open the WebSocket as early as possible — before Angular even
+        // parses its bundle — so the TLS + HTTP upgrade is already done by
+        // the time the service constructor runs. The service then adopts
+        // the pre-opened socket via window.__rdioEarlyWs.
+        //
+        // Any frames that arrive before the service adopts it get buffered
+        // on the socket's __queue array and replayed on adopt.
+        (function () {
+            try {
+                if (!('WebSocket' in window)) return;
+                var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                var url = protocol + '//' + window.location.host + window.location.pathname;
+                var ws = new WebSocket(url);
+                ws.__queue = [];
+                // The Angular service swaps __handler to its real parser on
+                // adopt, then drops __queue so subsequent events bypass the
+                // buffer entirely. Using a single addEventListener avoids
+                // the onmessage-vs-addEventListener double-dispatch pitfall.
+                ws.__handler = function (data) {
+                    if (ws.__queue) ws.__queue.push(data);
+                };
+                ws.addEventListener('message', function (ev) {
+                    ws.__handler(ev.data);
+                });
+                ws.addEventListener('close', function () { ws.__closed = true; });
+                ws.addEventListener('error', function () { ws.__errored = true; });
+                window.__rdioEarlyWs = ws;
+            } catch (e) { /* fall back to service-side open */ }
+        })();
+    </script>
     <app-root></app-root>
+    <div id="rdio-splash" aria-hidden="true">
+        <div class="pulse"></div>
+        <div class="title">Rdio Scanner</div>
+        <div class="subtitle">Loading…</div>
+    </div>
+    <script>
+        // As soon as Angular paints into <app-root>, fade the splash out.
+        (function () {
+            var root = document.querySelector('app-root');
+            var splash = document.getElementById('rdio-splash');
+            if (!root || !splash) return;
+            var obs = new MutationObserver(function () {
+                if (root.childElementCount > 0) {
+                    splash.classList.add('gone');
+                    setTimeout(function () {
+                        if (splash.parentNode) splash.parentNode.removeChild(splash);
+                    }, 400);
+                    obs.disconnect();
+                }
+            });
+            obs.observe(root, { childList: true });
+        })();
+    </script>
     <noscript>
         Please enable JavaScript to continue using this application.
     </noscript>

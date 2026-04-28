@@ -197,6 +197,139 @@
     </div>
     <div class="row">
         <p>
+            <span class="mat-body">Call Transcription</span><br>
+            <span class="mat-caption">Automatically transcribe incoming call audio using an OpenAI-compatible Whisper
+                API (e.g. Groq). The API key is required when enabled.</span>
+        </p>
+        <div>
+            <mat-slide-toggle color="primary" formControlName="transcriptionEnabled"></mat-slide-toggle>
+        </div>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Transcription Provider</span><br>
+            <span class="mat-caption">Label for the provider (informational).</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <mat-select formControlName="transcriptionProvider" placeholder="Provider">
+                <mat-option value="groq">Groq</mat-option>
+                <mat-option value="openai">OpenAI</mat-option>
+                <mat-option value="custom">Custom (OpenAI-compatible)</mat-option>
+            </mat-select>
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Transcription Base URL</span><br>
+            <span class="mat-caption">Base URL of the OpenAI-compatible API (no trailing slash). Groq:
+                https://api.groq.com/openai/v1 &mdash; OpenAI: https://api.openai.com/v1.</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <input type="text" matInput formControlName="transcriptionBaseUrl"
+                placeholder="https://api.groq.com/openai/v1">
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Transcription API Key(s)</span><br>
+            <span class="mat-caption">One or more secret keys sent as <code>Authorization: Bearer &lt;key&gt;</code>.
+                Paste multiple keys separated by commas, semicolons, or newlines — the server round-robins
+                across them and temporarily benches any key that returns a 429 until its upstream backoff
+                expires.</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <textarea matInput formControlName="transcriptionApiKey" placeholder="gsk_xxxx, gsk_yyyy, …"
+                autocomplete="off" rows="3"></textarea>
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Transcription Model</span><br>
+            <span class="mat-caption">Whisper model identifier. Groq supports <code>whisper-large-v3</code> and
+                <code>whisper-large-v3-turbo</code>.</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <mat-select formControlName="transcriptionModel" placeholder="Model">
+                <mat-option value="whisper-large-v3-turbo">whisper-large-v3-turbo</mat-option>
+                <mat-option value="whisper-large-v3">whisper-large-v3</mat-option>
+                <mat-option value="whisper-1">whisper-1 (OpenAI)</mat-option>
+            </mat-select>
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Transcription Language</span><br>
+            <span class="mat-caption">Optional ISO-639-1 code (e.g. <code>en</code>). Leave blank to auto-detect.</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <input type="text" matInput formControlName="transcriptionLanguage" placeholder="en">
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Transcription Prompt (global fallback)</span><br>
+            <span class="mat-caption">Optional prompt to bias Whisper toward domain vocabulary. Used for
+                systems that don't have their own prompt set. <strong>Hard cap 896 characters</strong>
+                — longer values are truncated server-side (trailing portion kept).</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <textarea type="text" matInput formControlName="transcriptionPrompt" rows="5"
+                placeholder="Unit IDs, 10-codes, agency names..."></textarea>
+            <mat-hint align="end"
+                [ngStyle]="{ color: (form?.get('transcriptionPrompt')?.value?.length || 0) > 896 ? '#e53935' : null }">
+                {{ form?.get('transcriptionPrompt')?.value?.length || 0 }} / 896
+            </mat-hint>
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Max Transcriptions / Minute (per key)</span><br>
+            <span class="mat-caption">Per-key cap on requests in the last 60 seconds. Groq enforces
+                <code>30/min</code> per key, so set this to <code>30</code> (or a couple below to leave
+                headroom). Effective throughput is <em>this × number of keys</em>. <code>0</code> disables
+                the cap. When every key is at its limit or paused on a 429 backoff, incoming calls are
+                skipped (never queued).</span>
+        </p>
+        <mat-form-field>
+            <input type="number" min="0" step="1" matInput formControlName="transcriptionMaxPerMinute">
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Min Audio Bytes</span><br>
+            <span class="mat-caption">Skip transcription for clips smaller than this many bytes. Tiny clips are
+                usually squelch bursts or mic-keys that waste quota. <code>0</code> disables the filter;
+                <code>8000</code>&nbsp;≈&nbsp;2 s of audio at typical rdio bitrates.</span>
+        </p>
+        <mat-form-field>
+            <input type="number" min="0" step="1" matInput formControlName="transcriptionMinAudioBytes">
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Wait For Transcript</span><br>
+            <span class="mat-caption">When enabled, every client holds each call's audio playback for up to 15
+                seconds until its transcript is available, then plays. If Whisper doesn't return in time the
+                call plays without a transcript (no calls are lost). Useful if you want viewers to read
+                along while listening. Applies to all clients globally.</span>
+        </p>
+        <div>
+            <mat-slide-toggle color="primary" formControlName="waitForTranscript"></mat-slide-toggle>
+        </div>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Show Retranscribe Button</span><br>
+            <span class="mat-caption">Exposes a per-row retranscribe button on the Search Call page for
+                authenticated admins. Leave off to keep the UI clean — retranscription is still available
+                via the admin API.</span>
+        </p>
+        <div>
+            <mat-slide-toggle color="primary" formControlName="showRetranscribeButton"></mat-slide-toggle>
+        </div>
+    </div>
+    <div class="row">
+        <p>
             <span class="mat-body">Umami Analytics URL</span><br>
             <span class="mat-caption">The URL of your Umami analytics script (e.g.
                 https://analytics.example.com/script.js). Leave empty to disable.</span>

@@ -53,6 +53,33 @@
     </div>
     <div class="row">
         <p>
+            <span class="mat-body">Transcribe</span><br>
+            <span class="mat-caption">Master switch for this system. When off, no calls on any talkgroup of this
+                system are transcribed — overrides the per-talkgroup toggle. Useful for disabling an entire
+                system at once to save transcription quota.</span>
+        </p>
+        <mat-slide-toggle color="primary" formControlName="transcribe"></mat-slide-toggle>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Transcription Prompt</span><br>
+            <span class="mat-caption">Domain-specific vocabulary/phrasing to bias Whisper for calls on this
+                system. Overrides the global prompt when set; leave blank to use the global one.
+                <strong>Hard cap 896 characters</strong> — the server truncates anything longer (keeping
+                the trailing portion) before sending. Write it as example radio traffic plus keyword
+                lists.</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <textarea matInput formControlName="transcriptionPrompt" rows="5"
+                placeholder="Example: 'Bowery 9 proceeding to Hanging Rock, Group 2, Bowery SCC.' Agencies: FRNSW, NSWRFS..."></textarea>
+            <mat-hint align="end"
+                [ngStyle]="{ color: (form?.get('transcriptionPrompt')?.value?.length || 0) > 896 ? '#e53935' : null }">
+                {{ form?.get('transcriptionPrompt')?.value?.length || 0 }} / 896
+            </mat-hint>
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
             <span class="mat-body">Blacklists</span><br>
             <span class="mat-caption">A comma separated list of talkgroup Ids to blacklist from this system. This only
                 has an effect if the auto populate option is enabled.</span>

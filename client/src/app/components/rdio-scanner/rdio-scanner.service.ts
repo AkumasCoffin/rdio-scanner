@@ -61,6 +61,7 @@ enum WebsocketCommand {
     LivefeedMap = 'LFM',
     Max = 'MAX',
     Pin = 'PIN',
+    Transcript = 'TRX',
     Version = 'VER',
 }
 
@@ -72,11 +73,45 @@ export class RdioScannerService implements OnDestroy {
 
     event = new EventEmitter<RdioScannerEvent>();
 
+    private transcriptResolvers = new Map<number, (text: string) => void>();
+
+    // Deep-link call ID parsed from ?call=<id> at construction time. Exposed
+    // via consumePendingDeepLink() so the top-level component can pick it up
+    // from ngAfterViewInit if it subscribed too late to catch the event emit
+    // (possible now that the index.html early-WS can land CFG before the
+    // component's subscription is attached).
+    private pendingDeepLinkCallId: number | undefined;
+
+    consumePendingDeepLink(): number | undefined {
+        const id = this.pendingDeepLinkCallId;
+        this.pendingDeepLinkCallId = undefined;
+        return id;
+    }
+
+    // When true, live-feed calls without a transcript are held OUT of the
+    // playback queue entirely until their transcript arrives (or a timeout
+    // releases them so nothing is lost). Admin-controlled — flows in via
+    // the server's CFG broadcast.
+    private waitForTranscript = false;
+    private pendingTranscriptCalls = new Map<number, {
+        call: RdioScannerCall;
+        priority: boolean;
+        fetchTimer: ReturnType<typeof setTimeout>;
+        timeoutTimer: ReturnType<typeof setTimeout>;
+    }>();
+    private static readonly TRANSCRIPT_WAIT_MAX_MS = 30000;
+    private static readonly TRANSCRIPT_WAIT_POLL_MS = 2000;
+
     private audioContext: AudioContext | undefined;
 
     private audioSource: AudioBufferSourceNode | undefined;
     private audioSourceStartTime = NaN;
     private gainNode: GainNode | undefined;
+
+    // Bumped every time playback starts or stops. decodeAudioData is async —
+    // if the user switches calls while a previous decode is in flight, the
+    // stale callback must discard itself instead of starting the wrong buffer.
+    private playGeneration = 0;
 
     private beepContext: AudioContext | undefined;
 
@@ -128,6 +163,21 @@ export class RdioScannerService implements OnDestroy {
         this.initializeInstanceId();
 
         this.readLivefeedMap();
+
+
+        try {
+            // Read the query param straight from window.location — router.url
+            // isn't populated yet at service-construction time, so the earlier
+            // parseUrl path could miss the ?call=<id> from share links.
+            const search = (typeof window !== 'undefined' && window.location && window.location.search) || '';
+            const raw = new URLSearchParams(search).get('call');
+            const n = raw ? parseInt(raw, 10) : NaN;
+            if (Number.isFinite(n) && n > 0) {
+                this.pendingDeepLinkCallId = n;
+            }
+        } catch {
+            // ignore
+        }
 
         this.openWebsocket();
     }
@@ -671,6 +721,28 @@ export class RdioScannerService implements OnDestroy {
             return;
         }
 
+        // Emit the call metadata before we try to decode audio. Browsers
+        // block AudioContext until a user gesture, so on a cold share-link
+        // landing beginAudioPlayback() bails at the !audioContext guard and
+        // the only downstream {call} emit (inside decodeAudioData) never
+        // fires. Components that anchor on event.call (LCD display, search
+        // deep-link highlight + date-filter) would otherwise sit waiting
+        // forever for a gesture that never comes.
+        const queue = this.livefeedMode === RdioScannerLivefeedMode.Playback
+            ? this.getPlaybackQueueCount()
+            : this.callQueue.length;
+        this.event.emit({ call: this.call, queue });
+
+        this.beginAudioPlayback();
+    }
+
+    // beginAudioPlayback decodes this.call.audio and starts the source node.
+    // Separated from play() so the wait-for-transcript path can defer it.
+    private beginAudioPlayback(): void {
+        if (!this.call?.audio || !this.audioContext) {
+            return;
+        }
+
         const queue = this.livefeedMode === RdioScannerLivefeedMode.Playback
             ? this.getPlaybackQueueCount()
             : this.callQueue.length;
@@ -682,21 +754,26 @@ export class RdioScannerService implements OnDestroy {
             arrayBufferView[i] = this.call.audio.data[i];
         }
 
-        this.audioContext?.decodeAudioData(arrayBuffer, (buffer) => {
+        const generation = ++this.playGeneration;
+
+        this.audioContext.decodeAudioData(arrayBuffer, (buffer) => {
+            if (generation !== this.playGeneration) {
+                return;
+            }
+
             if (!this.audioContext || this.audioSource || !this.call) {
                 return;
             }
 
             this.audioSource = this.audioContext.createBufferSource();
             this.audioSource.buffer = buffer;
-            
-            // Create gain node if it doesn't exist
+
             if (!this.gainNode) {
                 this.gainNode = this.audioContext.createGain();
                 this.gainNode.connect(this.audioContext.destination);
                 this.updateGainNode();
             }
-            
+
             this.audioSource.connect(this.gainNode);
             this.audioSource.onended = () => this.skip({ delay: true });
             this.audioSource.start();
@@ -715,14 +792,106 @@ export class RdioScannerService implements OnDestroy {
                 }
             });
         }, () => {
+            if (generation !== this.playGeneration) {
+                return;
+            }
+
             this.event.emit({ call: this.call, queue });
 
             this.skip({ delay: false });
         });
     }
 
+    // holdPendingTranscript parks a call with no transcript off the queue
+    // and starts polling for the transcript. When it arrives, the call is
+    // enqueued normally. If the configured timeout elapses without a
+    // transcript the call is enqueued anyway so nothing ever goes missing.
+    private holdPendingTranscript(call: RdioScannerCall, priority: boolean): void {
+        if (!call.id) {
+            // No id to reconcile against — fall back to normal queueing.
+            this.enqueuePending(call, priority);
+            return;
+        }
+
+        // If we're already holding this id (e.g., duplicate CAL), ignore.
+        if (this.pendingTranscriptCalls.has(call.id)) {
+            return;
+        }
+
+        const id = call.id;
+
+        const fetchTimer = setInterval(() => {
+            this.fetchTranscript(id).then((text) => {
+                if (text) {
+                    this.releasePendingTranscript(id, text);
+                }
+            }).catch(() => { /* ignore */ });
+        }, RdioScannerService.TRANSCRIPT_WAIT_POLL_MS);
+
+        const timeoutTimer = setTimeout(() => {
+            // Final safety net: release whatever we have so the call isn't lost.
+            this.releasePendingTranscript(id, undefined);
+        }, RdioScannerService.TRANSCRIPT_WAIT_MAX_MS);
+
+        this.pendingTranscriptCalls.set(id, { call, priority, fetchTimer, timeoutTimer });
+    }
+
+    private releasePendingTranscript(id: number, transcript: string | undefined): void {
+        const entry = this.pendingTranscriptCalls.get(id);
+        if (!entry) return;
+
+        clearInterval(entry.fetchTimer);
+        clearTimeout(entry.timeoutTimer);
+        this.pendingTranscriptCalls.delete(id);
+
+        if (transcript) {
+            entry.call.transcript = transcript;
+        }
+        this.enqueuePending(entry.call, entry.priority);
+    }
+
+    // enqueuePending is the normal queue path that a held call takes once
+    // its transcript has arrived (or its timeout elapsed).
+    private enqueuePending(call: RdioScannerCall, priority: boolean): void {
+        if (this.livefeedMode === RdioScannerLivefeedMode.Offline) {
+            // Live feed was turned off while we were holding — silently drop.
+            return;
+        }
+        if (priority) {
+            this.callQueue.unshift(call);
+        } else {
+            this.callQueue.push(call);
+        }
+        if (this.audioSource || this.call || this.livefeedPaused || this.skipDelay) {
+            this.event.emit({
+                queue: this.livefeedMode === RdioScannerLivefeedMode.Online ? this.callQueue.length : this.getPlaybackQueueCount(),
+            });
+        } else {
+            this.play();
+        }
+    }
+
+    // flushPendingTranscripts dumps all held calls into the queue. Used when
+    // the admin turns the toggle off mid-session.
+    private flushPendingTranscripts(): void {
+        for (const [id, entry] of this.pendingTranscriptCalls.entries()) {
+            clearInterval(entry.fetchTimer);
+            clearTimeout(entry.timeoutTimer);
+            this.pendingTranscriptCalls.delete(id);
+            this.enqueuePending(entry.call, entry.priority);
+        }
+    }
+
     queue(call: RdioScannerCall, options?: { priority?: boolean }): void {
         if (!call?.audio || this.livefeedMode === RdioScannerLivefeedMode.Offline) {
+            return;
+        }
+
+        // Hold back calls without transcripts when the admin has enabled
+        // wait-for-transcript, so the user sees them appear (and start
+        // playing) only when their text is ready.
+        if (this.waitForTranscript && !call.transcript && !options?.priority) {
+            this.holdPendingTranscript(call, false);
             return;
         }
 
@@ -760,6 +929,32 @@ export class RdioScannerService implements OnDestroy {
     searchCalls(options: RdioScannerSearchOptions): void {
         this.trackUmamiEvent('call-search');
         this.sendtoWebsocket(WebsocketCommand.ListCall, options);
+    }
+
+    fetchTranscript(id: number): Promise<string> {
+        return new Promise<string>((resolve) => {
+            if (!id) {
+                resolve('');
+                return;
+            }
+            const existing = this.transcriptResolvers.get(id);
+            if (existing) {
+                existing('');
+            }
+            this.transcriptResolvers.set(id, (text) => {
+                this.transcriptResolvers.delete(id);
+                resolve(text);
+            });
+            this.sendtoWebsocket(WebsocketCommand.Transcript, id);
+
+            setTimeout(() => {
+                const r = this.transcriptResolvers.get(id);
+                if (r) {
+                    this.transcriptResolvers.delete(id);
+                    r('');
+                }
+            }, 10000);
+        });
     }
 
     skip(options?: { delay?: boolean }): void {
@@ -811,6 +1006,11 @@ export class RdioScannerService implements OnDestroy {
     }
 
     stop(options?: { emit?: boolean }): void {
+        // Invalidate any in-flight decodeAudioData callbacks. Without this,
+        // a stale decode that lands after stop() would still create a source
+        // for the old buffer and start playing it.
+        this.playGeneration++;
+
         if (this.audioSource) {
             this.audioSource.onended = null;
             this.audioSource.stop();
@@ -960,6 +1160,14 @@ export class RdioScannerService implements OnDestroy {
             if (this.audioContext && this.beepContext) {
                 events.forEach((event) => document.body.removeEventListener(event, bootstrap));
             }
+
+            // Share-link / deep-link landings set this.call via play() before
+            // audioContext exists, so beginAudioPlayback() bailed at the
+            // !audioContext guard. Now that the user has gestured and we
+            // have a live context, drive the deferred playback.
+            if (this.call?.audio && !this.audioSource) {
+                this.beginAudioPlayback();
+            }
         };
 
         events.forEach((event) => document.body.addEventListener(event, bootstrap));
@@ -1055,11 +1263,36 @@ export class RdioScannerService implements OnDestroy {
     }
 
     private openWebsocket(): void {
-        const websocketUrl = window.location.href.replace(/^http/, 'ws');
+        // Prefer the pre-opened socket from index.html if it's still usable.
+        // That script fires before the Angular bundle downloads, so by the
+        // time this runs the TLS + HTTP upgrade is typically already done —
+        // no second round-trip to link.
+        type EarlyWs = WebSocket & {
+            __queue?: string[];
+            __closed?: boolean;
+            __errored?: boolean;
+            __handler?: (data: string) => void;
+        };
+        const win = window as unknown as { __rdioEarlyWs?: EarlyWs };
+        const early = win.__rdioEarlyWs;
+        let queued: string[] | undefined;
+        let ws: WebSocket;
+        let early2: EarlyWs | undefined;
 
-        this.websocket = new WebSocket(websocketUrl);
+        if (early && !early.__closed && !early.__errored && early.readyState !== WebSocket.CLOSED) {
+            ws = early;
+            early2 = early;
+            queued = early.__queue;
+            win.__rdioEarlyWs = undefined;
 
-        this.websocket.onclose = (ev: CloseEvent) => {
+        } else {
+            const websocketUrl = window.location.href.replace(/^http/, 'ws');
+            ws = new WebSocket(websocketUrl);
+        }
+
+        this.websocket = ws;
+
+        ws.onclose = (ev: CloseEvent) => {
             this.event.emit({ linked: false });
 
             if (ev.code !== 1000) {
@@ -1067,16 +1300,38 @@ export class RdioScannerService implements OnDestroy {
             }
         };
 
-        this.websocket.onopen = () => {
+        const parse = (data: string) => this.parseWebsocketMessage(data);
+
+        const onOpen = () => {
             this.event.emit({ linked: true });
 
-            if (this.websocket instanceof WebSocket) {
-                this.websocket.onmessage = (ev: MessageEvent) => this.parseWebsocketMessage(ev.data);
+            if (early2) {
+                // Swap the early-buffer handler to the real parser, then
+                // drop the buffer so subsequent messages go straight through.
+                early2.__handler = parse;
+                early2.__queue = undefined;
+            } else {
+                ws.onmessage = (ev: MessageEvent) => parse(ev.data);
             }
 
             this.sendtoWebsocket(WebsocketCommand.Version);
             this.sendtoWebsocket(WebsocketCommand.Config);
+
+            this.flushPendingSends();
+
+            if (queued && queued.length) {
+                for (const data of queued) {
+                    parse(data);
+                }
+            }
+            queued = undefined;
         };
+
+        if (ws.readyState === WebSocket.OPEN) {
+            onOpen();
+        } else {
+            ws.onopen = onOpen;
+        }
     }
 
     private parseWebsocketMessage(message: string): void {
@@ -1126,7 +1381,18 @@ export class RdioScannerService implements OnDestroy {
                         time12hFormat: typeof config.time12hFormat === 'boolean' ? config.time12hFormat : false,
                         umamiUrl: typeof config.umamiUrl === 'string' ? config.umamiUrl : undefined,
                         umamiWebsiteId: typeof config.umamiWebsiteId === 'string' ? config.umamiWebsiteId : undefined,
+                        showRetranscribeButton: typeof config.showRetranscribeButton === 'boolean' ? config.showRetranscribeButton : false,
                     };
+
+                    // Server-driven wait-for-transcript (admin option).
+                    const nextWait = typeof config.waitForTranscript === 'boolean' ? config.waitForTranscript : false;
+                    if (nextWait !== this.waitForTranscript) {
+                        this.waitForTranscript = nextWait;
+                        this.event.emit({ waitForTranscript: nextWait });
+                        if (!nextWait) {
+                            this.flushPendingTranscripts();
+                        }
+                    }
 
                     this.setupUmami();
 
@@ -1148,6 +1414,20 @@ export class RdioScannerService implements OnDestroy {
                         holdTg: !!this.livefeedMapPriorToHoldTalkgroup,
                         map: this.livefeedMap,
                     });
+
+                    if (this.pendingDeepLinkCallId) {
+                        // Hand off to the search component (via the top-level
+                        // rdio-scanner component) so it can open the search
+                        // panel, locate the call in the results, highlight
+                        // its row, and start playback.
+                        //
+                        // Don't clear pendingDeepLinkCallId here — the
+                        // subscriber consumes it via consumePendingDeepLink()
+                        // which also handles the late-subscribe race where
+                        // this emit lands before the component subscribes.
+                        const id = this.pendingDeepLinkCallId;
+                        setTimeout(() => this.event.emit({ deepLinkCall: id }), 250);
+                    }
 
                     break;
                 }
@@ -1186,6 +1466,27 @@ export class RdioScannerService implements OnDestroy {
                     this.event.emit({ auth: true });
 
                     break;
+
+                case WebsocketCommand.Transcript: {
+                    const payload = message[1];
+                    if (payload && typeof payload === 'object') {
+                        const id = (payload as any).id;
+                        const text: string = typeof (payload as any).transcript === 'string' ? (payload as any).transcript : '';
+                        if (typeof id === 'number') {
+                            const resolver = this.transcriptResolvers.get(id);
+                            if (resolver) {
+                                // Pending fetchTranscript() request — resolve it.
+                                resolver(text);
+                            } else {
+                                // Unsolicited push from server (a transcription
+                                // completed for a call we already know about).
+                                // Let components that show history splice it in.
+                                this.event.emit({ transcriptReady: { id, transcript: text } });
+                            }
+                        }
+                    }
+                    break;
+                }
 
                 case WebsocketCommand.Version: {
                     const data = message[1];
@@ -1401,6 +1702,21 @@ export class RdioScannerService implements OnDestroy {
             }
 
             this.websocket.send(JSON.stringify(message));
+        } else {
+            // Buffer commands issued before the socket is open (e.g. user
+            // clicking LIVE FEED during the first-connect window). Flushed
+            // from the onopen handler so the click isn't lost.
+            this.pendingSends.push({ command, payload, flags });
+        }
+    }
+
+    private pendingSends: { command: string; payload?: unknown; flags?: string }[] = [];
+
+    private flushPendingSends(): void {
+        if (!this.pendingSends.length) return;
+        const queued = this.pendingSends.splice(0);
+        for (const m of queued) {
+            this.sendtoWebsocket(m.command, m.payload, m.flags);
         }
     }
 
