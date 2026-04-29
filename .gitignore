@@ -5,3 +5,4 @@
 *.token
 /build
 /dist
+/scripts/migrate-*.sh
