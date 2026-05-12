@@ -39,8 +39,15 @@ fun RdioApp() {
             ConnectionState.Connected -> {
                 val route = navController.currentBackStackEntry?.destination?.route
                 if (route == Routes.CONNECT || route == null) {
+                    // Keep CONNECT on the back stack (inclusive = false) so a
+                    // system-back press from LIVEFEED returns to the picker
+                    // instead of exiting the app to the home screen. Without
+                    // this, the first connect popped the only entry and the
+                    // next back tap killed the process — which read to
+                    // multi-profile users as "tapping connection 2 kicks me
+                    // out of the app."
                     navController.navigate(Routes.LIVEFEED) {
-                        popUpTo(Routes.CONNECT) { inclusive = true }
+                        popUpTo(Routes.CONNECT) { inclusive = false }
                         launchSingleTop = true
                     }
                 }
@@ -51,10 +58,12 @@ fun RdioApp() {
             ConnectionState.TooMany,
             is ConnectionState.Error -> {
                 if (navController.currentBackStackEntry?.destination?.route != Routes.CONNECT) {
-                    navController.navigate(Routes.CONNECT) {
-                        popUpTo(Routes.LIVEFEED) { inclusive = true }
-                        launchSingleTop = true
-                    }
+                    // Pop back to the existing CONNECT entry rather than
+                    // pushing a fresh one — paired with the inclusive=false
+                    // navigate above, this keeps the stack tidy at [CONNECT]
+                    // after a disconnect, no matter how many connect/
+                    // disconnect cycles happened during the session.
+                    navController.popBackStack(Routes.CONNECT, inclusive = false)
                 }
             }
             else -> Unit

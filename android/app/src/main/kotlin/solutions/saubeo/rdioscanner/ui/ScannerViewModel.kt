@@ -96,7 +96,19 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun connectProfile(profile: ConnectionProfileDto) {
-        viewModelScope.launch { repo.connectProfile(profile) }
+        viewModelScope.launch {
+            // Tear down all per-session state from the previous profile before
+            // opening the new socket. The system / talkgroup IDs that hold,
+            // pause, and avoid track only make sense for the server they
+            // came from — carrying them across a profile switch leaves the
+            // UI in an inconsistent state and the audio player still trying
+            // to decode the previous server's call.
+            player.stopAndClear()
+            repo.releaseHold()
+            repo.setPaused(false)
+            repo.clearAvoids()
+            repo.connectProfile(profile)
+        }
     }
 
     fun saveProfile(
