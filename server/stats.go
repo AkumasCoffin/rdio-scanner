@@ -113,31 +113,6 @@ func NewStats(controller *Controller) *Stats {
 	}
 }
 
-// hourExpr returns the SQL expression that extracts the hour-of-day (0..23)
-// from the dateTime column for the active DB type. Result is an integer.
-func (stats *Stats) hourExpr() string {
-	switch stats.Controller.Database.Config.DbType {
-	case DbTypePostgres:
-		return `extract(hour from "dateTime")::integer`
-	case DbTypeSqlite:
-		return `cast(strftime('%H', ` + "`dateTime`" + `) as integer)`
-	default:
-		return "hour(`dateTime`)"
-	}
-}
-
-// dayExpr returns the SQL expression that extracts the YYYY-MM-DD date string.
-func (stats *Stats) dayExpr() string {
-	switch stats.Controller.Database.Config.DbType {
-	case DbTypePostgres:
-		return `to_char("dateTime", 'YYYY-MM-DD')`
-	case DbTypeSqlite:
-		return "strftime('%Y-%m-%d', `dateTime`)"
-	default:
-		return "date_format(`dateTime`, '%Y-%m-%d')"
-	}
-}
-
 func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 	overview := &StatsOverview{}
 	// Calls are stored with UTC dateTime (see parsers.go), so every filter
@@ -193,23 +168,51 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 
 	overview.AvgCallsPerDay = float64(overview.MonthCalls) / 30.0
 
-	peakQ := fmt.Sprintf(
-		"select %s as h, count(*) as c from `rdioScannerCalls` where `dateTime` >= ? group by h order by c desc limit 1",
-		stats.hourExpr(),
+	// Peak hour: scan the last 7 days and tally in Go so the answer is
+	// consistent with GetCallsByHour (same data source, same aggregation
+	// logic) instead of two parallel SQL implementations that could
+	// disagree on the edge cases.
+	peakRows, err := db.Query(
+		"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
+		weekAgo.Format(df),
 	)
-	var h sql.NullInt64
-	var c sql.NullInt64
-	if err := db.QueryRow(peakQ, weekAgo.Format(df)).Scan(&h, &c); err != nil && err != sql.ErrNoRows {
+	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.overview.peakHour: %v", err)
 	}
-	if h.Valid {
-		overview.PeakHour = uint(h.Int64)
+	if peakRows != nil {
+		hourCounts := [24]uint{}
+		for peakRows.Next() {
+			var raw any
+			if err := peakRows.Scan(&raw); err != nil {
+				continue
+			}
+			t, err := db.ParseDateTime(raw)
+			if err != nil {
+				continue
+			}
+			h := t.UTC().Hour()
+			if h >= 0 && h < 24 {
+				hourCounts[h]++
+			}
+		}
+		peakRows.Close()
+		var best uint
+		for h, c := range hourCounts {
+			if c > best {
+				best = c
+				overview.PeakHour = uint(h)
+			}
+		}
 	}
 
 	return overview, nil
 }
 
 // GetCallsByHour returns counts bucketed by hour-of-day over the last 7 days.
+//
+// Aggregates in Go (not SQL) so we don't depend on per-DB date-function
+// dialects (extract / strftime / hour) — one less place where a typed
+// scan can silently drop rows.
 func (stats *Stats) GetCallsByHour(db *Database) ([]StatsCallsByHour, error) {
 	result := make([]StatsCallsByHour, 24)
 	for i := 0; i < 24; i++ {
@@ -217,52 +220,72 @@ func (stats *Stats) GetCallsByHour(db *Database) ([]StatsCallsByHour, error) {
 	}
 
 	since := time.Now().UTC().AddDate(0, 0, -7)
-	q := fmt.Sprintf(
-		"select %s as h, count(*) from `rdioScannerCalls` where `dateTime` >= ? group by h",
-		stats.hourExpr(),
+	rows, err := db.Query(
+		"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
+		since.Format(db.DateTimeFormat),
 	)
-	rows, err := db.Query(q, since.Format(db.DateTimeFormat))
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.callsByHour: %v", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var h, c sql.NullInt64
-		if err := rows.Scan(&h, &c); err != nil {
+		var raw any
+		if err := rows.Scan(&raw); err != nil {
 			continue
 		}
-		if h.Valid && h.Int64 >= 0 && h.Int64 < 24 && c.Valid {
-			result[h.Int64].Count = uint(c.Int64)
+		t, err := db.ParseDateTime(raw)
+		if err != nil {
+			continue
+		}
+		h := t.UTC().Hour()
+		if h >= 0 && h < 24 {
+			result[h].Count++
 		}
 	}
 	return result, nil
 }
 
 // GetCallsByDay returns counts bucketed by date for the last `days` days.
+//
+// Aggregates in Go so the date key format (YYYY-MM-DD) is consistent
+// across DB backends — to_char / strftime / date_format all behave
+// slightly differently with respect to padding and timezone, and any
+// one of them returning text the scan can't decode dropped the row
+// silently in the previous SQL-aggregated version.
 func (stats *Stats) GetCallsByDay(db *Database, days int) ([]StatsCallsByDay, error) {
-	result := []StatsCallsByDay{}
 	since := time.Now().UTC().AddDate(0, 0, -days)
-
-	q := fmt.Sprintf(
-		"select %s as d, count(*) from `rdioScannerCalls` where `dateTime` >= ? group by d order by d asc",
-		stats.dayExpr(),
+	rows, err := db.Query(
+		"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
+		since.Format(db.DateTimeFormat),
 	)
-	rows, err := db.Query(q, since.Format(db.DateTimeFormat))
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.callsByDay: %v", err)
 	}
 	defer rows.Close()
 
+	counts := map[string]uint{}
 	for rows.Next() {
-		var d sql.NullString
-		var c sql.NullInt64
-		if err := rows.Scan(&d, &c); err != nil {
+		var raw any
+		if err := rows.Scan(&raw); err != nil {
 			continue
 		}
-		if d.Valid && c.Valid {
-			result = append(result, StatsCallsByDay{Date: d.String, Count: uint(c.Int64)})
+		t, err := db.ParseDateTime(raw)
+		if err != nil {
+			continue
 		}
+		counts[t.UTC().Format("2006-01-02")]++
+	}
+
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	result := make([]StatsCallsByDay, 0, len(keys))
+	for _, k := range keys {
+		result = append(result, StatsCallsByDay{Date: k, Count: counts[k]})
 	}
 	return result, nil
 }
@@ -607,6 +630,9 @@ func (stats *Stats) GetTalkgroupUnits(db *Database, systemId, talkgroupId uint) 
 }
 
 // GetRecentActivity: calls-per-hour across the last 24 hours.
+//
+// Aggregates in Go for the same robustness reasons as GetCallsByHour —
+// avoids per-DB hour-extraction syntax and silent type-mismatch drops.
 func (stats *Stats) GetRecentActivity(db *Database) ([]StatsCallsByHour, error) {
 	now := time.Now().UTC()
 	result := make([]StatsCallsByHour, 24)
@@ -615,11 +641,10 @@ func (stats *Stats) GetRecentActivity(db *Database) ([]StatsCallsByHour, error) 
 	}
 
 	since := now.Add(-24 * time.Hour)
-	q := fmt.Sprintf(
-		"select %s as h, count(*) from `rdioScannerCalls` where `dateTime` >= ? group by h",
-		stats.hourExpr(),
+	rows, err := db.Query(
+		"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
+		since.Format(db.DateTimeFormat),
 	)
-	rows, err := db.Query(q, since.Format(db.DateTimeFormat))
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.recentActivity: %v", err)
 	}
@@ -627,13 +652,15 @@ func (stats *Stats) GetRecentActivity(db *Database) ([]StatsCallsByHour, error) 
 
 	counts := map[uint]uint{}
 	for rows.Next() {
-		var h, c sql.NullInt64
-		if err := rows.Scan(&h, &c); err != nil {
+		var raw any
+		if err := rows.Scan(&raw); err != nil {
 			continue
 		}
-		if h.Valid && c.Valid {
-			counts[uint(h.Int64)] = uint(c.Int64)
+		t, err := db.ParseDateTime(raw)
+		if err != nil {
+			continue
 		}
+		counts[uint(t.UTC().Hour())]++
 	}
 	for i := range result {
 		if v, ok := counts[result[i].Hour]; ok {
@@ -653,6 +680,10 @@ func (stats *Stats) GetRecentActivity(db *Database) ([]StatsCallsByHour, error) 
 func (stats *Stats) build(db *Database) *StatsResponse {
 	resp := &StatsResponse{}
 
+	// Log every sub-query failure so a single misbehaving panel doesn't
+	// silently take the whole stats page down — without this, a Postgres
+	// permission error or schema drift just shows up as an empty chart
+	// with no breadcrumb in the logs.
 	logErr := func(err error) {
 		stats.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("stats.handler: %v", err))
 	}
