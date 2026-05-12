@@ -349,43 +349,135 @@ func (stats *Stats) GetTopSystems(db *Database, limit int) ([]StatsTopSystem, er
 	return result, nil
 }
 
+// extractUnitsFromSources pulls unit IDs out of the per-call `sources` JSON
+// column ("[{pos,src,tag?}, ...]"). Some recorders (DSD FME with custom
+// metadata masks, multi-keying trunked recorders) only populate the JSON
+// array and leave the scalar `source` column at 0 — so any stats query
+// that filters on `source > 0` silently misses those calls. Deduped
+// because the same unit can appear at multiple positions in a long call.
+func extractUnitsFromSources(raw any) []uint {
+	var b []byte
+	switch v := raw.(type) {
+	case []byte:
+		b = v
+	case string:
+		b = []byte(v)
+	default:
+		return nil
+	}
+	if len(b) == 0 {
+		return nil
+	}
+	var arr []map[string]any
+	if err := json.Unmarshal(b, &arr); err != nil {
+		return nil
+	}
+	seen := map[uint]bool{}
+	out := []uint{}
+	for _, s := range arr {
+		v, ok := s["src"]
+		if !ok {
+			continue
+		}
+		var u uint
+		switch n := v.(type) {
+		case float64:
+			if n > 0 {
+				u = uint(n)
+			}
+		case json.Number:
+			if i, err := n.Int64(); err == nil && i > 0 {
+				u = uint(i)
+			}
+		}
+		if u > 0 && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// annotateUnitLabels fills SystemLabel/UnitLabel from the in-memory systems
+// catalog. Pulled out so GetTopUnits and GetTalkgroupUnits can share it.
+func (stats *Stats) lookupSystemAndUnit(systemId, unitId uint) (sysLabel, unitLabel string) {
+	for _, sys := range stats.Controller.Systems.List {
+		if sys.Id == systemId {
+			sysLabel = sys.Label
+			for _, unit := range sys.Units.List {
+				if unit.Id == unitId {
+					unitLabel = unit.Label
+					break
+				}
+			}
+			break
+		}
+	}
+	return
+}
+
 // GetTopUnits: top N units by call count over the last 7 days.
+//
+// Aggregates in Go (not SQL) so we can count units that only appear in
+// the per-call sources JSON array, not just the scalar source column.
+// See extractUnitsFromSources for the rationale.
 func (stats *Stats) GetTopUnits(db *Database, limit int) ([]StatsTopUnit, error) {
 	result := []StatsTopUnit{}
 	since := time.Now().UTC().AddDate(0, 0, -7)
 
-	q := fmt.Sprintf(
-		"select `system`, `source`, count(*) as c from `rdioScannerCalls` where `dateTime` >= ? and `source` is not null and `source` > 0 group by `system`, `source` order by c desc limit %d",
-		limit,
+	rows, err := db.Query(
+		"select `system`, `source`, `sources` from `rdioScannerCalls` where `dateTime` >= ?",
+		since.Format(db.DateTimeFormat),
 	)
-	rows, err := db.Query(q, since.Format(db.DateTimeFormat))
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.topUnits: %v", err)
 	}
 	defer rows.Close()
 
+	type key struct{ sys, unit uint }
+	counts := map[key]uint{}
+
 	for rows.Next() {
-		var item StatsTopUnit
-		if err := rows.Scan(&item.SystemId, &item.UnitId, &item.Count); err != nil {
+		var sysId uint
+		var src sql.NullInt64
+		var sourcesRaw any
+		if err := rows.Scan(&sysId, &src, &sourcesRaw); err != nil {
 			continue
 		}
-		for _, sys := range stats.Controller.Systems.List {
-			if sys.Id == item.SystemId {
-				item.SystemLabel = sys.Label
-				for _, unit := range sys.Units.List {
-					if unit.Id == item.UnitId {
-						item.UnitLabel = unit.Label
-						break
-					}
-				}
-				break
-			}
+
+		units := map[uint]bool{}
+		if src.Valid && src.Int64 > 0 {
+			units[uint(src.Int64)] = true
 		}
+		for _, u := range extractUnitsFromSources(sourcesRaw) {
+			units[u] = true
+		}
+		for u := range units {
+			counts[key{sysId, u}]++
+		}
+	}
+
+	// Materialize, sort by count desc, trim to limit.
+	type entry struct {
+		sys, unit, count uint
+	}
+	all := make([]entry, 0, len(counts))
+	for k, c := range counts {
+		all = append(all, entry{k.sys, k.unit, c})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].count > all[j].count })
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+
+	for _, e := range all {
+		item := StatsTopUnit{SystemId: e.sys, UnitId: e.unit, Count: e.count}
+		item.SystemLabel, item.UnitLabel = stats.lookupSystemAndUnit(e.sys, e.unit)
 		if item.SystemLabel == "" {
-			item.SystemLabel = fmt.Sprintf("System %d", item.SystemId)
+			item.SystemLabel = fmt.Sprintf("System %d", e.sys)
 		}
 		if item.UnitLabel == "" {
-			item.UnitLabel = fmt.Sprintf("Unit %d", item.UnitId)
+			item.UnitLabel = fmt.Sprintf("Unit %d", e.unit)
 		}
 		result = append(result, item)
 	}
@@ -427,39 +519,87 @@ func (stats *Stats) GetLastHourTalkgroups(db *Database) ([]StatsLastHourTalkgrou
 
 // GetTalkgroupUnits: top 50 units active in a specific (system,talkgroup) in
 // the last hour.
+//
+// Aggregates in Go so the response includes units that only show up in the
+// per-call `sources` JSON array, not just the scalar `source` column. This
+// is the path that broke for DSD FME with custom metadata masks: their
+// recordings populate the sources array but leave the scalar at 0, so the
+// previous `where source > 0` SQL filter dropped them silently.
 func (stats *Stats) GetTalkgroupUnits(db *Database, systemId, talkgroupId uint) ([]StatsTalkgroupUnit, error) {
 	result := []StatsTalkgroupUnit{}
 	since := time.Now().UTC().Add(-time.Hour)
 
-	q := "select `source`, count(*) as c, max(`dateTime`) as last from `rdioScannerCalls` where `system` = ? and `talkgroup` = ? and `source` is not null and `source` > 0 and `dateTime` >= ? group by `source` order by last desc limit 50"
-	rows, err := db.Query(q, systemId, talkgroupId, since.Format(db.DateTimeFormat))
+	rows, err := db.Query(
+		"select `source`, `sources`, `dateTime` from `rdioScannerCalls` where `system` = ? and `talkgroup` = ? and `dateTime` >= ?",
+		systemId, talkgroupId, since.Format(db.DateTimeFormat),
+	)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.talkgroupUnits: %v", err)
 	}
 	defer rows.Close()
 
+	type agg struct {
+		count uint
+		last  time.Time
+	}
+	tally := map[uint]*agg{}
+
 	for rows.Next() {
-		var item StatsTalkgroupUnit
-		var last any
-		if err := rows.Scan(&item.UnitId, &item.Count, &last); err != nil {
+		var src sql.NullInt64
+		var sourcesRaw any
+		var dateTime any
+		if err := rows.Scan(&src, &sourcesRaw, &dateTime); err != nil {
 			continue
 		}
-		if t, err := db.ParseDateTime(last); err == nil {
-			item.LastCall = t.Format(db.DateTimeFormat)
+		t, err := db.ParseDateTime(dateTime)
+		if err != nil {
+			continue
 		}
-		for _, sys := range stats.Controller.Systems.List {
-			if sys.Id == systemId {
-				for _, unit := range sys.Units.List {
-					if unit.Id == item.UnitId {
-						item.UnitLabel = unit.Label
-						break
-					}
-				}
-				break
+
+		units := map[uint]bool{}
+		if src.Valid && src.Int64 > 0 {
+			units[uint(src.Int64)] = true
+		}
+		for _, u := range extractUnitsFromSources(sourcesRaw) {
+			units[u] = true
+		}
+
+		for u := range units {
+			a, ok := tally[u]
+			if !ok {
+				a = &agg{}
+				tally[u] = a
+			}
+			a.count++
+			if t.After(a.last) {
+				a.last = t
 			}
 		}
+	}
+
+	type entry struct {
+		unit  uint
+		count uint
+		last  time.Time
+	}
+	all := make([]entry, 0, len(tally))
+	for u, a := range tally {
+		all = append(all, entry{u, a.count, a.last})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].last.After(all[j].last) })
+	if len(all) > 50 {
+		all = all[:50]
+	}
+
+	for _, e := range all {
+		item := StatsTalkgroupUnit{
+			UnitId:   e.unit,
+			Count:    e.count,
+			LastCall: e.last.Format(db.DateTimeFormat),
+		}
+		_, item.UnitLabel = stats.lookupSystemAndUnit(systemId, e.unit)
 		if item.UnitLabel == "" {
-			item.UnitLabel = fmt.Sprintf("%d", item.UnitId)
+			item.UnitLabel = fmt.Sprintf("%d", e.unit)
 		}
 		result = append(result, item)
 	}
