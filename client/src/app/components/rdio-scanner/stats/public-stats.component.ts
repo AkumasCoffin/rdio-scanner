@@ -194,7 +194,10 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         this.error = false;
 
         try {
-            const url = `${window.location.href}/../api/stats`;
+            // Send the browser's IANA TZ so the server buckets charts
+            // in the viewer's calendar instead of the server's.
+            const tz = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || '');
+            const url = `${window.location.href}/../api/stats?tz=${tz}`;
             this.stats = await firstValueFrom(this.http.get<StatsResponse>(url));
             if (this.stats) {
                 this.buildOverviewCards();

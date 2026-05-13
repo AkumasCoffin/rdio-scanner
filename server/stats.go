@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,9 +31,36 @@ const statsCacheTTL = 2 * time.Minute
 type Stats struct {
 	Controller *Controller
 
-	mu       sync.Mutex
-	cached   *StatsResponse
-	cachedAt time.Time
+	mu sync.Mutex
+	// cached is keyed by the requested timezone's IANA name (e.g.,
+	// "America/New_York"). Different viewers in different TZs each get
+	// their own cached bucketing without colliding.
+	cached map[string]statsCacheEntry
+}
+
+type statsCacheEntry struct {
+	resp *StatsResponse
+	at   time.Time
+}
+
+// resolveStatsLocation picks the timezone for chart bucketing. Priority:
+// 1) explicit ?tz=<IANA> from the client (e.g. America/New_York),
+// 2) server's time.Local (whatever timedatectl / TZ env says),
+// 3) UTC if both above fail.
+// Returning the location AND its canonical name lets the cache use the
+// name as a stable key even when the same zone is requested under
+// different aliases.
+func resolveStatsLocation(tz string) (*time.Location, string) {
+	tz = strings.TrimSpace(tz)
+	if tz != "" {
+		if loc, err := time.LoadLocation(tz); err == nil {
+			return loc, loc.String()
+		}
+	}
+	if time.Local != nil {
+		return time.Local, time.Local.String()
+	}
+	return time.UTC, "UTC"
 }
 
 type StatsOverview struct {
@@ -113,16 +141,15 @@ func NewStats(controller *Controller) *Stats {
 	}
 }
 
-func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
+func (stats *Stats) GetOverview(db *Database, loc *time.Location) (*StatsOverview, error) {
 	overview := &StatsOverview{}
 	// Calls are stored with UTC dateTime (see parsers.go), so every filter
 	// threshold has to be expressed in UTC for the column comparison.
-	// We compute calendar boundaries in server local time though — "today"
-	// in the UI is the user's calendar day, not the UTC day. On a
-	// correctly-configured self-hosted box (server TZ == user TZ) those
-	// align. If the server runs in UTC and the user is in EST, set the
-	// server timezone (timedatectl) so this matches expectations.
-	nowLocal := time.Now()
+	// Calendar boundaries ("today" begins at midnight) are computed in the
+	// caller-supplied timezone — sourced from the client's IANA tz so the
+	// charts always match the viewer's local day, regardless of where the
+	// server runs.
+	nowLocal := time.Now().In(loc)
 	now := nowLocal.UTC()
 	df := db.DateTimeFormat
 
@@ -130,10 +157,11 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 		return nil, fmt.Errorf("stats.overview.total: %v", err)
 	}
 
-	// Today = since local midnight, expressed in UTC for the WHERE clause.
+	// Today = since local midnight in the caller's TZ, expressed in UTC
+	// for the WHERE clause against the UTC-stored column.
 	todayStart := time.Date(
 		nowLocal.Year(), nowLocal.Month(), nowLocal.Day(),
-		0, 0, 0, 0, time.Local,
+		0, 0, 0, 0, loc,
 	).UTC()
 	if err := db.QueryRow(
 		"select count(*) from `rdioScannerCalls` where `dateTime` >= ?",
@@ -197,9 +225,9 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 			if err != nil {
 				continue
 			}
-			// Local hour so "Peak Hour: 7 AM" reads as 7 AM in the
-			// user's calendar, not 7 AM UTC.
-			h := t.Local().Hour()
+			// Hour in the caller's TZ so "Peak Hour: 7 AM" reads as
+			// 7 AM in the viewer's calendar, not 7 AM UTC.
+			h := t.In(loc).Hour()
 			if h >= 0 && h < 24 {
 				hourCounts[h]++
 			}
@@ -222,7 +250,7 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 // Aggregates in Go (not SQL) so we don't depend on per-DB date-function
 // dialects (extract / strftime / hour) — one less place where a typed
 // scan can silently drop rows.
-func (stats *Stats) GetCallsByHour(db *Database) ([]StatsCallsByHour, error) {
+func (stats *Stats) GetCallsByHour(db *Database, loc *time.Location) ([]StatsCallsByHour, error) {
 	result := make([]StatsCallsByHour, 24)
 	for i := 0; i < 24; i++ {
 		result[i] = StatsCallsByHour{Hour: uint(i)}
@@ -247,9 +275,9 @@ func (stats *Stats) GetCallsByHour(db *Database) ([]StatsCallsByHour, error) {
 		if err != nil {
 			continue
 		}
-		// Bucket by LOCAL hour so the chart axis matches the user's
-		// calendar (a 7 AM bar means 7 AM local, not 7 AM UTC).
-		h := t.Local().Hour()
+		// Bucket in the caller's TZ so the chart axis matches the
+		// viewer's calendar (a 7 AM bar means 7 AM their time).
+		h := t.In(loc).Hour()
 		if h >= 0 && h < 24 {
 			result[h].Count++
 		}
@@ -264,7 +292,7 @@ func (stats *Stats) GetCallsByHour(db *Database) ([]StatsCallsByHour, error) {
 // slightly differently with respect to padding and timezone, and any
 // one of them returning text the scan can't decode dropped the row
 // silently in the previous SQL-aggregated version.
-func (stats *Stats) GetCallsByDay(db *Database, days int) ([]StatsCallsByDay, error) {
+func (stats *Stats) GetCallsByDay(db *Database, days int, loc *time.Location) ([]StatsCallsByDay, error) {
 	since := time.Now().UTC().AddDate(0, 0, -days)
 	rows, err := db.Query(
 		"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
@@ -285,12 +313,10 @@ func (stats *Stats) GetCallsByDay(db *Database, days int) ([]StatsCallsByDay, er
 		if err != nil {
 			continue
 		}
-		// Bucket by LOCAL date so calls from late evening don't get
-		// counted on "tomorrow" because their UTC timestamp has
-		// already rolled past midnight. Server's TZ env determines
-		// what "local" means — set timedatectl on the host if the
-		// chart's day boundaries look shifted.
-		counts[t.Local().Format("2006-01-02")]++
+		// Bucket by the caller's local date so calls from late
+		// evening don't get counted on "tomorrow" because their UTC
+		// timestamp has already rolled past midnight.
+		counts[t.In(loc).Format("2006-01-02")]++
 	}
 
 	keys := make([]string, 0, len(counts))
@@ -649,10 +675,10 @@ func (stats *Stats) GetTalkgroupUnits(db *Database, systemId, talkgroupId uint) 
 //
 // Aggregates in Go for the same robustness reasons as GetCallsByHour —
 // avoids per-DB hour-extraction syntax and silent type-mismatch drops.
-// Bucketing is in LOCAL hours so the trailing 24-hour line traces the
-// user's day, not UTC's.
-func (stats *Stats) GetRecentActivity(db *Database) ([]StatsCallsByHour, error) {
-	nowLocal := time.Now()
+// Bucketing uses the caller's TZ so the trailing 24-hour line traces
+// the viewer's day, not UTC's.
+func (stats *Stats) GetRecentActivity(db *Database, loc *time.Location) ([]StatsCallsByHour, error) {
+	nowLocal := time.Now().In(loc)
 	result := make([]StatsCallsByHour, 24)
 	for i := 23; i >= 0; i-- {
 		result[23-i] = StatsCallsByHour{Hour: uint((nowLocal.Hour() - i + 24) % 24), Count: 0}
@@ -678,7 +704,7 @@ func (stats *Stats) GetRecentActivity(db *Database) ([]StatsCallsByHour, error) 
 		if err != nil {
 			continue
 		}
-		counts[uint(t.Local().Hour())]++
+		counts[uint(t.In(loc).Hour())]++
 	}
 	for i := range result {
 		if v, ok := counts[result[i].Hour]; ok {
@@ -695,7 +721,7 @@ func (stats *Stats) GetRecentActivity(db *Database) ([]StatsCallsByHour, error) 
 // no longer blocks the others, so wall time is close to max(query) instead
 // of sum. That keeps a cold-cache load well under the Cloudflare 100 s edge
 // timeout on big tables (~300 k rows).
-func (stats *Stats) build(db *Database) *StatsResponse {
+func (stats *Stats) build(db *Database, loc *time.Location) *StatsResponse {
 	resp := &StatsResponse{}
 
 	// Log every sub-query failure so a single misbehaving panel doesn't
@@ -716,21 +742,21 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 	}
 
 	run(func() {
-		if v, err := stats.GetOverview(db); err != nil {
+		if v, err := stats.GetOverview(db, loc); err != nil {
 			logErr(err)
 		} else {
 			resp.Overview = *v
 		}
 	})
 	run(func() {
-		if v, err := stats.GetCallsByHour(db); err != nil {
+		if v, err := stats.GetCallsByHour(db, loc); err != nil {
 			logErr(err)
 		} else {
 			resp.CallsByHour = v
 		}
 	})
 	run(func() {
-		if v, err := stats.GetCallsByDay(db, 30); err != nil {
+		if v, err := stats.GetCallsByDay(db, 30, loc); err != nil {
 			logErr(err)
 		} else {
 			resp.CallsByDay = v
@@ -758,7 +784,7 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 		}
 	})
 	run(func() {
-		if v, err := stats.GetRecentActivity(db); err != nil {
+		if v, err := stats.GetRecentActivity(db, loc); err != nil {
 			logErr(err)
 		} else {
 			resp.RecentActivity = v
@@ -781,20 +807,27 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 	return resp
 }
 
-func (stats *Stats) cachedBuild(db *Database) *StatsResponse {
+// cachedBuild returns a stats response for the given timezone, building +
+// caching per-TZ so two viewers in different zones never share an answer
+// that was bucketed for someone else's calendar.
+func (stats *Stats) cachedBuild(db *Database, loc *time.Location, key string) *StatsResponse {
 	stats.mu.Lock()
-	if stats.cached != nil && time.Since(stats.cachedAt) < statsCacheTTL {
-		cached := stats.cached
+	if stats.cached == nil {
+		stats.cached = map[string]statsCacheEntry{}
+	}
+	if e, ok := stats.cached[key]; ok && time.Since(e.at) < statsCacheTTL {
 		stats.mu.Unlock()
-		return cached
+		return e.resp
 	}
 	stats.mu.Unlock()
 
-	resp := stats.build(db)
+	resp := stats.build(db, loc)
 
 	stats.mu.Lock()
-	stats.cached = resp
-	stats.cachedAt = time.Now()
+	if stats.cached == nil {
+		stats.cached = map[string]statsCacheEntry{}
+	}
+	stats.cached[key] = statsCacheEntry{resp: resp, at: time.Now()}
 	stats.mu.Unlock()
 
 	return resp
@@ -819,7 +852,8 @@ func (stats *Stats) handleStatsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := stats.cachedBuild(stats.Controller.Database)
+	loc, key := resolveStatsLocation(r.URL.Query().Get("tz"))
+	resp := stats.cachedBuild(stats.Controller.Database, loc, key)
 
 	w.Header().Set("Content-Type", "application/json")
 	if b, err := json.Marshal(resp); err == nil {

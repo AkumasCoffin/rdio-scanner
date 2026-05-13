@@ -401,8 +401,15 @@ export class RdioScannerAdminService implements OnDestroy {
 
     async getStats(): Promise<StatsResponse | undefined> {
         try {
+            // Pass the browser's IANA TZ so the server buckets the
+            // Calls/Hour, Calls/Day, and Peak Hour charts in the viewer's
+            // calendar. Without this the server falls back to its own
+            // time.Local, which is wrong if the server runs in UTC and
+            // the user is anywhere else.
+            const tz = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || '');
+            const u = `${this.getUrl(url.stats)}?tz=${tz}`;
             const res = await firstValueFrom(this.ngHttpClient.get<StatsResponse>(
-                this.getUrl(url.stats),
+                u,
                 { headers: this.getHeaders(), responseType: 'json' },
             ));
 

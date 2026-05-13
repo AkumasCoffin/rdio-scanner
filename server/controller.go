@@ -634,9 +634,15 @@ func (controller *Controller) Start() error {
 	// doesn't pay the build cost.
 	go controller.getUnrestrictedConfigCache()
 
-	// Warm the stats cache so the first hit on /api/admin/stats returns
-	// instantly instead of running ~8 heavy aggregations on a cold table.
-	go controller.Stats.cachedBuild(controller.Database)
+	// Warm the stats cache (for the server's local TZ — clients that
+	// request a different ?tz= will trigger their own first-time build,
+	// but the home-deployed common case gets a warm response on first
+	// hit) so the first /api/admin/stats doesn't run ~8 heavy
+	// aggregations on a cold table.
+	go func() {
+		loc, key := resolveStatsLocation("")
+		controller.Stats.cachedBuild(controller.Database, loc, key)
+	}()
 
 	go func() {
 		c := make(chan os.Signal, 8)
