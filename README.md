@@ -2,12 +2,15 @@
 
 # Rdio Scanner — AkumasCoffin fork
 
-This is a fork of [chuot/rdio-scanner](https://github.com/chuot/rdio-scanner) with extra
-features layered on top of the upstream base: call transcription via Groq Whisper, a
-public REST API for downstream consumers, share-link deep linking on the search page,
-a Postgres-aware stats page that renders in the viewer's local timezone, and a native
-Android client. All upstream functionality is preserved — recorders that worked with
-the original still work here.
+This is a fork of [chuot/rdio-scanner](https://github.com/chuot/rdio-scanner) that
+adds PostgreSQL as a first-class database, a Whisper-based transcription pipeline, a
+public REST API, a stats dashboard, a search-page rewrite with shareable deep links,
+a redesigned LCD layout, performance work for tables in the hundreds of thousands of
+calls, a native Android client, and a long list of reliability fixes. Original
+functionality is preserved — every recorder that worked with the upstream still works
+here, and existing SQLite / MySQL / MariaDB databases keep working too.
+
+Full breakdown is below under [Fork-specific features](#fork-specific-features).
 
 Original project, credit, and documentation:
 **[https://github.com/chuot/rdio-scanner](https://github.com/chuot/rdio-scanner)**.
@@ -296,29 +299,211 @@ endpoints, transcription settings, etc.) is set via the web admin UI at
 
 # Fork-specific features
 
-Beyond what upstream chuot/rdio-scanner provides, this fork adds:
+Beyond what upstream chuot/rdio-scanner provides, this fork adds the following.
+For per-version detail see the
+[release notes](https://github.com/AkumasCoffin/rdio-scanner/releases) or the
+[full commit log](https://github.com/AkumasCoffin/rdio-scanner/commits/master).
 
-- **Call transcription** — Groq Whisper with multi-key round-robin, per-system
-  prompts, per-talkgroup gating, automatic retry on the next key for 429/5xx.
-- **Public REST API** at `/api/v1/calls{,/:id,/transcript,/audio}` with API-key
-  auth (Bearer / `X-API-Key` / `?key=`) for downstream tooling.
-- **Share-link deep linking** on the search page — every call row has a copy
-  link; opening `?call=<id>` opens search, anchors the date filter, highlights
-  the row, and starts playback.
-- **Stats page** with bucketing in the viewer's browser timezone (single shared
-  cache, no `?tz=` plumbing, no server-side TZ awareness — wire is pure UTC).
-- **Performance**: pg_trgm GIN on transcript, BRIN on dateTime, HTTP gzip
-  middleware, WebSocket `permessage-deflate`, early-WS opener in `index.html`,
-  hashed-asset `Cache-Control: immutable`.
-- **LCD UI**: persistent transcript box, LED-color-coded styling, 15-row history,
-  transcript poll fallback.
-- **Native Android client** (`android/` directory) with multi-profile support.
-- **Various reliability fixes**: audio decode generation counter, config save
-  wrapped in single Postgres tx, instant listener count push, deep-link audio
-  autoplay-on-gesture, etc.
+## Database
 
-See the [release notes](https://github.com/AkumasCoffin/rdio-scanner/releases) for
-the full per-version breakdown.
+- **PostgreSQL backend** — full driver support alongside the existing SQLite,
+  MySQL, and MariaDB backends. DB-type-aware query formatter translates `` ` ``
+  identifier quoting and `?` placeholders to `"` and `$N` for Postgres.
+- **pg_trgm GIN index** on the `transcript` column for sub-100 ms ILIKE
+  transcript search on tables with hundreds of thousands of calls. Idempotent
+  retry migration runs even if your role didn't have `CREATE EXTENSION`
+  permission the first time.
+- **BRIN index** on `dateTime` — small (~1 % the size of a B-tree) and lets
+  Postgres skip whole heap ranges on time-window filters.
+- **Composite `(system, talkgroup, dateTime)` index** for filtered search.
+- **Per-row config schema** — the legacy single-blob `options` row was split
+  into per-key rows in `rdioScannerConfigs`. Avoids the partial-write data loss
+  the old blob risked when admin saves were interrupted.
+- **`Database.WithTx(fn)` wrapper** so multi-row writes (admin config save in
+  particular) run in a single Postgres transaction. Eliminates the per-row fsync
+  storm that used to cause 30 s+ saves on cloud Postgres.
+
+## Stats dashboard
+
+- **New admin Stats page** (Chart.js) — overview cards (Total / Today / Week /
+  Month / Active Systems / Active Talkgroups / Avg per Day / Peak Hour), Calls
+  per Hour-of-day chart, Calls per Day chart, Top Systems doughnut, Recent 24 h
+  line, Top Talkgroups table, Top Units table, Last Hour Activity drill-down
+  with per-unit timestamps.
+- **Public Stats page** at `/stats` mirroring the admin view for unauthenticated
+  viewers.
+- **UTC wire format** — the server emits a single `hourBuckets` array of
+  `{startUtc, count}` covering the last 30 days at 1-hour granularity. Browser
+  bins into local hour-of-day / day / today / peak-hour based on its own zone
+  and DST rules. Server holds no timezone state, single shared cache for all
+  viewers regardless of where they are.
+- **Sources-JSON-aware unit counting** — `Top Units` and `Talkgroup Units` count
+  units that only appear in the per-call `sources` JSON array, not just the
+  scalar `source` column. Fixes DSD FME and multi-keying trunked recordings
+  that the upstream stats path silently dropped.
+- **Parallel SQL aggregation** behind a 2-minute cache, plus startup cache-warm,
+  keeps cold-load well under the Cloudflare 100 s edge timeout on large tables.
+
+## Search page
+
+- **Card-row layout** replacing the upstream mat-table, with the transcript
+  shown inline (no line clamping) and per-row play / stop / share / transcribe
+  controls.
+- **Sticky CSS-grid filter bar** — Search, Sort, Date, System, Talkgroup, Group,
+  Tag, plus actions, fit on one row at 1200 px+ widths and wrap responsively
+  below that. Transcript input is debounced so the search fires when you stop
+  typing.
+- **Share-link deep linking** — every call has a copy-link button that produces
+  `?call=<id>`. Opening that URL on a fresh session: WebSocket links, search
+  panel opens, date filter snaps to the call's date, row highlights orange,
+  and playback starts as soon as the user makes any gesture.
+- **Backing buffer of 100 calls, 10 visible per page** — paginator works during
+  playback, the in-memory buffer absorbs page flips without re-hitting the
+  server.
+- **Per-row retranscribe button**, gated behind admin authentication AND an
+  explicit admin toggle (`showRetranscribeButton`) so it's hidden by default.
+
+## LCD / main UI
+
+- **Live transcript panel** under the LCD display with reserved 2-line minimum
+  height (no layout shift when transcripts arrive) and LED-color-coded styling
+  tied to the active system / talkgroup color.
+- **15-row history table** (up from 5), each row showing time / system /
+  talkgroup / name, with transcript snippets shown under the matching row.
+- **Persistent call info** — transcript and metadata for the previous call
+  stay visible until the next call starts.
+- **Transcript poll fallback** — if a transcript is missing for a recently
+  played call, the client retries up to 6 times at 8-second intervals to pick
+  it up after the server's Whisper response lands.
+- **Splash screen** in `index.html` with a pulsing-orange-dot loader so the
+  user sees something immediately instead of a blank page while the ~1.4 MB
+  Angular bundle parses.
+- **Early-WS opener** — an inline `<script>` in `index.html` opens the
+  WebSocket *before* the Angular bundle finishes parsing, so TLS + HTTP-upgrade
+  is already done by the time the service constructor runs. Saves 0.5–1 s on
+  cold loads.
+
+## Call transcription
+
+- **Groq Whisper integration** (`whisper-large-v3`, `whisper-large-v3-turbo`)
+  with admin-configured API key, base URL, model, and language. Provider abstraction
+  is open enough to point at any OpenAI-compatible `/audio/transcriptions` endpoint.
+- **Multi-key round-robin** — paste multiple API keys (one per line) into the
+  admin field. Per-key sliding-window rate limiter, automatic retry on the next
+  key for 429 / 5xx / network errors, max 8 attempts per call.
+- **Per-system and per-talkgroup transcribe toggles** — leave it off for
+  squelch-heavy or non-voice channels.
+- **Per-system prompts** with a 896-character cap (Whisper's limit) so each
+  system can bias the recognizer toward its lingo / unit names / agency-specific
+  abbreviations.
+- **`waitForTranscript` admin option** — when enabled, live-feed calls are held
+  out of the playback queue until their transcript arrives (or a 30 s timeout
+  releases them so nothing is ever lost).
+- **Transcript push via WebSocket** — server pushes `TRX` frames to all clients
+  with access to the call as soon as transcription finishes, so the LCD and
+  search rows hydrate without a refresh.
+
+## Public REST API
+
+`/api/v1/calls{,/:id,/transcript,/audio}` endpoints for downstream consumers
+(home automation, alerting, archival tooling, your own dashboards). API-key
+auth via:
+
+- `Authorization: Bearer <key>` header
+- `X-API-Key: <key>` header
+- `?key=<key>` query param
+
+API keys are managed in the existing admin keys table.
+
+## Performance / network
+
+- **HTTP gzip middleware** with lazy writer (only `Close()` when actually used —
+  fixes a corruption bug where empty-gzip trailers got appended to plain
+  responses).
+- **WebSocket `permessage-deflate`** — ~3× shrink on call / list payloads.
+- **`Cache-Control: public, max-age=31536000, immutable`** on hashed JS / CSS /
+  font bundles; `no-cache` on `index.html`.
+- **Cached unrestricted CFG payload** — the common-case "no access scoping"
+  config is built once and re-served to every unauthenticated viewer until the
+  admin saves a config change.
+- **Search metadata pre-warm** — `dateStart` / `dateStop` / `count(*)` for the
+  whole table refreshed every 10 s so the first search response doesn't pay
+  the cold-count cost.
+- **Stats cache warmed at server startup** so the first hit returns instantly.
+
+## Reliability fixes
+
+- **Audio decode race** — generation counter in `decodeAudioData` callbacks so a
+  stale decode from the previous call can't replay when you click play on a
+  second call mid-decode.
+- **Config save 524 fix** — admin Save now wraps all per-row writes in a single
+  Postgres transaction instead of N round-trips, dropping save time from 30 s+
+  to under 2 s on cloud Postgres.
+- **Instant listener count** — `LSC` is pushed alongside the initial `CFG` so
+  the LCD's `L:` counter populates immediately instead of waiting up to 15 s
+  for the debounced register/unregister broadcaster.
+- **Buffered WS sends** — clicks on LIVE FEED before the WebSocket finishes
+  handshaking are queued and flushed on `onopen` instead of silently dropped.
+- **Share-link advances UI without a gesture** — the search-panel open, row
+  highlight, and date-anchored re-search all run before any user gesture is
+  required. Audio playback still waits for the browser's autoplay policy
+  (gesture), but the rest of the UI doesn't block on it.
+- **BroadcastConfig race fix** — the admin `EmitConfig` broadcast no longer
+  writes to client WebSockets concurrently with the per-client write loop,
+  which used to corrupt frames and break the admin UI mid-save.
+- **Gzip middleware lazy-write** — see Performance above.
+
+## Native Android client
+
+`android/` directory. Kotlin + Jetpack Compose. Talks to the same server
+endpoints as the web app — no separate API.
+
+- **Multi-connection profiles** with an editor dialog (name / URL / access code)
+  and explicit connect-on-tap.
+- **LCD scanner UI** with visual parity to the web app — same radial gradient,
+  orange accent, LED, rounded button grid.
+- **Buttons:** LIVE FEED / HOLD SYS / HOLD TG / REPLAY LAST / SKIP NEXT / AVOID
+  / SEARCH CALL / PAUSE / SELECT TG, with the same semantics as the web app
+  (temp-hold-on-release, avoid set, `[LFM]` null-payload stop-livefeed, etc).
+- **Talkgroup selector** with nested checkboxes, All / None shortcuts, and
+  preset save / apply / delete backed by DataStore JSON.
+- **Call search** with system / talkgroup / group / tag / date / sort filters,
+  pagination, tap-to-play, and MediaStore download into `Downloads/RdioScanner/`.
+- **Media3 `MediaSessionService`** — playback survives backgrounding, surfaces
+  metadata to the lock screen + notification, swipe-away stops audio.
+- **OkHttp WebSocket client** with exponential-backoff reconnect and a
+  generation-gated listener so a stale orphaned socket can't replay frames
+  alongside the live one.
+- **Profile-switch state reset** — switching to a different connection clears
+  the audio queue, holds, avoid set, and pause state from the previous server
+  instead of carrying them over (fixes [#1](https://github.com/AkumasCoffin/rdio-scanner/issues/1)).
+- **Android 15 edge-to-edge** layout with proper system-bar insets.
+- **R8 release config** hardened for `kotlinx.serialization` (custom
+  `KSerializer` singletons, `Companion.serializer()` discovery, runtime
+  annotation retention) so release APKs decode CAL frames correctly.
+- **Custom launcher icon** (scanner body + LCD + signal arcs) and matching
+  monochrome silhouette for Android 13+ themed icons.
+- **Release signing config** via `signing.properties` (gitignored) or
+  `RDIO_STOREFILE` / `STOREPASSWORD` / `KEYALIAS` / `KEYPASSWORD` env vars;
+  falls back to debug signing with a loud warning if neither is provided.
+
+## Analytics (optional)
+
+- **Umami support** — admin-configurable script URL + website ID, dynamically
+  injected on the client when set. Event tracking on livefeed start/stop, call
+  play, call search, and call download.
+
+## Admin / logging niceties
+
+- **Per-talkgroup and per-system transcribe toggles** in the admin Talkgroups
+  and Systems tables.
+- **Per-system transcription prompt** field.
+- **`showRetranscribeButton`** admin option to expose the in-row retranscribe
+  action on the search page (off by default).
+- **API key name in `newcall` log lines** so it's obvious which ingest source
+  submitted each call.
+- **Listen-address shown in startup log** (was using the hostname before, which
+  was misleading on multi-homed boxes).
 
 ---
 
