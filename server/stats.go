@@ -116,18 +116,25 @@ func NewStats(controller *Controller) *Stats {
 func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 	overview := &StatsOverview{}
 	// Calls are stored with UTC dateTime (see parsers.go), so every filter
-	// threshold has to be expressed in UTC too. Using local-time here breaks
-	// the "today" counter on servers running in a non-UTC timezone — the
-	// formatted string lands in the future relative to stored UTC values
-	// and the query returns 0 matches.
-	now := time.Now().UTC()
+	// threshold has to be expressed in UTC for the column comparison.
+	// We compute calendar boundaries in server local time though — "today"
+	// in the UI is the user's calendar day, not the UTC day. On a
+	// correctly-configured self-hosted box (server TZ == user TZ) those
+	// align. If the server runs in UTC and the user is in EST, set the
+	// server timezone (timedatectl) so this matches expectations.
+	nowLocal := time.Now()
+	now := nowLocal.UTC()
 	df := db.DateTimeFormat
 
 	if err := db.QueryRow("select count(*) from `rdioScannerCalls`").Scan(&overview.TotalCalls); err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.overview.total: %v", err)
 	}
 
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	// Today = since local midnight, expressed in UTC for the WHERE clause.
+	todayStart := time.Date(
+		nowLocal.Year(), nowLocal.Month(), nowLocal.Day(),
+		0, 0, 0, 0, time.Local,
+	).UTC()
 	if err := db.QueryRow(
 		"select count(*) from `rdioScannerCalls` where `dateTime` >= ?",
 		todayStart.Format(df),
@@ -190,7 +197,9 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 			if err != nil {
 				continue
 			}
-			h := t.UTC().Hour()
+			// Local hour so "Peak Hour: 7 AM" reads as 7 AM in the
+			// user's calendar, not 7 AM UTC.
+			h := t.Local().Hour()
 			if h >= 0 && h < 24 {
 				hourCounts[h]++
 			}
@@ -238,7 +247,9 @@ func (stats *Stats) GetCallsByHour(db *Database) ([]StatsCallsByHour, error) {
 		if err != nil {
 			continue
 		}
-		h := t.UTC().Hour()
+		// Bucket by LOCAL hour so the chart axis matches the user's
+		// calendar (a 7 AM bar means 7 AM local, not 7 AM UTC).
+		h := t.Local().Hour()
 		if h >= 0 && h < 24 {
 			result[h].Count++
 		}
@@ -274,7 +285,12 @@ func (stats *Stats) GetCallsByDay(db *Database, days int) ([]StatsCallsByDay, er
 		if err != nil {
 			continue
 		}
-		counts[t.UTC().Format("2006-01-02")]++
+		// Bucket by LOCAL date so calls from late evening don't get
+		// counted on "tomorrow" because their UTC timestamp has
+		// already rolled past midnight. Server's TZ env determines
+		// what "local" means — set timedatectl on the host if the
+		// chart's day boundaries look shifted.
+		counts[t.Local().Format("2006-01-02")]++
 	}
 
 	keys := make([]string, 0, len(counts))
@@ -633,14 +649,16 @@ func (stats *Stats) GetTalkgroupUnits(db *Database, systemId, talkgroupId uint) 
 //
 // Aggregates in Go for the same robustness reasons as GetCallsByHour —
 // avoids per-DB hour-extraction syntax and silent type-mismatch drops.
+// Bucketing is in LOCAL hours so the trailing 24-hour line traces the
+// user's day, not UTC's.
 func (stats *Stats) GetRecentActivity(db *Database) ([]StatsCallsByHour, error) {
-	now := time.Now().UTC()
+	nowLocal := time.Now()
 	result := make([]StatsCallsByHour, 24)
 	for i := 23; i >= 0; i-- {
-		result[23-i] = StatsCallsByHour{Hour: uint((now.Hour() - i + 24) % 24), Count: 0}
+		result[23-i] = StatsCallsByHour{Hour: uint((nowLocal.Hour() - i + 24) % 24), Count: 0}
 	}
 
-	since := now.Add(-24 * time.Hour)
+	since := nowLocal.UTC().Add(-24 * time.Hour)
 	rows, err := db.Query(
 		"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
 		since.Format(db.DateTimeFormat),
@@ -660,7 +678,7 @@ func (stats *Stats) GetRecentActivity(db *Database) ([]StatsCallsByHour, error) 
 		if err != nil {
 			continue
 		}
-		counts[uint(t.UTC().Hour())]++
+		counts[uint(t.Local().Hour())]++
 	}
 	for i := range result {
 		if v, ok := counts[result[i].Hour]; ok {
