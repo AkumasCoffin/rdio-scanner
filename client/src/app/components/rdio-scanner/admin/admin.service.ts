@@ -200,22 +200,13 @@ export interface Unit {
 
 export interface StatsOverview {
     totalCalls: number;
-    todayCalls: number;
-    weekCalls: number;
-    monthCalls: number;
     activeSystems: number;
     activeTalkgroups: number;
-    avgCallsPerDay: number;
-    peakHour: number;
 }
 
-export interface StatsCallsByHour {
-    hour: number;
-    count: number;
-}
-
-export interface StatsCallsByDay {
-    date: string;
+/** UTC-anchored hour bucket. Counts calls in [startUtc, startUtc + 1h). */
+export interface StatsHourBucket {
+    startUtc: string;
     count: number;
 }
 
@@ -261,12 +252,16 @@ export interface StatsTalkgroupUnit {
 
 export interface StatsResponse {
     overview: StatsOverview;
-    callsByHour: StatsCallsByHour[];
-    callsByDay: StatsCallsByDay[];
+    /**
+     * Hour-granular UTC counts for the last 30 days (max 720 entries).
+     * All time-series charts and derived overview cards (Today, Week,
+     * Month, Avg/Day, Peak Hour) are bucketed from this in the
+     * browser's local timezone — wire format stays pure UTC.
+     */
+    hourBuckets: StatsHourBucket[];
     topTalkgroups: StatsTopTalkgroup[];
     topSystems: StatsTopSystem[];
     topUnits: StatsTopUnit[];
-    recentActivity: StatsCallsByHour[];
     lastHourTalkgroups: StatsLastHourTalkgroup[];
 }
 
@@ -401,15 +396,11 @@ export class RdioScannerAdminService implements OnDestroy {
 
     async getStats(): Promise<StatsResponse | undefined> {
         try {
-            // Pass the browser's IANA TZ so the server buckets the
-            // Calls/Hour, Calls/Day, and Peak Hour charts in the viewer's
-            // calendar. Without this the server falls back to its own
-            // time.Local, which is wrong if the server runs in UTC and
-            // the user is anywhere else.
-            const tz = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || '');
-            const u = `${this.getUrl(url.stats)}?tz=${tz}`;
+            // Server response is pure UTC — hourBuckets carry RFC3339
+            // startUtc and the client bins them in the browser's TZ for
+            // display.
             const res = await firstValueFrom(this.ngHttpClient.get<StatsResponse>(
-                u,
+                this.getUrl(url.stats),
                 { headers: this.getHeaders(), responseType: 'json' },
             ));
 

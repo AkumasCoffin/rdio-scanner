@@ -24,22 +24,12 @@ import { firstValueFrom } from 'rxjs';
 
 interface StatsOverview {
     totalCalls: number;
-    todayCalls: number;
-    weekCalls: number;
-    monthCalls: number;
     activeSystems: number;
     activeTalkgroups: number;
-    avgCallsPerDay: number;
-    peakHour: number;
 }
 
-interface StatsCallsByHour {
-    hour: number;
-    count: number;
-}
-
-interface StatsCallsByDay {
-    date: string;
+interface StatsHourBucket {
+    startUtc: string;
     count: number;
 }
 
@@ -85,12 +75,10 @@ interface StatsTalkgroupUnit {
 
 interface StatsResponse {
     overview: StatsOverview;
-    callsByHour: StatsCallsByHour[];
-    callsByDay: StatsCallsByDay[];
+    hourBuckets: StatsHourBucket[];
     topTalkgroups: StatsTopTalkgroup[];
     topSystems: StatsTopSystem[];
     topUnits: StatsTopUnit[];
-    recentActivity: StatsCallsByHour[];
     lastHourTalkgroups: StatsLastHourTalkgroup[];
 }
 
@@ -194,10 +182,7 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         this.error = false;
 
         try {
-            // Send the browser's IANA TZ so the server buckets charts
-            // in the viewer's calendar instead of the server's.
-            const tz = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || '');
-            const url = `${window.location.href}/../api/stats?tz=${tz}`;
+            const url = `${window.location.href}/../api/stats`;
             this.stats = await firstValueFrom(this.http.get<StatsResponse>(url));
             if (this.stats) {
                 this.buildOverviewCards();
@@ -214,27 +199,71 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         }
     }
 
+    private _hourOfDayLast7d: number[] = new Array(24).fill(0);
+    private _dayCountsLast30d: Map<string, number> = new Map();
+
     private buildOverviewCards(): void {
         if (!this.stats) return;
 
         const { overview } = this.stats;
+        const buckets = this.stats.hourBuckets || [];
+
+        // Bin UTC hour-buckets into local hour-of-day / day-of-period
+        // so every derived overview value (Today, Week, Month, Avg/Day,
+        // Peak Hour) reads in the browser's calendar.
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfWeek.getDate() - 6);
+        const startOfMonth = new Date(startOfToday); startOfMonth.setDate(startOfMonth.getDate() - 29);
+
+        let todayCalls = 0;
+        let weekCalls = 0;
+        let monthCalls = 0;
+        const hourOfDay = new Array<number>(24).fill(0);
+        const dayCounts = new Map<string, number>();
+
+        for (const b of buckets) {
+            const t = new Date(b.startUtc);
+            if (isNaN(t.getTime())) continue;
+            if (t >= startOfToday) todayCalls += b.count;
+            if (t >= startOfWeek) {
+                weekCalls += b.count;
+                hourOfDay[t.getHours()] += b.count;
+            }
+            if (t >= startOfMonth) {
+                monthCalls += b.count;
+                const key = `${t.getFullYear()}-${(t.getMonth() + 1).toString().padStart(2, '0')}-${t.getDate().toString().padStart(2, '0')}`;
+                dayCounts.set(key, (dayCounts.get(key) || 0) + b.count);
+            }
+        }
+
+        let peakHour = 0;
+        let peakCount = -1;
+        for (let h = 0; h < 24; h++) {
+            if (hourOfDay[h] > peakCount) {
+                peakCount = hourOfDay[h];
+                peakHour = h;
+            }
+        }
+
+        this._hourOfDayLast7d = hourOfDay;
+        this._dayCountsLast30d = dayCounts;
+
         this.overviewCards = [
             { label: 'Total Calls', value: this.formatNumber(overview.totalCalls), icon: 'call', color: '#00bcd4' },
-            { label: 'Today', value: this.formatNumber(overview.todayCalls), icon: 'today', color: '#4caf50' },
-            { label: 'This Week', value: this.formatNumber(overview.weekCalls), icon: 'date_range', color: '#ff9800' },
-            { label: 'This Month', value: this.formatNumber(overview.monthCalls), icon: 'calendar_month', color: '#9c27b0' },
+            { label: 'Today', value: this.formatNumber(todayCalls), icon: 'today', color: '#4caf50' },
+            { label: 'This Week', value: this.formatNumber(weekCalls), icon: 'date_range', color: '#ff9800' },
+            { label: 'This Month', value: this.formatNumber(monthCalls), icon: 'calendar_month', color: '#9c27b0' },
             { label: 'Active Systems', value: overview.activeSystems, icon: 'settings_input_antenna', color: '#2196f3' },
             { label: 'Active TGs', value: overview.activeTalkgroups, icon: 'groups', color: '#e91e63' },
-            { label: 'Avg/Day', value: Math.round(overview.avgCallsPerDay), icon: 'trending_up', color: '#607d8b' },
-            { label: 'Peak Hour', value: this.formatHour(overview.peakHour), icon: 'schedule', color: '#795548' },
+            { label: 'Avg/Day', value: Math.round(monthCalls / 30), icon: 'trending_up', color: '#607d8b' },
+            { label: 'Peak Hour', value: this.formatHour(peakHour), icon: 'schedule', color: '#795548' },
         ];
     }
 
     private buildHourlyChart(): void {
-        if (!this.stats?.callsByHour) return;
-
-        const labels = this.stats.callsByHour.map(h => `${h.hour.toString().padStart(2, '0')}:00`);
-        const data = this.stats.callsByHour.map(h => h.count);
+        const labels = this._hourOfDayLast7d.map((_, h) => `${h.toString().padStart(2, '0')}:00`);
+        const data = this._hourOfDayLast7d;
 
         this.hourlyChartData = {
             labels,
@@ -248,15 +277,17 @@ export class RdioScannerPublicStatsComponent implements OnInit {
     }
 
     private buildDailyChart(): void {
-        if (!this.stats?.callsByDay) return;
-
-        const labels = this.stats.callsByDay.map(d => {
-            const date = new Date(d.date + 'T00:00:00');
-            const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            return `${months[date.getMonth()]} ${date.getDate()} (${days[date.getDay()]})`;
-        });
-        const data = this.stats.callsByDay.map(d => d.count);
+        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const today = new Date();
+        const labels: string[] = [];
+        const data: number[] = [];
+        for (let i = 29; i >= 0; i--) {
+            const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+            const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+            labels.push(`${months[d.getMonth()]} ${d.getDate()} (${days[d.getDay()]})`);
+            data.push(this._dayCountsLast30d.get(key) || 0);
+        }
 
         this.dailyChartData = {
             labels,
@@ -290,11 +321,31 @@ export class RdioScannerPublicStatsComponent implements OnInit {
     }
 
     private buildRecentChart(): void {
-        if (!this.stats?.recentActivity) return;
+        if (!this.stats?.hourBuckets) return;
 
-        // Show actual hour times (chronologically from 24h ago to now)
-        const labels = this.stats.recentActivity.map(h => `${h.hour.toString().padStart(2, '0')}:00`);
-        const data = this.stats.recentActivity.map(h => h.count);
+        // Map UTC hour-start ms to count for O(1) lookup as we walk
+        // the last 24 local hours.
+        const byHourMs = new Map<number, number>();
+        for (const b of this.stats.hourBuckets) {
+            const t = new Date(b.startUtc);
+            if (!isNaN(t.getTime())) byHourMs.set(t.getTime(), b.count);
+        }
+
+        const now = new Date();
+        const currentLocalHour = new Date(
+            now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(),
+        );
+
+        const labels: string[] = [];
+        const data: number[] = [];
+        for (let i = 23; i >= 0; i--) {
+            const slot = new Date(currentLocalHour);
+            slot.setHours(slot.getHours() - i);
+            const utcHourStart = new Date(slot.getTime());
+            utcHourStart.setUTCMinutes(0, 0, 0);
+            labels.push(`${slot.getHours().toString().padStart(2, '0')}:00`);
+            data.push(byHourMs.get(utcHourStart.getTime()) || 0);
+        }
 
         this.recentChartData = {
             labels,

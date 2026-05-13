@@ -140,23 +140,70 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         if (!this.stats) return;
 
         const { overview } = this.stats;
+        const buckets = this.stats.hourBuckets || [];
+
+        // Bin the buckets into hour-of-day / day-of-period buckets in
+        // the browser's local timezone. Server side ships pure UTC.
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfWeek.getDate() - 6);
+        const startOfMonth = new Date(startOfToday); startOfMonth.setDate(startOfMonth.getDate() - 29);
+
+        let todayCalls = 0;
+        let weekCalls = 0;
+        let monthCalls = 0;
+        const hourOfDay = new Array<number>(24).fill(0);
+        const dayCounts = new Map<string, number>(); // local YYYY-MM-DD -> count
+
+        for (const b of buckets) {
+            const t = new Date(b.startUtc);
+            if (isNaN(t.getTime())) continue;
+            if (t >= startOfToday) todayCalls += b.count;
+            if (t >= startOfWeek) weekCalls += b.count;
+            if (t >= startOfMonth) {
+                monthCalls += b.count;
+                const key = `${t.getFullYear()}-${(t.getMonth() + 1).toString().padStart(2, '0')}-${t.getDate().toString().padStart(2, '0')}`;
+                dayCounts.set(key, (dayCounts.get(key) || 0) + b.count);
+            }
+            // Hour-of-day rollup uses the last 7 days, matching the
+            // historic "Average Calls Per Hour (over 7 days)" chart.
+            if (t >= startOfWeek) hourOfDay[t.getHours()] += b.count;
+        }
+
+        // Peak hour = argmax(hourOfDay).
+        let peakHour = 0;
+        let peakCount = -1;
+        for (let h = 0; h < 24; h++) {
+            if (hourOfDay[h] > peakCount) {
+                peakCount = hourOfDay[h];
+                peakHour = h;
+            }
+        }
+
+        const avgPerDay = monthCalls / 30;
+
+        // Stash the binned arrays for the chart builders.
+        this._hourOfDayLast7d = hourOfDay;
+        this._dayCountsLast30d = dayCounts;
+
         this.overviewCards = [
             { label: 'Total Calls', value: this.formatNumber(overview.totalCalls), icon: 'call', color: '#00bcd4' },
-            { label: 'Today', value: this.formatNumber(overview.todayCalls), icon: 'today', color: '#4caf50' },
-            { label: 'This Week', value: this.formatNumber(overview.weekCalls), icon: 'date_range', color: '#ff9800' },
-            { label: 'This Month', value: this.formatNumber(overview.monthCalls), icon: 'calendar_month', color: '#9c27b0' },
+            { label: 'Today', value: this.formatNumber(todayCalls), icon: 'today', color: '#4caf50' },
+            { label: 'This Week', value: this.formatNumber(weekCalls), icon: 'date_range', color: '#ff9800' },
+            { label: 'This Month', value: this.formatNumber(monthCalls), icon: 'calendar_month', color: '#9c27b0' },
             { label: 'Active Systems', value: overview.activeSystems, icon: 'settings_input_antenna', color: '#2196f3' },
             { label: 'Active Talkgroups', value: overview.activeTalkgroups, icon: 'groups', color: '#e91e63' },
-            { label: 'Avg/Day', value: Math.round(overview.avgCallsPerDay), icon: 'trending_up', color: '#607d8b' },
-            { label: 'Peak Hour', value: this.formatHour(overview.peakHour), icon: 'schedule', color: '#795548' },
+            { label: 'Avg/Day', value: Math.round(avgPerDay), icon: 'trending_up', color: '#607d8b' },
+            { label: 'Peak Hour', value: this.formatHour(peakHour), icon: 'schedule', color: '#795548' },
         ];
     }
 
-    private buildHourlyChart(): void {
-        if (!this.stats?.callsByHour) return;
+    private _hourOfDayLast7d: number[] = new Array(24).fill(0);
+    private _dayCountsLast30d: Map<string, number> = new Map();
 
-        const labels = this.stats.callsByHour.map(h => `${h.hour.toString().padStart(2, '0')}:00`);
-        const data = this.stats.callsByHour.map(h => h.count);
+    private buildHourlyChart(): void {
+        const labels = this._hourOfDayLast7d.map((_, h) => `${h.toString().padStart(2, '0')}:00`);
+        const data = this._hourOfDayLast7d;
 
         this.hourlyChartData = {
             labels,
@@ -170,15 +217,19 @@ export class RdioScannerAdminStatsComponent implements OnInit {
     }
 
     private buildDailyChart(): void {
-        if (!this.stats?.callsByDay) return;
-
-        const labels = this.stats.callsByDay.map(d => {
-            const date = new Date(d.date + 'T00:00:00');
-            const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            return `${months[date.getMonth()]} ${date.getDate()} (${days[date.getDay()]})`;
-        });
-        const data = this.stats.callsByDay.map(d => d.count);
+        // Iterate 30 local days ending today so the axis is dense even
+        // when a day had zero calls.
+        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const today = new Date();
+        const labels: string[] = [];
+        const data: number[] = [];
+        for (let i = 29; i >= 0; i--) {
+            const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+            const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+            labels.push(`${months[d.getMonth()]} ${d.getDate()} (${days[d.getDay()]})`);
+            data.push(this._dayCountsLast30d.get(key) || 0);
+        }
 
         this.dailyChartData = {
             labels,
@@ -212,11 +263,39 @@ export class RdioScannerAdminStatsComponent implements OnInit {
     }
 
     private buildRecentChart(): void {
-        if (!this.stats?.recentActivity) return;
+        // Last 24 local hours, chronologically. Iterate the time window
+        // and pull counts from the hourBuckets keyed by the bucket's
+        // start hour (truncated to the hour in UTC).
+        if (!this.stats?.hourBuckets) return;
 
-        // Show actual hour times (chronologically from 24h ago to now)
-        const labels = this.stats.recentActivity.map(h => `${h.hour.toString().padStart(2, '0')}:00`);
-        const data = this.stats.recentActivity.map(h => h.count);
+        // Build a quick lookup: UTC hour start (ms) -> count.
+        const byHourMs = new Map<number, number>();
+        for (const b of this.stats.hourBuckets) {
+            const t = new Date(b.startUtc);
+            if (!isNaN(t.getTime())) byHourMs.set(t.getTime(), b.count);
+        }
+
+        const now = new Date();
+        // Truncate `now` to the current local hour, then express as UTC
+        // hour start for the lookup.
+        const currentLocalHour = new Date(
+            now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(),
+        );
+
+        const labels: string[] = [];
+        const data: number[] = [];
+        for (let i = 23; i >= 0; i--) {
+            const slot = new Date(currentLocalHour);
+            slot.setHours(slot.getHours() - i);
+            // Server bucket start is also a calendar hour, so this Date's
+            // .getTime() corresponds to the same UTC instant as a bucket
+            // whose startUtc is the matching hour boundary.
+            const utcHourStart = new Date(slot.getTime());
+            // Round to the hour in UTC just to be safe across DST edges.
+            utcHourStart.setUTCMinutes(0, 0, 0);
+            labels.push(`${slot.getHours().toString().padStart(2, '0')}:00`);
+            data.push(byHourMs.get(utcHourStart.getTime()) || 0);
+        }
 
         this.recentChartData = {
             labels,
