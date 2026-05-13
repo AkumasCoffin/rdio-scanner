@@ -24,6 +24,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+	// Embed the IANA tzdata so time.LoadLocation works on Windows and
+	// scratch / distroless Docker images that don't ship /usr/share/
+	// zoneinfo. Costs ~500 KB; without it the ?tz= param silently
+	// falls back to UTC for these targets even when the client sends
+	// a valid zone like "America/New_York" or "Australia/Sydney".
+	_ "time/tzdata"
 )
 
 const statsCacheTTL = 2 * time.Minute
@@ -569,7 +575,14 @@ func (stats *Stats) GetLastHourTalkgroups(db *Database) ([]StatsLastHourTalkgrou
 			continue
 		}
 		if t, err := db.ParseDateTime(last); err == nil {
-			item.LastCall = t.Format(db.DateTimeFormat)
+			// RFC3339 carries the timezone offset ("Z" for UTC) so the
+			// browser parses it as an absolute instant. With
+			// db.DateTimeFormat ("2006-01-02 15:04:05") there's no TZ
+			// marker, so JS treats the string as local time and the
+			// resulting "X hours ago" reads as UTC-offset hours off
+			// instead of the truth (the bug reported as "10 hours ago
+			// for a call that just happened" on a UTC+10 client).
+			item.LastCall = t.UTC().Format(time.RFC3339)
 		}
 		// Reuse the talkgroup annotation helper via the same-shaped item.
 		proxy := StatsTopTalkgroup{SystemId: item.SystemId, TalkgroupId: item.TalkgroupId}
@@ -658,9 +671,12 @@ func (stats *Stats) GetTalkgroupUnits(db *Database, systemId, talkgroupId uint) 
 
 	for _, e := range all {
 		item := StatsTalkgroupUnit{
-			UnitId:   e.unit,
-			Count:    e.count,
-			LastCall: e.last.Format(db.DateTimeFormat),
+			UnitId: e.unit,
+			Count:  e.count,
+			// RFC3339 so the browser parses it as an absolute instant
+			// rather than wall-clock-in-local; see GetLastHourTalkgroups
+			// for the rationale.
+			LastCall: e.last.UTC().Format(time.RFC3339),
 		}
 		_, item.UnitLabel = stats.lookupSystemAndUnit(systemId, e.unit)
 		if item.UnitLabel == "" {
