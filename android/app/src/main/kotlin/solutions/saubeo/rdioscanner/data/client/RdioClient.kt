@@ -100,11 +100,27 @@ class RdioClient(
         reconnectAttempts = 0
         // Defensively close any prior socket + pending reconnect: prevents two
         // parallel WS connections from both feeding the same SharedFlow, which
-        // would make every incoming CAL play twice.
+        // would make every incoming CAL play twice. Bump generation BEFORE
+        // closing so the old Listener's onClosed sees gen != current() and
+        // bails — otherwise it could race a Disconnected emit AFTER we set
+        // state below.
         reconnectJob?.cancel()
         reconnectJob = null
+        generation.incrementAndGet()
         webSocket?.close(1000, "reconnect with new credentials")
         webSocket = null
+        // Force a real Connected → Disconnected → Connecting → Connected
+        // transition on profile switch. Without this, profile-A's state
+        // never leaves Connected (close fires onClosed but it short-circuits
+        // on stale generation; openSocket only sets Connecting → Connected),
+        // so the LaunchedEffect(state) in Navigation.kt never sees a
+        // transition to react to and the back stack ends up in a bad shape
+        // — observable as "tapping connection 2 kicks me out of the app"
+        // on multi-profile setups (#1).
+        _state.value = ConnectionState.Disconnected
+        _config.value = null
+        _version.value = null
+        _livefeedActive.value = false
         openSocket()
     }
 
