@@ -275,6 +275,13 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         this.syncClock();
         this.volume = this.rdioScannerService.getVolume();
         this.isMuted = this.rdioScannerService.isMuted();
+        // Seed `linked` from the service's tracked state. The
+        // index.html early-WS can finish handshaking + emit
+        // `{linked:true}` before this component is constructed and
+        // subscribed to event, so the emit lands in nobody and the
+        // LCD would otherwise stay stuck on "NO LINK" until the next
+        // reconnect. See rdio-scanner.service.ts `isLinked` getter.
+        this.linked = this.rdioScannerService.isLinked;
         // waitForTranscript is admin-controlled and arrives via the config
         // event — nothing to initialize from local state here.
 

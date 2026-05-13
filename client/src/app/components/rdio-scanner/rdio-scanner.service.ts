@@ -88,6 +88,17 @@ export class RdioScannerService implements OnDestroy {
         return id;
     }
 
+    // Tracks the latest linked state independently of the EventEmitter so
+    // late subscribers (components that mount after the WS has already
+    // opened — common with the index.html early-WS landing CFG before
+    // Angular bootstraps) can pull the current value via isLinked instead
+    // of waiting forever for a `{linked:true}` that already fired into the
+    // void.
+    private linkedState = false;
+    get isLinked(): boolean {
+        return this.linkedState;
+    }
+
     // When true, live-feed calls without a transcript are held OUT of the
     // playback queue entirely until their transcript arrives (or a timeout
     // releases them so nothing is lost). Admin-controlled — flows in via
@@ -1293,6 +1304,7 @@ export class RdioScannerService implements OnDestroy {
         this.websocket = ws;
 
         ws.onclose = (ev: CloseEvent) => {
+            this.linkedState = false;
             this.event.emit({ linked: false });
 
             if (ev.code !== 1000) {
@@ -1303,6 +1315,7 @@ export class RdioScannerService implements OnDestroy {
         const parse = (data: string) => this.parseWebsocketMessage(data);
 
         const onOpen = () => {
+            this.linkedState = true;
             this.event.emit({ linked: true });
 
             if (early2) {
