@@ -730,14 +730,14 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         if (call) {
             this.tempAvoid = this.rdioScannerService.isAvoidedTimer(call);
 
-            if (this.rdioScannerService.isPatched(call)) {
-                this.avoided = false;
-                this.patched = true;
-
-            } else {
-                this.avoided = this.rdioScannerService.isAvoided(call);
-                this.patched = false;
-            }
+            // Flags are independent: a call can be both patched and
+            // avoided (and frequently is — patches let you hear avoided
+            // talkgroups when they're bridged onto an active one). The
+            // LCD has separate AVOID and PATCH labels, so light each
+            // up on its own merits instead of treating them as
+            // mutually exclusive.
+            this.avoided = this.rdioScannerService.isAvoided(call);
+            this.patched = this.rdioScannerService.isPatched(call);
         }
 
         const colors = ['blue', 'cyan', 'green', 'magenta', 'orange', 'red', 'white', 'yellow'];

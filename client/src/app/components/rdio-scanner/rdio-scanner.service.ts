@@ -453,9 +453,14 @@ export class RdioScannerService implements OnDestroy {
     }
 
     isPatched(call: RdioScannerCall): boolean {
-        return this.isAvoided(call) && call.patches.some((tg) => {
-            return !!this.livefeedMap[call.system] && this.livefeedMap[call.system][tg]?.active || false;
-        });
+        // A call is "patched" whenever the recorder reported one or more
+        // patched-talkgroup IDs alongside it — that's information the LCD
+        // should always surface so the user can see at a glance that this
+        // traffic is bridged across talkgroups. The previous definition
+        // only fired when the user had explicitly avoided the source TG
+        // AND the patch routed it back in — useful only in that narrow
+        // case, and invisible for users who haven't avoided anything.
+        return Array.isArray(call.patches) && call.patches.length > 0;
     }
 
     livefeed(): void {
