@@ -1,5 +1,6 @@
 package solutions.saubeo.rdioscanner.ui
 
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -14,6 +15,8 @@ import solutions.saubeo.rdioscanner.ui.screens.LivefeedScreen
 import solutions.saubeo.rdioscanner.ui.screens.SearchScreen
 import solutions.saubeo.rdioscanner.ui.screens.SelectorScreen
 import solutions.saubeo.rdioscanner.ui.theme.RdioBackground
+
+private const val TAG = "RdioNav"
 
 private object Routes {
     const val CONNECT = "connect"
@@ -35,9 +38,10 @@ fun RdioApp() {
     // below will put us straight on the Livefeed.
 
     LaunchedEffect(state) {
+        val route = navController.currentBackStackEntry?.destination?.route
+        Log.d(TAG, "LaunchedEffect(state): state=$state, route=$route")
         when (state) {
             ConnectionState.Connected -> {
-                val route = navController.currentBackStackEntry?.destination?.route
                 if (route == Routes.CONNECT || route == null) {
                     // Keep CONNECT on the back stack (inclusive = false) so a
                     // system-back press from LIVEFEED returns to the picker
@@ -46,10 +50,13 @@ fun RdioApp() {
                     // next back tap killed the process — which read to
                     // multi-profile users as "tapping connection 2 kicks me
                     // out of the app."
+                    Log.d(TAG, "  -> navigate(LIVEFEED)")
                     navController.navigate(Routes.LIVEFEED) {
                         popUpTo(Routes.CONNECT) { inclusive = false }
                         launchSingleTop = true
                     }
+                } else {
+                    Log.d(TAG, "  -> Connected but already past CONNECT, no nav")
                 }
             }
             ConnectionState.Disconnected,
@@ -57,16 +64,19 @@ fun RdioApp() {
             ConnectionState.Expired,
             ConnectionState.TooMany,
             is ConnectionState.Error -> {
-                if (navController.currentBackStackEntry?.destination?.route != Routes.CONNECT) {
+                if (route != Routes.CONNECT) {
+                    Log.d(TAG, "  -> popBackStack(CONNECT, inclusive=false)")
                     // Pop back to the existing CONNECT entry rather than
                     // pushing a fresh one — paired with the inclusive=false
                     // navigate above, this keeps the stack tidy at [CONNECT]
                     // after a disconnect, no matter how many connect/
                     // disconnect cycles happened during the session.
                     navController.popBackStack(Routes.CONNECT, inclusive = false)
+                } else {
+                    Log.d(TAG, "  -> Disconnected and already on CONNECT, no nav")
                 }
             }
-            else -> Unit
+            else -> Log.d(TAG, "  -> intermediate state, no nav")
         }
     }
 

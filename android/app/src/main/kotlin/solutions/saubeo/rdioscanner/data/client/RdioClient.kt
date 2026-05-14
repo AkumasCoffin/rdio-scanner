@@ -19,6 +19,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import android.util.Log
 import solutions.saubeo.rdioscanner.data.protocol.CallDto
 import solutions.saubeo.rdioscanner.data.protocol.ConfigDto
 import solutions.saubeo.rdioscanner.data.protocol.Incoming
@@ -95,6 +96,7 @@ class RdioClient(
     private val generation = AtomicInteger(0)
 
     fun connect(creds: RdioCredentials) {
+        Log.d(TAG, "connect: url=${creds.baseUrl}, hadAccessCode=${creds.accessCode != null}")
         credentials = creds
         shouldReconnect.set(true)
         reconnectAttempts = 0
@@ -121,6 +123,7 @@ class RdioClient(
         _config.value = null
         _version.value = null
         _livefeedActive.value = false
+        Log.d(TAG, "connect: state -> Disconnected, calling openSocket()")
         openSocket()
     }
 
@@ -177,8 +180,12 @@ class RdioClient(
     }
 
     private fun openSocket() {
-        val creds = credentials ?: return
+        val creds = credentials ?: run {
+            Log.w(TAG, "openSocket: no credentials, bailing")
+            return
+        }
         val url = toWsUrl(creds.baseUrl) ?: run {
+            Log.w(TAG, "openSocket: invalid url '${creds.baseUrl}', state -> Error")
             _state.value = ConnectionState.Error("Invalid server URL")
             return
         }
@@ -188,6 +195,7 @@ class RdioClient(
         webSocket = null
         val gen = generation.incrementAndGet()
         _state.value = ConnectionState.Connecting
+        Log.d(TAG, "openSocket: gen=$gen, url=$url, state -> Connecting")
         val req = Request.Builder().url(url).build()
         webSocket = httpClient.newWebSocket(req, Listener(gen))
     }
@@ -213,9 +221,11 @@ class RdioClient(
             // state to Authenticating and re-send VER/CFG, racing the live
             // socket's own handshake.
             if (!current()) {
+                Log.d(TAG, "Listener[$gen].onOpen: stale (current=${generation.get()}), closing")
                 webSocket.close(1000, "stale")
                 return
             }
+            Log.d(TAG, "Listener[$gen].onOpen: state -> Authenticating, sending VER + CFG")
             reconnectAttempts = 0
             _state.value = ConnectionState.Authenticating
             // Ask for version and config (server will prompt PIN if needed).
@@ -238,23 +248,33 @@ class RdioClient(
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            if (!current()) return
+            if (!current()) {
+                Log.d(TAG, "Listener[$gen].onClosed: stale code=$code reason='$reason' (current=${generation.get()})")
+                return
+            }
             this@RdioClient.webSocket = null
             if (code != 1000 && shouldReconnect.get()) {
+                Log.d(TAG, "Listener[$gen].onClosed: code=$code reason='$reason' -> Connecting + reconnect")
                 _state.value = ConnectionState.Connecting
                 scheduleReconnect()
             } else {
+                Log.d(TAG, "Listener[$gen].onClosed: code=$code reason='$reason' -> Disconnected")
                 _state.value = ConnectionState.Disconnected
             }
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            if (!current()) return
+            if (!current()) {
+                Log.d(TAG, "Listener[$gen].onFailure: stale (current=${generation.get()}): ${t.message}")
+                return
+            }
             this@RdioClient.webSocket = null
             if (shouldReconnect.get()) {
+                Log.w(TAG, "Listener[$gen].onFailure: ${t.message} -> Error + reconnect", t)
                 _state.value = ConnectionState.Error(t.message ?: "connection failed")
                 scheduleReconnect()
             } else {
+                Log.w(TAG, "Listener[$gen].onFailure: ${t.message} -> Disconnected (no reconnect)", t)
                 _state.value = ConnectionState.Disconnected
             }
         }
@@ -265,6 +285,7 @@ class RdioClient(
             is Incoming.Version -> _version.value = msg.payload
 
             is Incoming.Config -> {
+                Log.d(TAG, "handle: CFG received (${msg.payload.systems.size} systems), state -> Connected")
                 _config.value = msg.payload
                 _state.value = ConnectionState.Connected
                 pendingLivefeed?.let { send(Wire.livefeedMap(it)) }
@@ -299,6 +320,8 @@ class RdioClient(
     }
 
     companion object {
+        private const val TAG = "RdioClient"
+
         fun toWsUrl(baseUrl: String): String? {
             val trimmed = baseUrl.trim().trimEnd('/')
             if (trimmed.isEmpty()) return null

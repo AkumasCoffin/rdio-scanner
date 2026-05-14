@@ -1,6 +1,7 @@
 package solutions.saubeo.rdioscanner.ui
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -96,6 +97,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun connectProfile(profile: ConnectionProfileDto) {
+        Log.d(TAG, "connectProfile: id=${profile.id}, name='${profile.name}', currentState=${state.value}")
         viewModelScope.launch {
             // Tear down all per-session state from the previous profile before
             // opening the new socket. The system / talkgroup IDs that hold,
@@ -107,8 +109,14 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
             repo.releaseHold()
             repo.setPaused(false)
             repo.clearAvoids()
+            Log.d(TAG, "connectProfile: state cleared, handing off to repo.connectProfile")
             repo.connectProfile(profile)
+            Log.d(TAG, "connectProfile: repo.connectProfile returned, state=${state.value}")
         }
+    }
+
+    companion object {
+        private const val TAG = "ScannerVM"
     }
 
     fun saveProfile(
