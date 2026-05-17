@@ -46,6 +46,16 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     val searching: StateFlow<Boolean> = repo.searching
     val downloads: SharedFlow<DownloadEvent> = downloader.events
 
+    /**
+     * Live (callId → transcript) map populated from both inline CAL fields
+     * and async TRX pushes/replies. Screens look up by id so the same
+     * piece of state hydrates the LCD, history rows, and search rows.
+     */
+    val transcripts: StateFlow<Map<Long, String>> = repo.transcripts
+
+    /** Ask the server for a transcript by call id (no-op if id <= 0). */
+    fun requestTranscript(id: Long) = repo.requestTranscript(id)
+
     val selection: StateFlow<Map<Int, Map<Int, Boolean>>> =
         rdioApp.settings.selection.stateIn(
             viewModelScope, SharingStarted.Eagerly, emptyMap()

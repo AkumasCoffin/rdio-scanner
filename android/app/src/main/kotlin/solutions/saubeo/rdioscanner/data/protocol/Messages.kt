@@ -25,6 +25,7 @@ object Cmd {
     const val LFM = "LFM"
     const val MAX = "MAX"
     const val PIN = "PIN"
+    const val TRX = "TRX"
     const val VER = "VER"
     const val SRV = "SRV"
 }
@@ -37,6 +38,14 @@ sealed interface Incoming {
     data class Listeners(val count: Int) : Incoming
     data class LivefeedAck(val active: Boolean) : Incoming
     data class Search(val payload: SearchResults) : Incoming
+    /**
+     * Whisper transcript for [callId]. Server emits this both as a
+     * direct reply to a TRX request from us and as an unsolicited
+     * push when a backend transcription run finishes for a call our
+     * access scope can see. Same shape either way; we don't bother
+     * distinguishing — the listener just merges into the cache.
+     */
+    data class Transcript(val callId: Long, val text: String) : Incoming
     data object PinRequested : Incoming
     data object Expired : Incoming
     data object TooMany : Incoming
@@ -92,6 +101,17 @@ object Wire {
         return encode(Cmd.LCL, payload)
     }
 
+    /**
+     * Request the transcript text for a given call id. Server accepts
+     * either a numeric or stringified payload; we send a string to
+     * mirror what `Wire.call` does (avoids precision quirks for ids
+     * near the 32-bit boundary). Server replies with another TRX frame
+     * whose payload object holds `{id, transcript}` — handled by the
+     * Cmd.TRX branch in [decode].
+     */
+    fun transcript(id: Long): String =
+        encode(Cmd.TRX, JsonPrimitive(id.toString()))
+
     fun decode(raw: String): Incoming? {
         val arr = runCatching { json.parseToJsonElement(raw) }.getOrNull()?.jsonArray
             ?: return null
@@ -128,6 +148,21 @@ object Wire {
 
             Cmd.LCL -> (payload as? JsonObject)?.let {
                 Incoming.Search(json.decodeFromJsonElement(SearchResults.serializer(), it))
+            } ?: Incoming.Unknown(cmd, payload)
+
+            Cmd.TRX -> (payload as? JsonObject)?.let { obj ->
+                // Server emits both request replies ({id, transcript}) and
+                // unsolicited pushes ({id, system, talkgroup, transcript})
+                // under the same TRX command. We only need id + transcript;
+                // the extras get ignored.
+                val id = obj["id"]?.jsonPrimitive?.longOrNull
+                    ?: obj["id"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                val text = obj["transcript"]?.jsonPrimitive?.contentOrNull
+                if (id != null) {
+                    Incoming.Transcript(callId = id, text = text.orEmpty())
+                } else {
+                    Incoming.Unknown(cmd, payload)
+                }
             } ?: Incoming.Unknown(cmd, payload)
 
             Cmd.PIN -> Incoming.PinRequested

@@ -81,6 +81,16 @@ class RdioClient(
     private val _searching = MutableStateFlow(false)
     val searching: StateFlow<Boolean> = _searching.asStateFlow()
 
+    private val _transcripts = MutableSharedFlow<Pair<Long, String>>(
+        replay = 0, extraBufferCapacity = 64,
+    )
+    /**
+     * Stream of (callId, transcriptText) tuples sourced from server TRX
+     * frames — both direct replies to [requestTranscript] and unsolicited
+     * pushes when a backend Whisper run finishes.
+     */
+    val transcripts: SharedFlow<Pair<Long, String>> = _transcripts.asSharedFlow()
+
     private var credentials: RdioCredentials? = null
     private var webSocket: WebSocket? = null
     private var reconnectJob: Job? = null
@@ -167,6 +177,16 @@ class RdioClient(
 
     fun requestConfig() {
         send(Wire.config())
+    }
+
+    /**
+     * Ask the server for the transcript of [id]. Resolution arrives
+     * asynchronously through the [transcripts] flow — there's no
+     * synchronous response. Safe to call multiple times; the server
+     * deduplicates and the flow consumer (repo) handles ordering.
+     */
+    fun requestTranscript(id: Long) {
+        send(Wire.transcript(id))
     }
 
     fun shutdown() {
@@ -302,6 +322,11 @@ class RdioClient(
             is Incoming.Search -> {
                 _searchResults.value = msg.payload
                 _searching.value = false
+            }
+
+            is Incoming.Transcript -> {
+                Log.d(TAG, "handle: TRX id=${msg.callId} len=${msg.text.length}")
+                scope.launch { _transcripts.emit(msg.callId to msg.text) }
             }
 
             Incoming.PinRequested -> {

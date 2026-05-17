@@ -73,6 +73,7 @@ fun LivefeedScreen(
     val active by vm.livefeedActive.collectAsStateWithLifecycle()
     val livefeedEnabled by vm.livefeedEnabled.collectAsStateWithLifecycle()
     val avoided by vm.avoided.collectAsStateWithLifecycle()
+    val transcripts by vm.transcripts.collectAsStateWithLifecycle()
 
     val branding = config?.branding?.takeIf { it.isNotBlank() } ?: "Rdio Scanner"
     val showListeners = config?.showListenersCount == true
@@ -112,6 +113,29 @@ fun LivefeedScreen(
             connectionLabel = activeProfileName ?: "Connections",
         )
 
+        // Live-transcript lookup: prefer the cache (latest TRX wins),
+        // fall back to whatever came inline on the CAL.
+        val activeTranscript = playing?.call?.let {
+            transcripts[it.id]?.takeIf { t -> t.isNotBlank() } ?: it.transcript
+        }
+
+        // Kick a one-shot TRX request for the playing call whenever the
+        // server hasn't given us a transcript yet. Repository handles
+        // dedup; the server replies via the same TRX flow. Triggered on
+        // call-id change so each new call gets exactly one initial ask.
+        val playingId = playing?.call?.id
+        LaunchedEffect(playingId, activeTranscript) {
+            val id = playingId ?: return@LaunchedEffect
+            if (id <= 0) return@LaunchedEffect
+            if (activeTranscript?.isNotBlank() == true) return@LaunchedEffect
+            // Tiny delay so Whisper has a head start vs. spamming the
+            // server on every CAL. 4s matches the webapp's poll floor.
+            delay(4000)
+            if (transcripts[id].isNullOrBlank()) {
+                vm.requestTranscript(id)
+            }
+        }
+
         LcdPanel(Modifier.fillMaxWidth()) {
             DisplayRows(
                 now = now,
@@ -126,10 +150,15 @@ fun LivefeedScreen(
                 system = currentSys,
                 talkgroup = currentTg,
                 held = held,
-                transcript = playing?.call?.transcript,
+                transcript = activeTranscript,
             )
             Spacer(Modifier.height(10.dp))
-            HistoryTable(history = history, timeFmt = timeFmt, currentId = playing?.call?.id)
+            HistoryTable(
+                history = history,
+                timeFmt = timeFmt,
+                currentId = playing?.call?.id,
+                transcripts = transcripts,
+            )
         }
 
         val hasCallContext = playing != null || history.isNotEmpty()
@@ -306,6 +335,7 @@ private fun HistoryTable(
     history: List<QueuedCall>,
     timeFmt: SimpleDateFormat,
     currentId: Long?,
+    transcripts: Map<Long, String> = emptyMap(),
 ) {
     Row(
         Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -346,7 +376,9 @@ private fun HistoryTable(
                 highlight = replaying,
             )
         }
-        item.call.transcript?.trim()?.takeIf { it.isNotBlank() }?.let { snippet ->
+        val historyTranscript = transcripts[item.call.id]?.takeIf { it.isNotBlank() }
+            ?: item.call.transcript
+        historyTranscript?.trim()?.takeIf { it.isNotBlank() }?.let { snippet ->
             Row(
                 Modifier
                     .fillMaxWidth()

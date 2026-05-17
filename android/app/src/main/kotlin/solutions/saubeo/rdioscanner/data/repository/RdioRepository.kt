@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import solutions.saubeo.rdioscanner.data.client.ConnectionState
 import solutions.saubeo.rdioscanner.data.client.RdioClient
@@ -69,6 +70,16 @@ class RdioRepository(
     private val _avoided = MutableStateFlow<Set<Pair<Int, Int>>>(emptySet())
     val avoided: StateFlow<Set<Pair<Int, Int>>> = _avoided.asStateFlow()
 
+    /**
+     * In-memory cache of (callId → transcript) pairs. Populated by both
+     * the inline transcript on CAL frames and the async TRX flow. Survives
+     * for the lifetime of the repository (i.e. the process) — webapp uses
+     * the same volatile-only model, and Whisper text is cheap to re-fetch
+     * if needed.
+     */
+    private val _transcripts = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val transcripts: StateFlow<Map<Long, String>> = _transcripts.asStateFlow()
+
     init {
         // Always send a COMPLETE livefeed matrix: every talkgroup in the
         // server's config, with any missing saved entries defaulting to true.
@@ -95,6 +106,39 @@ class RdioRepository(
                 settings.setSelection(everything, markInitialized = true)
             }
         }.launchIn(scope)
+
+        // Collect every TRX (request reply or push) into the transcript
+        // cache. Empty strings are kept as-is — they signal "server has
+        // no transcript" so the UI can stop retrying.
+        client.transcripts.onEach { (id, text) ->
+            _transcripts.update { current ->
+                if (current[id] == text) current else current + (id to text)
+            }
+        }.launchIn(scope)
+
+        // Whenever a CAL arrives carrying an inline transcript, merge it
+        // into the same cache so screens have a single source of truth
+        // regardless of which path the text came in on.
+        client.calls.onEach { (call, _) ->
+            val inline = call.transcript?.takeIf { it.isNotBlank() }
+            if (inline != null) {
+                _transcripts.update { current ->
+                    if (current[call.id] == inline) current else current + (call.id to inline)
+                }
+            }
+        }.launchIn(scope)
+    }
+
+    /**
+     * Ask the server for the transcript of [callId]. Result arrives
+     * asynchronously through [transcripts]. Re-requesting an id that's
+     * already cached is harmless — the server replies, the value
+     * goes through the same merge path, and the StateFlow only emits
+     * if the text actually changed.
+     */
+    fun requestTranscript(callId: Long) {
+        if (callId <= 0) return
+        client.requestTranscript(callId)
     }
 
     private fun buildFullLivefeedMap(

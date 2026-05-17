@@ -109,6 +109,7 @@ fun SearchScreen(
     val resultsOrNull by vm.searchResults.collectAsState()
     val searching by vm.searching.collectAsState()
     val results = resultsOrNull ?: SearchResults()
+    val transcripts by vm.transcripts.collectAsStateWithLifecycle()
 
     var filters by remember { mutableStateOf(SearchFilters()) }
     var offset by remember { mutableIntStateOf(0) }
@@ -266,6 +267,8 @@ fun SearchScreen(
                         ResultRow(
                             call = call,
                             systems = systems,
+                            transcript = transcripts[call.id],
+                            onRequestTranscript = { vm.requestTranscript(call.id) },
                             onPlay = { vm.playSearchResult(call.id) },
                             onDownload = { vm.downloadSearchResult(call.id) },
                         )
@@ -538,12 +541,27 @@ private fun PillButton(
 private fun ResultRow(
     call: SearchResultCall,
     systems: List<SystemDto>,
+    transcript: String?,
+    onRequestTranscript: () -> Unit,
     onPlay: () -> Unit,
     onDownload: () -> Unit,
 ) {
     val system = remember(systems, call.system) { systems.firstOrNull { it.id == call.system } }
     val tg = remember(system, call.talkgroup) { system?.talkgroups?.firstOrNull { it.id == call.talkgroup } }
     val when_ = remember(call.dateTime) { parseAndFormat(call.dateTime) }
+
+    // Effective transcript: prefer the live cache (set by inline CAL
+    // payload or TRX flow), fall back to whatever the search response
+    // shipped inline. If the server flagged hasTranscript but didn't
+    // send the text and we don't have it cached yet, fire an async
+    // request once per row composition so the row hydrates on its own.
+    val effectiveTranscript = transcript?.takeIf { it.isNotBlank() }
+        ?: call.transcript?.takeIf { it.isNotBlank() }
+    LaunchedEffect(call.id, effectiveTranscript, call.hasTranscript) {
+        if (effectiveTranscript == null && call.hasTranscript) {
+            onRequestTranscript()
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -569,14 +587,15 @@ private fun ResultRow(
                 color = RdioPalette.TextMuted,
                 style = LocalTextStyle.current.copy(fontSize = 12.sp),
             )
-            // Transcript line: inline transcript when the row carries one,
-            // a quieter "Transcript available" hint when the server flagged
-            // hasTranscript but didn't include the text (e.g. light list
-            // endpoints that omit the body). Phase 2 will hydrate via TRX.
-            val transcript = call.transcript?.trim().orEmpty()
-            if (transcript.isNotBlank()) {
+            // Transcript line: live cache or inline value, fall back to
+            // an italic "Loading transcript…" hint when the server flagged
+            // hasTranscript but we haven't received the text yet. A
+            // LaunchedEffect above this fires a one-shot TRX request in
+            // that case so the row hydrates without user action.
+            val display = effectiveTranscript?.trim().orEmpty()
+            if (display.isNotBlank()) {
                 Text(
-                    text = transcript,
+                    text = display,
                     color = RdioPalette.TextMain,
                     maxLines = 4,
                     style = LocalTextStyle.current.copy(
@@ -587,7 +606,7 @@ private fun ResultRow(
                 )
             } else if (call.hasTranscript) {
                 Text(
-                    text = "Transcript available",
+                    text = "Loading transcript…",
                     color = RdioPalette.TextSoft,
                     style = LocalTextStyle.current.copy(
                         fontSize = 11.sp,
