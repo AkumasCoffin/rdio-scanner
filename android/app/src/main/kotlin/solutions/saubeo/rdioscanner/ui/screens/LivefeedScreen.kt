@@ -92,7 +92,7 @@ fun LivefeedScreen(
             delay(1000)
         }
     }
-    val timeFmt = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    val timeFmt = remember { SimpleDateFormat("h:mm:ss a", Locale.getDefault()) }
     val dateFmt = remember { SimpleDateFormat("MM/dd", Locale.getDefault()) }
 
     val currentSys: SystemDto? = config?.systems?.firstOrNull { it.id == playing?.call?.system }

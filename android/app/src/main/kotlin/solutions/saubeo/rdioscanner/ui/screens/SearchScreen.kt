@@ -671,7 +671,7 @@ private fun parseIso(iso: String): Date? = solutions.saubeo.rdioscanner.util.par
 
 private fun parseAndFormat(iso: String): String {
     val parsed = parseIso(iso) ?: return iso
-    return SimpleDateFormat("MMM d  HH:mm:ss", Locale.getDefault()).format(parsed)
+    return SimpleDateFormat("MMM d  h:mm:ss a", Locale.getDefault()).format(parsed)
 }
 
 private fun formatRfc3339(date: Date): String {
