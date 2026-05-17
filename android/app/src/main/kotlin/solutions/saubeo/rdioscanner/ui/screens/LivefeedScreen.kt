@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,8 +27,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import solutions.saubeo.rdioscanner.audio.QueuedCall
@@ -122,6 +126,7 @@ fun LivefeedScreen(
                 system = currentSys,
                 talkgroup = currentTg,
                 held = held,
+                transcript = playing?.call?.transcript,
             )
             Spacer(Modifier.height(10.dp))
             HistoryTable(history = history, timeFmt = timeFmt, currentId = playing?.call?.id)
@@ -164,6 +169,7 @@ private fun DisplayRows(
     system: SystemDto?,
     talkgroup: TalkgroupDto?,
     held: HoldState,
+    transcript: String?,
 ) {
     val call: CallDto? = playing?.call
     val rightTop = buildString {
@@ -211,6 +217,69 @@ private fun DisplayRows(
             HoldFlag(text = "PATCH")
         }
     }
+    LcdSpacerSmall()
+    TranscriptPanel(
+        transcript = transcript,
+        ledColor = ledColor(system?.led),
+    )
+}
+
+/**
+ * Live-transcript panel under the call info, mirroring the webapp's
+ * live-transcript box. Reserves two lines of vertical space so the
+ * LCD layout doesn't shift when text arrives, shows an "—" placeholder
+ * when empty, and uses the active system / talkgroup LED color as the
+ * left-border tint.
+ */
+@Composable
+private fun TranscriptPanel(
+    transcript: String?,
+    ledColor: Color,
+) {
+    val text = transcript?.trim().orEmpty()
+    val hasText = text.isNotBlank()
+    val borderTint = if (hasText) ledColor.copy(alpha = 0.55f) else Color(0x33FFFFFF)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0x33000000), RoundedCornerShape(6.dp))
+            .border(1.dp, borderTint, RoundedCornerShape(6.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        LcdText(
+            text = "TRANSCRIPT",
+            size = 9f,
+            weight = FontWeight.Bold,
+            color = if (hasText) ledColor else RdioPalette.TextMuted,
+        )
+        if (hasText) {
+            Text(
+                text = text,
+                color = RdioPalette.TextMain,
+                style = TextStyle(
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp,
+                    fontWeight = FontWeight.Normal,
+                ),
+                minLines = 2,
+                maxLines = 4,
+            )
+        } else {
+            Text(
+                text = "—",
+                color = RdioPalette.TextSoft,
+                style = TextStyle(
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp,
+                    fontWeight = FontWeight.Normal,
+                ),
+                minLines = 2,
+            )
+        }
+    }
 }
 
 @Composable
@@ -256,11 +325,12 @@ private fun HistoryTable(
     }
     history.forEach { item ->
         val replaying = currentId != null && item.call.id == currentId
+        val rowBackground = if (replaying) Color(0x22F97316) else Color.Transparent
         Row(
             Modifier
                 .fillMaxWidth()
                 .height(22.dp)
-                .background(if (replaying) Color(0x22F97316) else Color.Transparent),
+                .background(rowBackground),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -275,6 +345,25 @@ private fun HistoryTable(
                 weight = 0.32f,
                 highlight = replaying,
             )
+        }
+        item.call.transcript?.trim()?.takeIf { it.isNotBlank() }?.let { snippet ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(rowBackground)
+                    .padding(start = 6.dp, end = 6.dp, bottom = 2.dp),
+            ) {
+                Text(
+                    text = snippet,
+                    color = if (replaying) RdioPalette.Accent.copy(alpha = 0.85f) else RdioPalette.TextMuted,
+                    maxLines = 2,
+                    style = TextStyle(
+                        fontSize = 10.5.sp,
+                        lineHeight = 13.sp,
+                        fontWeight = FontWeight.Normal,
+                    ),
+                )
+            }
         }
     }
 }

@@ -114,6 +114,14 @@ data class CallDto(
     val source: Long? = null,
     val system: Int,
     val talkgroup: Int,
+    /**
+     * Whisper transcript for this call, if the server has one. Arrives
+     * inline on the CAL payload when transcription completed before the
+     * frame was sent. Late-arriving transcripts come through the TRX
+     * push pathway (Phase 2) and are merged into the screen state via
+     * [ScannerViewModel.transcripts].
+     */
+    val transcript: String? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -145,6 +153,15 @@ data class SearchResultCall(
     val audioName: String? = null,
     val audioType: String? = null,
     val frequency: Double? = null,
+    /** Inline transcript text, set when the server has one for this call. */
+    val transcript: String? = null,
+    /**
+     * Hint from the server that this call has a transcript on disk even
+     * if `transcript` is null in this payload (e.g. row-list endpoints
+     * that omit the text to save bandwidth). Lets the UI render a
+     * "loading…" placeholder vs. a "no transcript" state distinctly.
+     */
+    val hasTranscript: Boolean = false,
 )
 
 @Serializable

@@ -551,7 +551,7 @@ private fun ResultRow(
             .background(RdioPalette.BgElevatedSoft, RoundedCornerShape(10.dp))
             .border(1.dp, RdioPalette.BorderSubtle, RoundedCornerShape(10.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
     ) {
         Column(Modifier.weight(1f)) {
             Text(
@@ -569,6 +569,33 @@ private fun ResultRow(
                 color = RdioPalette.TextMuted,
                 style = LocalTextStyle.current.copy(fontSize = 12.sp),
             )
+            // Transcript line: inline transcript when the row carries one,
+            // a quieter "Transcript available" hint when the server flagged
+            // hasTranscript but didn't include the text (e.g. light list
+            // endpoints that omit the body). Phase 2 will hydrate via TRX.
+            val transcript = call.transcript?.trim().orEmpty()
+            if (transcript.isNotBlank()) {
+                Text(
+                    text = transcript,
+                    color = RdioPalette.TextMain,
+                    maxLines = 4,
+                    style = LocalTextStyle.current.copy(
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                    ),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            } else if (call.hasTranscript) {
+                Text(
+                    text = "Transcript available",
+                    color = RdioPalette.TextSoft,
+                    style = LocalTextStyle.current.copy(
+                        fontSize = 11.sp,
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                    ),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
         IconButton(onClick = onPlay) {
             Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = RdioPalette.Accent)
