@@ -576,13 +576,7 @@ private fun ControlGrid(
     }
 }
 
-private fun parseIso(iso: String): Date? {
-    return runCatching {
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(iso)
-    }.getOrNull() ?: runCatching {
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).parse(iso)
-    }.getOrNull()
-}
+private fun parseIso(iso: String): Date? = solutions.saubeo.rdioscanner.util.parseIsoInstant(iso)
 
 private fun formatFrequency(f: Double?): String {
     if (f == null || f == 0.0) return "0"

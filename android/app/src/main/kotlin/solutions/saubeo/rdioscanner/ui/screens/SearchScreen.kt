@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, FlowPreview::class)
 
 package solutions.saubeo.rdioscanner.ui.screens
 
@@ -65,6 +65,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
 import solutions.saubeo.rdioscanner.data.protocol.SearchOptions
 import solutions.saubeo.rdioscanner.data.protocol.SearchResultCall
 import solutions.saubeo.rdioscanner.data.protocol.SearchResults
@@ -117,7 +119,7 @@ fun SearchScreen(
     var filters by remember { mutableStateOf(SearchFilters()) }
     var offset by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(filters, offset) {
+    fun runCurrentSearch() {
         vm.runSearch(
             SearchOptions(
                 limit = PAGE_SIZE,
@@ -130,6 +132,20 @@ fun SearchScreen(
                 date = filters.date?.let { formatRfc3339(it) },
             )
         )
+    }
+
+    LaunchedEffect(filters, offset) { runCurrentSearch() }
+
+    // Live refresh: re-run the current search whenever new calls land
+    // on the feed, debounced ~2.5s so a noisy burst of CALs costs one
+    // extra LCL roundtrip instead of one per call. Disabled while the
+    // user has paginated past the first page so they're not yanked
+    // back to fresh-but-different rows mid-scroll.
+    LaunchedEffect(filters, offset) {
+        if (offset != 0) return@LaunchedEffect
+        vm.liveCallTick
+            .debounce(2500)
+            .collect { runCurrentSearch() }
     }
 
     LaunchedEffect(Unit) {
@@ -651,11 +667,7 @@ private fun ResultRow(
 private fun talkgroupDisplay(tg: solutions.saubeo.rdioscanner.data.protocol.TalkgroupDto): String =
     tg.name.ifBlank { null } ?: tg.label.ifBlank { null } ?: "TG ${tg.id}"
 
-private fun parseIso(iso: String): Date? = runCatching {
-    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(iso)
-}.getOrNull() ?: runCatching {
-    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).parse(iso)
-}.getOrNull()
+private fun parseIso(iso: String): Date? = solutions.saubeo.rdioscanner.util.parseIsoInstant(iso)
 
 private fun parseAndFormat(iso: String): String {
     val parsed = parseIso(iso) ?: return iso

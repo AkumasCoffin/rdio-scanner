@@ -56,6 +56,14 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     /** Ask the server for a transcript by call id (no-op if id <= 0). */
     fun requestTranscript(id: Long) = repo.requestTranscript(id)
 
+    /**
+     * Tick stream the Search screen subscribes to so its result list
+     * refreshes on every incoming live call. The screen debounces it
+     * before re-issuing the search request, so a burst of CALs costs
+     * one extra LCL roundtrip, not one per call.
+     */
+    val liveCallTick = repo.liveCallTick
+
     val selection: StateFlow<Map<Int, Map<Int, Boolean>>> =
         rdioApp.settings.selection.stateIn(
             viewModelScope, SharingStarted.Eagerly, emptyMap()

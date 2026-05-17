@@ -58,6 +58,14 @@ class RdioRepository(
     val downloadedCalls: Flow<CallDto> =
         client.calls.filter { (_, flag) -> flag == FLAG_DOWNLOAD }.map { it.first }
 
+    /**
+     * Tick flow that emits Unit on every call ingested via the live feed.
+     * SearchScreen subscribes (with debounce) so its result list refreshes
+     * as new calls land — otherwise it'd freeze at whatever the last
+     * explicit search returned until the user changed a filter.
+     */
+    val liveCallTick: Flow<Unit> = client.calls.map { Unit }
+
     private val _held = MutableStateFlow<HoldState>(HoldState.None)
     val held: StateFlow<HoldState> = _held.asStateFlow()
 
