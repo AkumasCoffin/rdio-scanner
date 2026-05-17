@@ -193,6 +193,17 @@ class CallPlayer(private val context: Context) {
         mediaIdToQueued.clear()
     }
 
+    /**
+     * Drops the played-history ring. Distinct from [stopAndClear] because
+     * toggling livefeed off is supposed to preserve history (the user may
+     * still want to see what just played), but a profile switch is supposed
+     * to wipe it — system / talkgroup ids only mean anything for the server
+     * the calls came from.
+     */
+    fun clearHistory() {
+        _history.value = emptyList()
+    }
+
     fun release() {
         player.removeListener(playerListener)
         player.release()

@@ -116,9 +116,14 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
             // UI in an inconsistent state and the audio player still trying
             // to decode the previous server's call.
             player.stopAndClear()
+            player.clearHistory()
             repo.releaseHold()
             repo.setPaused(false)
             repo.clearAvoids()
+            // Drop cached transcripts so a row from the new server can't
+            // accidentally pick up the old server's text under a colliding
+            // call id.
+            repo.clearTranscripts()
             Log.d(TAG, "connectProfile: state cleared, handing off to repo.connectProfile")
             repo.connectProfile(profile)
             Log.d(TAG, "connectProfile: repo.connectProfile returned, state=${state.value}")

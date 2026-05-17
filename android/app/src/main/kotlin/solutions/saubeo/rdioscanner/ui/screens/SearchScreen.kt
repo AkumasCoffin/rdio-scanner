@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DatePicker
@@ -110,6 +111,8 @@ fun SearchScreen(
     val searching by vm.searching.collectAsState()
     val results = resultsOrNull ?: SearchResults()
     val transcripts by vm.transcripts.collectAsStateWithLifecycle()
+    val playing by vm.playing.collectAsStateWithLifecycle()
+    val isPlaying by vm.isPlaying.collectAsStateWithLifecycle()
 
     var filters by remember { mutableStateOf(SearchFilters()) }
     var offset by remember { mutableIntStateOf(0) }
@@ -264,12 +267,16 @@ fun SearchScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     items(results.results, key = { it.id }) { call ->
+                        val isThisPlaying = playing?.call?.id == call.id && isPlaying
                         ResultRow(
                             call = call,
                             systems = systems,
                             transcript = transcripts[call.id],
+                            isPlaying = isThisPlaying,
                             onRequestTranscript = { vm.requestTranscript(call.id) },
-                            onPlay = { vm.playSearchResult(call.id) },
+                            onPlay = {
+                                if (isThisPlaying) vm.stopAudio() else vm.playSearchResult(call.id)
+                            },
                             onDownload = { vm.downloadSearchResult(call.id) },
                         )
                     }
@@ -542,6 +549,7 @@ private fun ResultRow(
     call: SearchResultCall,
     systems: List<SystemDto>,
     transcript: String?,
+    isPlaying: Boolean,
     onRequestTranscript: () -> Unit,
     onPlay: () -> Unit,
     onDownload: () -> Unit,
@@ -562,12 +570,19 @@ private fun ResultRow(
             onRequestTranscript()
         }
     }
+    // Active-row affordance: accent-tinted background + thicker accent
+    // border so the currently-playing call is unmistakable while
+    // scrolling search results.
+    val rowBackground = if (isPlaying) RdioPalette.Accent.copy(alpha = 0.10f)
+        else RdioPalette.BgElevatedSoft
+    val rowBorderColor = if (isPlaying) RdioPalette.Accent else RdioPalette.BorderSubtle
+    val rowBorderWidth = if (isPlaying) 1.5.dp else 1.dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(RdioPalette.BgElevatedSoft, RoundedCornerShape(10.dp))
-            .border(1.dp, RdioPalette.BorderSubtle, RoundedCornerShape(10.dp))
+            .background(rowBackground, RoundedCornerShape(10.dp))
+            .border(rowBorderWidth, rowBorderColor, RoundedCornerShape(10.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.Top,
     ) {
@@ -617,7 +632,11 @@ private fun ResultRow(
             }
         }
         IconButton(onClick = onPlay) {
-            Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = RdioPalette.Accent)
+            if (isPlaying) {
+                Icon(Icons.Default.Stop, contentDescription = "Stop", tint = RdioPalette.Accent)
+            } else {
+                Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = RdioPalette.Accent)
+            }
         }
         IconButton(onClick = onDownload) {
             Icon(Icons.Default.Download, contentDescription = "Download", tint = RdioPalette.TextMain)

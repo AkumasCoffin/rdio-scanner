@@ -141,6 +141,15 @@ class RdioRepository(
         client.requestTranscript(callId)
     }
 
+    /**
+     * Wipe the in-memory transcript cache. Called on profile switch so
+     * a row from profile-B with a coincidentally-matching call id can't
+     * surface profile-A's transcript text.
+     */
+    fun clearTranscripts() {
+        _transcripts.value = emptyMap()
+    }
+
     private fun buildFullLivefeedMap(
         cfg: ConfigDto,
         selection: Map<Int, Map<Int, Boolean>>,
