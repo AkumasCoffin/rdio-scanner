@@ -119,6 +119,20 @@ class SettingsStore(private val context: Context) {
         }
     }
 
+    /**
+     * Wipe the saved selection AND the init flag so the first incoming
+     * CFG for a freshly-connected profile re-initializes every talkgroup
+     * to ON. Called from the profile-switch path so a new server's
+     * talkgroups don't inherit on/off state set against the previous
+     * server's catalog.
+     */
+    suspend fun resetSelection() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(keySelection)
+            prefs.remove(keySelectionInit)
+        }
+    }
+
     suspend fun savePresets(list: List<PresetDto>) {
         val encoded = json.encodeToString(PresetBundle.serializer(), PresetBundle(presets = list))
         context.dataStore.edit { prefs -> prefs[keyPresets] = encoded }

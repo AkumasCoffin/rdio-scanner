@@ -124,6 +124,11 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
             // accidentally pick up the old server's text under a colliding
             // call id.
             repo.clearTranscripts()
+            // Wipe the saved talkgroup selection + init flag so the new
+            // profile's first CFG re-seeds every talkgroup to ON. Without
+            // this, on/off toggles from the previous server would leak
+            // into the new catalog by id.
+            rdioApp.settings.resetSelection()
             Log.d(TAG, "connectProfile: state cleared, handing off to repo.connectProfile")
             repo.connectProfile(profile)
             Log.d(TAG, "connectProfile: repo.connectProfile returned, state=${state.value}")
