@@ -61,12 +61,25 @@ class AudioService : MediaSessionService() {
                 if (!repo.livefeedEnabled.value) return@onEach
             }
             val labels = resolveLabels(repo.config.value, call)
-            callPlayer.enqueue(
-                call = call,
-                systemLabel = labels.systemLabel,
-                talkgroupLabel = labels.talkgroupLabel,
-                talkgroupName = labels.talkgroupName,
-            )
+            if (userRequested) {
+                // Switch-now semantics: insert right after the current
+                // item and seek to it, so tapping play on a different
+                // search row interrupts the currently-playing call
+                // instead of queueing the new one behind it.
+                callPlayer.playNow(
+                    call = call,
+                    systemLabel = labels.systemLabel,
+                    talkgroupLabel = labels.talkgroupLabel,
+                    talkgroupName = labels.talkgroupName,
+                )
+            } else {
+                callPlayer.enqueue(
+                    call = call,
+                    systemLabel = labels.systemLabel,
+                    talkgroupLabel = labels.talkgroupLabel,
+                    talkgroupName = labels.talkgroupName,
+                )
+            }
         }.launchIn(scope)
     }
 

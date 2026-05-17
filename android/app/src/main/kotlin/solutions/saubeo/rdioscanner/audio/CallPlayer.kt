@@ -140,26 +140,41 @@ class CallPlayer(private val context: Context) {
      * supplied one immediately (or queues at the head if nothing is playing).
      */
     fun replay(queued: QueuedCall) {
-        val call = queued.call
+        playNow(
+            call = queued.call,
+            systemLabel = queued.systemLabel,
+            talkgroupLabel = queued.talkgroupLabel,
+            talkgroupName = queued.talkgroupName,
+        )
+    }
+
+    /**
+     * Inserts [call] immediately after the currently-playing item and
+     * seeks playback to it, so a user-initiated play interrupts whatever's
+     * already going. Used by the Search-screen play button and the LCD's
+     * Replay action — both need switch-now semantics rather than the
+     * append-and-wait-for-current-to-end behavior of [enqueue].
+     */
+    fun playNow(
+        call: CallDto,
+        systemLabel: String?,
+        talkgroupLabel: String?,
+        talkgroupName: String? = null,
+    ) {
         if (call.audio.isEmpty()) return
         val ext = call.audioName?.substringAfterLast('.', "m4a")?.takeIf { it.isNotBlank() } ?: "m4a"
         val file = File(cacheDir, "${UUID.randomUUID()}.$ext")
         file.writeBytes(call.audio)
         val mediaId = file.nameWithoutExtension
         mediaIdToQueued[mediaId] = QueuedCall(
-            call, file, queued.systemLabel, queued.talkgroupLabel, queued.talkgroupName,
+            call, file, systemLabel, talkgroupLabel, talkgroupName,
         )
 
         val item = MediaItem.Builder()
             .setMediaId(mediaId)
             .setUri(Uri.fromFile(file))
             .setMediaMetadata(
-                buildCallMetadata(
-                    call,
-                    queued.systemLabel,
-                    queued.talkgroupLabel,
-                    queued.talkgroupName,
-                )
+                buildCallMetadata(call, systemLabel, talkgroupLabel, talkgroupName)
             )
             .build()
 
