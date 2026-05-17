@@ -85,13 +85,12 @@ private const val PAGE_SIZE = 100
 private data class SearchFilters(
     val system: SystemDto? = null,
     val talkgroup: Int? = null,
-    val group: String? = null,
     val tag: String? = null,
     val date: Date? = null,
     val sortDescending: Boolean = true,
 ) {
     fun isActive(): Boolean = system != null || talkgroup != null ||
-        group != null || tag != null || date != null
+        tag != null || date != null
 }
 
 @Composable
@@ -102,8 +101,13 @@ fun SearchScreen(
     val context = LocalContext.current
     val config by vm.config.collectAsStateWithLifecycle()
     val systems = config?.systems.orEmpty()
-    val groups = remember(config) { config?.groups?.keys?.sorted().orEmpty() }
-    val tags = remember(config) { config?.tags?.keys?.sorted().orEmpty() }
+    // Tag dropdown follows the server's `tagsToggle` option (the same flag
+    // that decides whether the webapp shows tag categories in its
+    // selector). When it's off, the dropdown is hidden entirely.
+    val tagsEnabled = config?.tagsToggle == true
+    val tags = remember(config, tagsEnabled) {
+        if (tagsEnabled) config?.tags?.keys?.sorted().orEmpty() else emptyList()
+    }
 
     // Plain collectAsState (not lifecycle-gated): when the composable is first
     // created during a navigation animation, the StateFlow update can land in
@@ -127,7 +131,6 @@ fun SearchScreen(
                 sort = if (filters.sortDescending) -1 else 1,
                 system = filters.system?.id,
                 talkgroup = filters.talkgroup,
-                group = filters.group,
                 tag = filters.tag,
                 date = filters.date?.let { formatRfc3339(it) },
             )
@@ -199,7 +202,6 @@ fun SearchScreen(
         ) {
             FiltersPanel(
                 systems = systems,
-                groups = groups,
                 tags = tags,
                 filters = filters,
                 onChange = { f ->
@@ -306,7 +308,6 @@ fun SearchScreen(
 @Composable
 private fun FiltersPanel(
     systems: List<SystemDto>,
-    groups: List<String>,
     tags: List<String>,
     filters: SearchFilters,
     onChange: (SearchFilters) -> Unit,
@@ -364,22 +365,18 @@ private fun FiltersPanel(
                 enabled = filters.system != null && talkgroups.isNotEmpty(),
                 onSelect = { id -> onChange(filters.copy(talkgroup = id)) },
             )
-            EnumDropdown(
-                label = filters.group ?: "All groups",
-                options = listOf<String?>(null) + groups,
-                renderOption = { it ?: "All groups" },
-                selected = filters.group,
-                enabled = groups.isNotEmpty(),
-                onSelect = { onChange(filters.copy(group = it)) },
-            )
-            EnumDropdown(
-                label = filters.tag ?: "All tags",
-                options = listOf<String?>(null) + tags,
-                renderOption = { it ?: "All tags" },
-                selected = filters.tag,
-                enabled = tags.isNotEmpty(),
-                onSelect = { onChange(filters.copy(tag = it)) },
-            )
+            // Tag dropdown only shows when the server's `tagsToggle` option
+            // is on — same rule the webapp's selector follows. When it's
+            // off, `tags` arrives empty and the dropdown stays hidden.
+            if (tags.isNotEmpty()) {
+                EnumDropdown(
+                    label = filters.tag ?: "All tags",
+                    options = listOf<String?>(null) + tags,
+                    renderOption = { it ?: "All tags" },
+                    selected = filters.tag,
+                    onSelect = { onChange(filters.copy(tag = it)) },
+                )
+            }
         }
     }
 }
