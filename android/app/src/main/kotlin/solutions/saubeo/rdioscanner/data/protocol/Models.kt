@@ -136,7 +136,12 @@ data class CallDto(
 data class SearchOptions(
     val limit: Int = 200,
     val offset: Int = 0,
-    val sort: Int = -1,
+    // NB: Wire.json has encodeDefaults=false. If `sort`'s default matches
+    // the value we want to send (-1 = newest first), kotlinx silently
+    // omits the field, the server type-switch falls through to the
+    // ascOrder branch, and we get oldest-first. Use 0 here as a sentinel
+    // so the screen's explicit -1 always survives serialization.
+    val sort: Int = 0,
     val system: Int? = null,
     val talkgroup: Int? = null,
     val group: String? = null,
