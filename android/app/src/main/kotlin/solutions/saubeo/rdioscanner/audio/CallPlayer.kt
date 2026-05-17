@@ -232,7 +232,7 @@ class CallPlayer(private val context: Context) {
     }
 
     companion object {
-        const val HISTORY_LIMIT = 5
+        const val HISTORY_LIMIT = 100
     }
 
     /**

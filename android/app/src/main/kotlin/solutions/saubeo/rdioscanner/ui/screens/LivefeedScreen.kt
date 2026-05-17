@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
@@ -356,49 +358,76 @@ private fun HistoryTable(
         }
         return
     }
-    history.forEach { item ->
-        val replaying = currentId != null && item.call.id == currentId
-        val rowBackground = if (replaying) Color(0x22F97316) else Color.Transparent
+    // Bounded LazyColumn so the history box never grows tall enough to
+    // push the control grid below the fold — the user scrolls within
+    // this box to reach older calls. heightIn(max) is required for
+    // LazyColumn nested inside the outer screen's verticalScroll
+    // (Compose would otherwise complain about infinity height
+    // constraints). ~5 rows visible without their transcript snippets;
+    // fewer when snippets push row heights up.
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 220.dp),
+    ) {
+        items(history, key = { it.call.id }) { item ->
+            HistoryRow(
+                item = item,
+                timeFmt = timeFmt,
+                replaying = currentId != null && item.call.id == currentId,
+                transcripts = transcripts,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HistoryRow(
+    item: QueuedCall,
+    timeFmt: SimpleDateFormat,
+    replaying: Boolean,
+    transcripts: Map<Long, String>,
+) {
+    val rowBackground = if (replaying) Color(0x22F97316) else Color.Transparent
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(22.dp)
+            .background(rowBackground),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val ts = parseIso(item.call.dateTime)?.let(timeFmt::format).orEmpty()
+        HistoryCell(ts, weight = 0.16f, highlight = replaying)
+        HistoryCell(item.systemLabel ?: "${item.call.system}", weight = 0.22f, highlight = replaying)
+        HistoryCell(item.talkgroupLabel ?: "${item.call.talkgroup}", weight = 0.20f, highlight = replaying)
+        HistoryCell(
+            item.talkgroupName?.ifBlank { null }
+                ?: item.call.frequency?.let { formatFrequency(it) }
+                ?: "",
+            weight = 0.42f,
+            highlight = replaying,
+        )
+    }
+    val historyTranscript = transcripts[item.call.id]?.takeIf { it.isNotBlank() }
+        ?: item.call.transcript
+    historyTranscript?.trim()?.takeIf { it.isNotBlank() }?.let { snippet ->
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(22.dp)
-                .background(rowBackground),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .background(rowBackground)
+                .padding(start = 6.dp, end = 6.dp, bottom = 2.dp),
         ) {
-            val ts = parseIso(item.call.dateTime)?.let(timeFmt::format).orEmpty()
-            HistoryCell(ts, weight = 0.16f, highlight = replaying)
-            HistoryCell(item.systemLabel ?: "${item.call.system}", weight = 0.22f, highlight = replaying)
-            HistoryCell(item.talkgroupLabel ?: "${item.call.talkgroup}", weight = 0.20f, highlight = replaying)
-            HistoryCell(
-                item.talkgroupName?.ifBlank { null }
-                    ?: item.call.frequency?.let { formatFrequency(it) }
-                    ?: "",
-                weight = 0.42f,
-                highlight = replaying,
+            Text(
+                text = snippet,
+                color = if (replaying) RdioPalette.Accent.copy(alpha = 0.85f) else RdioPalette.TextMuted,
+                maxLines = 2,
+                style = TextStyle(
+                    fontSize = 10.5.sp,
+                    lineHeight = 13.sp,
+                    fontWeight = FontWeight.Normal,
+                ),
             )
-        }
-        val historyTranscript = transcripts[item.call.id]?.takeIf { it.isNotBlank() }
-            ?: item.call.transcript
-        historyTranscript?.trim()?.takeIf { it.isNotBlank() }?.let { snippet ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(rowBackground)
-                    .padding(start = 6.dp, end = 6.dp, bottom = 2.dp),
-            ) {
-                Text(
-                    text = snippet,
-                    color = if (replaying) RdioPalette.Accent.copy(alpha = 0.85f) else RdioPalette.TextMuted,
-                    maxLines = 2,
-                    style = TextStyle(
-                        fontSize = 10.5.sp,
-                        lineHeight = 13.sp,
-                        fontWeight = FontWeight.Normal,
-                    ),
-                )
-            }
         }
     }
 }
