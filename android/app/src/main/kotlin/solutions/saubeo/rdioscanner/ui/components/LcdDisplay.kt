@@ -181,12 +181,13 @@ fun LcdText(
     muted: Boolean = false,
     weight: FontWeight = FontWeight.Normal,
     color: Color? = null,
+    overflow: TextOverflow = TextOverflow.Ellipsis,
 ) {
     Text(
         text,
         color = color ?: if (muted) RdioPalette.TextMuted else RdioPalette.TextMain,
         maxLines = 1,
-        overflow = TextOverflow.Clip,
+        overflow = overflow,
         style = TextStyle(
             fontSize = size.sp,
             lineHeight = (size + 6f).sp,

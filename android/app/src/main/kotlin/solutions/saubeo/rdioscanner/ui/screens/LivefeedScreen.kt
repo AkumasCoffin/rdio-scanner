@@ -341,10 +341,13 @@ private fun HistoryTable(
         Modifier.fillMaxWidth().padding(top = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        LcdHeader("Time", weight = 0.18f)
-        LcdHeader("System", weight = 0.28f)
-        LcdHeader("Talkgroup", weight = 0.22f)
-        LcdHeader("Name", weight = 0.32f)
+        // Name column gets the biggest share — talkgroup-name strings
+        // ("South Eastern Zone | Rescue") are typically 2–4× longer than
+        // the abbreviated System / Talkgroup labels.
+        LcdHeader("Time", weight = 0.16f)
+        LcdHeader("System", weight = 0.22f)
+        LcdHeader("Talkgroup", weight = 0.20f)
+        LcdHeader("Name", weight = 0.42f)
     }
     Spacer(Modifier.height(2.dp))
     if (history.isEmpty()) {
@@ -365,14 +368,14 @@ private fun HistoryTable(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val ts = parseIso(item.call.dateTime)?.let(timeFmt::format).orEmpty()
-            HistoryCell(ts, weight = 0.18f, highlight = replaying)
-            HistoryCell(item.systemLabel ?: "${item.call.system}", weight = 0.28f, highlight = replaying)
-            HistoryCell(item.talkgroupLabel ?: "${item.call.talkgroup}", weight = 0.22f, highlight = replaying)
+            HistoryCell(ts, weight = 0.16f, highlight = replaying)
+            HistoryCell(item.systemLabel ?: "${item.call.system}", weight = 0.22f, highlight = replaying)
+            HistoryCell(item.talkgroupLabel ?: "${item.call.talkgroup}", weight = 0.20f, highlight = replaying)
             HistoryCell(
                 item.talkgroupName?.ifBlank { null }
                     ?: item.call.frequency?.let { formatFrequency(it) }
                     ?: "",
-                weight = 0.32f,
+                weight = 0.42f,
                 highlight = replaying,
             )
         }
