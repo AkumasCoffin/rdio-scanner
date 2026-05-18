@@ -17,7 +17,7 @@
  * ****************************************************************************
  */
 
-import { Component, OnDestroy } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
 import {
     RdioScannerAvoidOptions,
@@ -40,7 +40,7 @@ import { PresetDialogData, RdioScannerPresetDialogComponent } from './preset-dia
     ],
     templateUrl: './select.component.html',
 })
-export class RdioScannerSelectComponent implements OnDestroy {
+export class RdioScannerSelectComponent implements OnDestroy, OnInit {
     categories: RdioScannerCategory[] | undefined;
 
     map: RdioScannerLivefeedMap = {};
@@ -82,6 +82,27 @@ export class RdioScannerSelectComponent implements OnDestroy {
 
     ngOnDestroy(): void {
         this.eventSubscription.unsubscribe();
+    }
+
+    ngOnInit(): void {
+        // Seed from the service's tracked state in case CFG / categories /
+        // map events landed before this component subscribed (early-WS
+        // race; see rdio-scanner.service.ts `isLinked` getter for the
+        // original NO-LINK fix this mirrors).
+        const cfg = this.rdioScannerService.getConfig();
+        if (cfg) {
+            this.tagsToggle = cfg.tagsToggle;
+            this.systems = cfg.systems;
+        }
+        const cats = this.rdioScannerService.getCategories();
+        if (cats && !this.categories) {
+            this.categories = cats;
+        }
+        const map = this.rdioScannerService.getLivefeedMap();
+        if (map && Object.keys(this.map).length === 0) {
+            this.map = map;
+            this.loadPresets();
+        }
     }
 
     toggle(category: RdioScannerCategory): void {

@@ -268,33 +268,36 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         // start hour (truncated to the hour in UTC).
         if (!this.stats?.hourBuckets) return;
 
-        // Build a quick lookup: UTC hour start (ms) -> count.
-        const byHourMs = new Map<number, number>();
+        // Pre-parse buckets to {ms, count}. We sum any UTC-hour bucket whose
+        // start instant falls within each local hour's [start, start+1h)
+        // window — point-matching a derived UTC-hour key breaks for
+        // half-hour-offset zones (IST, NST, Nepal, parts of AU) where a
+        // local hour boundary lands at :30 UTC.
+        const buckets: { ms: number; count: number }[] = [];
         for (const b of this.stats.hourBuckets) {
             const t = new Date(b.startUtc);
-            if (!isNaN(t.getTime())) byHourMs.set(t.getTime(), b.count);
+            if (!isNaN(t.getTime())) buckets.push({ ms: t.getTime(), count: b.count });
         }
 
         const now = new Date();
-        // Truncate `now` to the current local hour, then express as UTC
-        // hour start for the lookup.
+        // Truncate `now` to the current local hour.
         const currentLocalHour = new Date(
             now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(),
         );
 
+        const HOUR_MS = 3600000;
         const labels: string[] = [];
         const data: number[] = [];
         for (let i = 23; i >= 0; i--) {
             const slot = new Date(currentLocalHour);
             slot.setHours(slot.getHours() - i);
-            // Server bucket start is also a calendar hour, so this Date's
-            // .getTime() corresponds to the same UTC instant as a bucket
-            // whose startUtc is the matching hour boundary.
-            const utcHourStart = new Date(slot.getTime());
-            // Round to the hour in UTC just to be safe across DST edges.
-            utcHourStart.setUTCMinutes(0, 0, 0);
+            const slotMs = slot.getTime();
+            let count = 0;
+            for (const b of buckets) {
+                if (b.ms >= slotMs && b.ms < slotMs + HOUR_MS) count += b.count;
+            }
             labels.push(`${slot.getHours().toString().padStart(2, '0')}:00`);
-            data.push(byHourMs.get(utcHourStart.getTime()) || 0);
+            data.push(count);
         }
 
         this.recentChartData = {

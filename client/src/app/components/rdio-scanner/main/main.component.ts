@@ -267,6 +267,8 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     ngOnDestroy(): void {
         this.clockTimer?.unsubscribe();
         this.transcriptPollTimer?.unsubscribe();
+        this.dimmerTimer?.unsubscribe();
+        this.replayTimer?.unsubscribe();
 
         this.eventSubscription.unsubscribe();
     }
@@ -282,6 +284,22 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         // LCD would otherwise stay stuck on "NO LINK" until the next
         // reconnect. See rdio-scanner.service.ts `isLinked` getter.
         this.linked = this.rdioScannerService.isLinked;
+        // Seed config + map from the service's tracked state for the same
+        // late-subscribe reason: CFG/map events may already have fired into
+        // the void by the time this component subscribes.
+        if (!this.config) {
+            const cfg = this.rdioScannerService.getConfig();
+            if (cfg) {
+                this.config = cfg;
+                this.branding = cfg.branding ?? '';
+                this.email = cfg.email ?? '';
+                this.timeFormat = cfg.time12hFormat ? 'h:mm a' : 'HH:mm';
+            }
+        }
+        if (Object.keys(this.map).length === 0) {
+            const map = this.rdioScannerService.getLivefeedMap();
+            if (map) this.map = map;
+        }
         // waitForTranscript is admin-controlled and arrives via the config
         // event — nothing to initialize from local state here.
 

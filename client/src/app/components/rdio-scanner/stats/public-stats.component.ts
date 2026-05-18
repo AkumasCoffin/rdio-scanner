@@ -323,12 +323,15 @@ export class RdioScannerPublicStatsComponent implements OnInit {
     private buildRecentChart(): void {
         if (!this.stats?.hourBuckets) return;
 
-        // Map UTC hour-start ms to count for O(1) lookup as we walk
-        // the last 24 local hours.
-        const byHourMs = new Map<number, number>();
+        // Pre-parse buckets to {ms, count}. We sum any UTC-hour bucket whose
+        // start instant falls within each local hour's [start, start+1h)
+        // window — point-matching a derived UTC-hour key breaks for
+        // half-hour-offset zones (IST, NST, Nepal, parts of AU) where a
+        // local hour boundary lands at :30 UTC.
+        const buckets: { ms: number; count: number }[] = [];
         for (const b of this.stats.hourBuckets) {
             const t = new Date(b.startUtc);
-            if (!isNaN(t.getTime())) byHourMs.set(t.getTime(), b.count);
+            if (!isNaN(t.getTime())) buckets.push({ ms: t.getTime(), count: b.count });
         }
 
         const now = new Date();
@@ -336,15 +339,19 @@ export class RdioScannerPublicStatsComponent implements OnInit {
             now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(),
         );
 
+        const HOUR_MS = 3600000;
         const labels: string[] = [];
         const data: number[] = [];
         for (let i = 23; i >= 0; i--) {
             const slot = new Date(currentLocalHour);
             slot.setHours(slot.getHours() - i);
-            const utcHourStart = new Date(slot.getTime());
-            utcHourStart.setUTCMinutes(0, 0, 0);
+            const slotMs = slot.getTime();
+            let count = 0;
+            for (const b of buckets) {
+                if (b.ms >= slotMs && b.ms < slotMs + HOUR_MS) count += b.count;
+            }
             labels.push(`${slot.getHours().toString().padStart(2, '0')}:00`);
-            data.push(byHourMs.get(utcHourStart.getTime()) || 0);
+            data.push(count);
         }
 
         this.recentChartData = {

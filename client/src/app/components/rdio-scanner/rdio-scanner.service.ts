@@ -99,6 +99,26 @@ export class RdioScannerService implements OnDestroy {
         return this.linkedState;
     }
 
+    // Same pattern as linkedState/isLinked above, applied to the three
+    // pieces of state that arrive via the CFG/categories/map event
+    // emissions. Late-mounted panels (search, select, stats) can seed
+    // their local copy via these getters in ngOnInit and avoid an empty
+    // initial render if the events fired before they subscribed.
+    private configState: RdioScannerConfig | undefined;
+    getConfig(): RdioScannerConfig | undefined {
+        return this.configState;
+    }
+
+    private categoriesState: RdioScannerCategory[] | undefined;
+    getCategories(): RdioScannerCategory[] | undefined {
+        return this.categoriesState;
+    }
+
+    private livefeedMapState: RdioScannerLivefeedMap | undefined;
+    getLivefeedMap(): RdioScannerLivefeedMap | undefined {
+        return this.livefeedMapState;
+    }
+
     // When true, live-feed calls without a transcript are held OUT of the
     // playback queue entirely until their transcript arrives (or a timeout
     // releases them so nothing is lost). Admin-controlled — flows in via
@@ -873,6 +893,14 @@ export class RdioScannerService implements OnDestroy {
             // Live feed was turned off while we were holding — silently drop.
             return;
         }
+        // Re-check the livefeedMap: the talkgroup may have been avoided or
+        // a category toggled off while the transcript was pending. The
+        // livefeedMode check alone misses these cases.
+        if (this.livefeedMap[call.system]?.[call.talkgroup]?.active === false) {
+            console.debug('enqueuePending: dropping held call; talkgroup no longer active',
+                { id: call.id, system: call.system, talkgroup: call.talkgroup });
+            return;
+        }
         if (priority) {
             this.callQueue.unshift(call);
         } else {
@@ -1206,6 +1234,18 @@ export class RdioScannerService implements OnDestroy {
 
         this.callQueue = this.callQueue.filter((call: RdioScannerCall) => isActive(call));
 
+        // Also drop any pending-transcript holds whose talkgroup is no
+        // longer active. Their timers would otherwise keep polling for up
+        // to 30s and then enqueue the call into a queue that no longer
+        // wants it.
+        for (const [id, entry] of this.pendingTranscriptCalls.entries()) {
+            if (!isActive(entry.call)) {
+                clearInterval(entry.fetchTimer);
+                clearTimeout(entry.timeoutTimer);
+                this.pendingTranscriptCalls.delete(id);
+            }
+        }
+
         if (this.call && !isActive(this.call)) {
             this.skip();
         }
@@ -1424,6 +1464,11 @@ export class RdioScannerService implements OnDestroy {
                         this.startLivefeed();
                     }
 
+                    // Snapshot state for late subscribers before emitting.
+                    this.configState = this.config;
+                    this.categoriesState = this.categories;
+                    this.livefeedMapState = this.livefeedMap;
+
                     this.event.emit({
                         auth: false,
                         categories: this.categories,
@@ -1522,6 +1567,7 @@ export class RdioScannerService implements OnDestroy {
                         }
 
                         if (this.config.branding || this.config.email) {
+                            this.configState = this.config;
                             this.event.emit({ config: this.config });
                         }
                     }
@@ -1657,6 +1703,9 @@ export class RdioScannerService implements OnDestroy {
         }
 
         this.categories.sort((a, b) => a.label.localeCompare(b.label));
+
+        // Keep the late-subscriber snapshot in sync.
+        this.categoriesState = this.categories;
     }
 
     private rebuildLivefeedMap(): void {
@@ -1683,6 +1732,11 @@ export class RdioScannerService implements OnDestroy {
         } else {
             this.livefeedMap = lfm;
         }
+
+        // Keep the late-subscriber snapshot in sync. Mirrors the active
+        // livefeedMap regardless of which "prior to hold" branch was taken
+        // so that getLivefeedMap() always returns the currently emitted map.
+        this.livefeedMapState = this.livefeedMap;
 
         this.saveLivefeedMap();
 

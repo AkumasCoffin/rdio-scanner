@@ -18,7 +18,7 @@
  */
 
 import { HttpClient, HttpHeaders } from '@angular/common/http';
-import { ChangeDetectorRef, Component, ElementRef, EventEmitter, OnDestroy, Output, ViewChild } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, EventEmitter, OnDestroy, OnInit, Output, ViewChild } from '@angular/core';
 import { FormBuilder } from '@angular/forms';
 import { MatPaginator } from '@angular/material/paginator';
 import { MatSnackBar } from '@angular/material/snack-bar';
@@ -42,7 +42,7 @@ const ADMIN_TOKEN_STORAGE_KEY = 'rdio-scanner-admin-token';
     styleUrls: ['./search.component.scss'],
     templateUrl: './search.component.html',
 })
-export class RdioScannerSearchComponent implements OnDestroy {
+export class RdioScannerSearchComponent implements OnDestroy, OnInit {
     call: RdioScannerCall | undefined;
     callPending: number | undefined;
 
@@ -356,6 +356,29 @@ export class RdioScannerSearchComponent implements OnDestroy {
 
     ngOnDestroy(): void {
         this.eventSubscription.unsubscribe();
+        if (this.qDebounce) clearTimeout(this.qDebounce);
+        if (this.highlightClearTimer) clearTimeout(this.highlightClearTimer);
+    }
+
+    ngOnInit(): void {
+        // Seed config from the service's tracked state in case the CFG
+        // event landed before this component subscribed (the index.html
+        // early-WS can finish handshaking before Angular bootstraps the
+        // search panel). Only seed if the event hasn't already populated.
+        if (!this.config) {
+            const cfg = this.rdioScannerService.getConfig();
+            if (cfg) {
+                this.config = cfg;
+                this.optionsGroup = Object.keys(cfg.groups || []).sort((a, b) => a.localeCompare(b));
+                this.optionsSystem = (cfg.systems || []).map((system) => system.label);
+                this.optionsTag = Object.keys(cfg.tags || []).sort((a, b) => a.localeCompare(b));
+                this.time12h = cfg.time12hFormat || false;
+                this.showRetranscribeButton = !!cfg.showRetranscribeButton;
+                if (!this.resultsPending && !this.playbackList) {
+                    this.searchCalls();
+                }
+            }
+        }
     }
 
     play(id: number): void {
