@@ -2,8 +2,12 @@ package solutions.saubeo.rdioscanner.ui
 
 import android.util.Log
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -31,11 +35,20 @@ fun RdioApp() {
     val navController = rememberNavController()
     val state by vm.state.collectAsStateWithLifecycle()
 
-    // Intentionally NOT calling vm.tryReconnect() here: cold starts should
-    // land on the Connect screen so the user picks which profile to use.
-    // If the process was still alive (warm return from background) the
-    // repository already holds a Connected state, and the LaunchedEffect
-    // below will put us straight on the Livefeed.
+    // Cold starts land on the Connect screen so the user can pick a profile.
+    // The ON_RESUME hook below only auto-retries once we've actually been
+    // Connected in this process — fixes the "stuck on connect page after
+    // returning from background" case where the socket died (Doze froze
+    // the backoff timer, or transient network loss) and the user would
+    // otherwise have to manually re-tap their profile.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) vm.onActivityResumed()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(state) {
         val route = navController.currentBackStackEntry?.destination?.route

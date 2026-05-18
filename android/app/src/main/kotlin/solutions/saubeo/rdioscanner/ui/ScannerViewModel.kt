@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import solutions.saubeo.rdioscanner.RdioApplication
@@ -89,11 +91,24 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     private val _accessCode = MutableStateFlow("")
     val accessCode: StateFlow<String> = _accessCode.asStateFlow()
 
+    /**
+     * Flips to true the first time this VM observes a [ConnectionState.Connected]
+     * value, and never resets except on an explicit [disconnect]. Drives the
+     * resume-time auto-retry: cold starts (flag still false) keep showing
+     * the Connect picker, but a warm return where the socket died in the
+     * background (flag true, state Disconnected/Error) re-fires the saved-
+     * credentials connect so the user doesn't have to re-tap their profile.
+     */
+    private var hadLiveSession = false
+
     init {
         viewModelScope.launch {
             _serverUrl.value = rdioApp.settings.serverUrl.first()
             _accessCode.value = rdioApp.settings.accessCode.first()
         }
+        state.onEach { s ->
+            if (s == ConnectionState.Connected) hadLiveSession = true
+        }.launchIn(viewModelScope)
     }
 
     fun onServerUrl(value: String) { _serverUrl.value = value }
@@ -109,7 +124,32 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { repo.connectWithSavedCredentials() }
     }
 
+    /**
+     * Called from the activity's ON_RESUME. Re-triggers a connect when we
+     * had a working session earlier in this process but the socket has
+     * since dropped — covers two real-world cases:
+     *   1) Doze froze the [RdioClient.scheduleReconnect] backoff so the
+     *      retry timer never fired, and we'd otherwise sit on [Error]
+     *      forever until the user taps a profile manually.
+     *   2) The Activity briefly went away (e.g. screen-off) without the
+     *      process being killed; state oscillated to Error mid-cycle.
+     * Cold starts (hadLiveSession == false) still land on the picker —
+     * intentional UX for multi-profile setups.
+     */
+    fun onActivityResumed() {
+        if (!hadLiveSession) return
+        val current = state.value
+        val needsRetry = current is ConnectionState.Error ||
+            current == ConnectionState.Disconnected
+        if (!needsRetry) return
+        viewModelScope.launch { repo.connectWithSavedCredentials() }
+    }
+
     fun disconnect() {
+        // Explicit user-initiated disconnect — clear the resume-time auto-
+        // retry intent so we don't immediately reconnect against the user's
+        // wishes when the activity next resumes.
+        hadLiveSession = false
         repo.disconnect()
         player.stopAndClear()
     }
