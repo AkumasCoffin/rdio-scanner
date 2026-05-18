@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
@@ -28,6 +29,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -365,10 +370,61 @@ private fun HistoryTable(
     // (Compose would otherwise complain about infinity height
     // constraints). ~5 rows visible without their transcript snippets;
     // fewer when snippets push row heights up.
+    val listState = rememberLazyListState()
+    val topId = history.firstOrNull()?.call?.id
+
+    // Stick to the top when a new call arrives, but only if the user
+    // hadn't scrolled away. Without this LazyColumn anchors to the
+    // previously-visible key, so a new call silently lands offscreen
+    // above the viewport and the user sees a stale top row.
+    LaunchedEffect(topId) {
+        if (topId != null &&
+            listState.firstVisibleItemIndex <= 1 &&
+            listState.firstVisibleItemScrollOffset < 64
+        ) {
+            listState.scrollToItem(0)
+        }
+    }
+
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = 220.dp),
+            .heightIn(max = 220.dp)
+            .drawWithContent {
+                drawContent()
+                // Custom scrollbar: only paint when content overflows.
+                // Thumb height ≈ viewport / content, position scales with
+                // first-visible item + offset.
+                val info = listState.layoutInfo
+                val totalItems = info.totalItemsCount
+                val visible = info.visibleItemsInfo
+                if (totalItems == 0 || visible.isEmpty()) return@drawWithContent
+                if (totalItems <= visible.size) return@drawWithContent
+                val avgItem = visible.sumOf { it.size }.toFloat() / visible.size
+                if (avgItem <= 0f) return@drawWithContent
+                val totalHeight = avgItem * totalItems
+                val viewport = size.height
+                if (totalHeight <= viewport) return@drawWithContent
+                val thumbH = (viewport * viewport / totalHeight).coerceAtLeast(24f)
+                val scrolled = listState.firstVisibleItemIndex * avgItem +
+                    listState.firstVisibleItemScrollOffset
+                val progress = (scrolled / (totalHeight - viewport)).coerceIn(0f, 1f)
+                val thumbY = progress * (viewport - thumbH)
+                val trackWidth = 3f
+                drawRoundRect(
+                    color = Color(0x33FFFFFF),
+                    topLeft = Offset(size.width - trackWidth - 1f, 0f),
+                    size = Size(trackWidth, viewport),
+                    cornerRadius = CornerRadius(trackWidth / 2f, trackWidth / 2f),
+                )
+                drawRoundRect(
+                    color = Color(0xCCFCA5A5),
+                    topLeft = Offset(size.width - trackWidth - 1f, thumbY),
+                    size = Size(trackWidth, thumbH),
+                    cornerRadius = CornerRadius(trackWidth / 2f, trackWidth / 2f),
+                )
+            },
     ) {
         items(history, key = { it.call.id }) { item ->
             HistoryRow(
