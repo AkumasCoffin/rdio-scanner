@@ -52,6 +52,11 @@ type Transcriber struct {
 	keys       []*transcriptionKey
 	keysHash   string
 	nextKeyIdx int
+
+	// sem caps concurrent in-flight transcription requests so bursts don't
+	// pin 500 audio blobs in memory at once. Buffered to 8 — small enough
+	// to bound memory, large enough to keep the upstream pipeline busy.
+	sem chan struct{}
 }
 
 type transcriptionKey struct {
@@ -64,7 +69,10 @@ type transcriptionKey struct {
 }
 
 func NewTranscriber(controller *Controller) *Transcriber {
-	return &Transcriber{Controller: controller}
+	return &Transcriber{
+		Controller: controller,
+		sem:        make(chan struct{}, 8),
+	}
 }
 
 // refreshKeys parses the configured transcriptionApiKey value (which may hold
@@ -449,7 +457,13 @@ func (t *Transcriber) TranscribeCallAsync(id uint, call *Call) {
 		return
 	}
 
+	// Acquire a slot before launching the goroutine. Bursts block here
+	// instead of fanning out N goroutines each holding a 50-200 KB audio
+	// blob, capping memory at roughly cap(t.sem) * avg_blob.
+	t.sem <- struct{}{}
+
 	go func(id uint, call *Call) {
+		defer func() { <-t.sem }()
 		text, err := t.Transcribe(call)
 		if err != nil {
 			if errors.Is(err, errTranscriptionSkipped) {

@@ -239,7 +239,7 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 		}
 
 		if t, err := db.ParseDateTime(dateTime); err == nil {
-			item["dateTime"] = t.Format(time.RFC3339)
+			item["dateTime"] = t.UTC().Format(time.RFC3339)
 		}
 		item["id"] = id
 		item["system"] = system
@@ -325,7 +325,7 @@ func (p *PublicApi) getCall(w http.ResponseWriter, id uint, apikey *Apikey) {
 
 	out := map[string]any{
 		"id":        id,
-		"dateTime":  call.DateTime.Format(time.RFC3339),
+		"dateTime":  call.DateTime.UTC().Format(time.RFC3339),
 		"system":    call.System,
 		"talkgroup": call.Talkgroup,
 		"audioName": call.AudioName,

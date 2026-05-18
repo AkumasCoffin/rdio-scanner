@@ -173,7 +173,7 @@ func (downstream *Downstream) Send(call *Call) error {
 	}
 
 	if w, err := mw.CreateFormField("dateTime"); err == nil {
-		if _, err = w.Write([]byte(call.DateTime.Format(time.RFC3339))); err != nil {
+		if _, err = w.Write([]byte(call.DateTime.UTC().Format(time.RFC3339))); err != nil {
 			return formatError(err)
 		}
 	} else {

@@ -328,7 +328,7 @@ func ParseMultipartContent(call *Call, p *multipart.Part, b []byte) {
 
 	case "source":
 		if i, err := strconv.Atoi(string(b)); err == nil {
-			call.Source = int(i)
+			call.Source = uint(i)
 		}
 
 	case "sources":

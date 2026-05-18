@@ -151,8 +151,8 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 			stop = start.Add(time.Hour*24 - time.Millisecond)
 
 		} else {
-			start = time.Date(v.Year(), v.Month(), v.Day(), v.Hour(), v.Minute(), 0, 0, time.UTC).Add(time.Hour*-24 - time.Duration(v.Hour())).Add(time.Minute * time.Duration(-v.Minute()))
-			stop = start.Add(time.Hour*24 - time.Millisecond - time.Duration(v.Hour())).Add(time.Minute * time.Duration(-v.Minute()))
+			start = time.Date(v.Year(), v.Month(), v.Day(), v.Hour(), v.Minute(), 0, 0, time.UTC).Add(time.Hour*-24 - time.Hour*time.Duration(v.Hour())).Add(time.Minute * time.Duration(-v.Minute()))
+			stop = start.Add(time.Hour*24 - time.Millisecond - time.Hour*time.Duration(v.Hour())).Add(time.Minute * time.Duration(-v.Minute()))
 		}
 
 		where += fmt.Sprintf(" and (`dateTime` between '%v' and '%v')", start.Format(df), stop.Format(df))
@@ -179,7 +179,7 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 		logResults.DateStart = t
 	}
 
-	query = fmt.Sprintf("select `dateTime` from `rdioScannerLogs` where %v order by `dateTime` asc", where)
+	query = fmt.Sprintf("select `dateTime` from `rdioScannerLogs` where %v order by `dateTime` desc", where)
 	if err = db.QueryRow(query).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
@@ -194,9 +194,10 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 	}
 
 	query = fmt.Sprintf("select `_id`, `dateTime`, `level`, `message` from `rdioScannerLogs` where %v order by `dateTime` %v limit %v offset %v", where, order, limit, offset)
-	if rows, err = db.Query(query); err != nil && err != sql.ErrNoRows {
+	if rows, err = db.Query(query); err != nil {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
+	defer rows.Close()
 
 	for rows.Next() {
 		log := Log{}
@@ -217,8 +218,6 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 
 		logResults.Logs = append(logResults.Logs, log)
 	}
-
-	rows.Close()
 
 	if err != nil {
 		return nil, formatError(err)

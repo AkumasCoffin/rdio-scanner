@@ -95,7 +95,7 @@ func (call *Call) MarshalJSON() ([]byte, error) {
 		},
 		"audioName":   call.AudioName,
 		"audioType":   call.AudioType,
-		"dateTime":    call.DateTime.Format(time.RFC3339),
+		"dateTime":    call.DateTime.UTC().Format(time.RFC3339),
 		"frequencies": call.Frequencies,
 		"frequency":   call.Frequency,
 		"patches":     call.Patches,
@@ -162,6 +162,12 @@ func (calls *Calls) getSearchMeta(key string) (*callsSearchMeta, bool) {
 func (calls *Calls) putSearchMeta(key string, m *callsSearchMeta) {
 	calls.metaMutex.Lock()
 	defer calls.metaMutex.Unlock()
+	// Cap the cache: drop everything once it grows past the soft ceiling.
+	// The cache is purely a TTL-bounded perf optimization, so clearing on
+	// overflow only costs us one cold lookup per key.
+	if len(calls.metaCache) > 256 {
+		calls.metaCache = make(map[string]*callsSearchMeta)
+	}
 	calls.metaCache[key] = m
 }
 
@@ -173,7 +179,8 @@ func (calls *Calls) CheckDuplicate(call *Call, msTimeFrame uint, db *Database) b
 	from := call.DateTime.Add(-d)
 	to := call.DateTime.Add(d)
 
-	query := fmt.Sprintf("select count(*) from `rdioScannerCalls` where (`dateTime` between '%v' and '%v') and `system` = %v and `talkgroup` = %v", from, to, call.System, call.Talkgroup)
+	df := db.DateTimeFormat
+	query := fmt.Sprintf("select count(*) from `rdioScannerCalls` where (`dateTime` between '%v' and '%v') and `system` = %v and `talkgroup` = %v", from.Format(df), to.Format(df), call.System, call.Talkgroup)
 	if err := db.QueryRow(query).Scan(&count); err != nil {
 		return false
 	}
@@ -350,7 +357,7 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		switch v := searchOptions.Talkgroup.(type) {
 		case uint:
 			if searchOptions.searchPatchedTalkgroups {
-				a = append(a, fmt.Sprintf("`talkgroup` = %v or patches = '%v' or patches like '[%v,%%' or patches like '%%,%v,%%' or patches like '%%,%v]'", v, v, v, v, v))
+				a = append(a, fmt.Sprintf("`talkgroup` = %v or patches = '%v' or patches like '[%v]' or patches like '[%v,%%' or patches like '%%,%v,%%' or patches like '%%,%v]'", v, v, v, v, v, v))
 			} else {
 				a = append(a, fmt.Sprintf("`talkgroup` = %v", v))
 			}
@@ -428,7 +435,7 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 	}
 
 	switch v := searchOptions.Sort.(type) {
-	case int:
+	case float64:
 		if v < 0 {
 			order = descOrder
 		} else {
@@ -485,9 +492,10 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 	}
 
 	query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup`, `transcript` from `rdioScannerCalls` where %v order by `dateTime` %v limit %v offset %v", where, order, limit, offset)
-	if rows, err = db.Query(query); err != nil && err != sql.ErrNoRows {
+	if rows, err = db.Query(query); err != nil {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
+	defer rows.Close()
 
 	for rows.Next() {
 		searchResult := CallsSearchResult{}
@@ -514,8 +522,6 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 
 		searchResults.Results = append(searchResults.Results, searchResult)
 	}
-
-	rows.Close()
 
 	if err != nil {
 		return nil, formatError(err)
@@ -575,6 +581,7 @@ func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 		if err != nil {
 			return 0, formatError(err)
 		}
+		calls.InvalidateSearchMeta()
 		return uint(id), nil
 	}
 
@@ -583,6 +590,7 @@ func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 	}
 
 	if id, err = res.LastInsertId(); err == nil {
+		calls.InvalidateSearchMeta()
 		return uint(id), nil
 	} else {
 		return 0, formatError(err)
@@ -672,7 +680,7 @@ func (searchOptions *CallsSearchOptions) fromMap(m map[string]any) error {
 
 	switch v := m["sort"].(type) {
 	case float64:
-		searchOptions.Sort = int(v)
+		searchOptions.Sort = v
 	}
 
 	switch v := m["system"].(type) {

@@ -240,18 +240,21 @@ func (client *Client) SendListenersCount(count int) {
 
 type Clients struct {
 	Map   map[*Client]bool
-	mutex sync.Mutex
+	mutex sync.RWMutex
 }
 
 func NewClients() *Clients {
 	return &Clients{
 		Map:   map[*Client]bool{},
-		mutex: sync.Mutex{},
+		mutex: sync.RWMutex{},
 	}
 }
 
 func (clients *Clients) AccessCount(client *Client) int {
 	count := 0
+
+	clients.mutex.RLock()
+	defer clients.mutex.RUnlock()
 
 	for c := range clients.Map {
 		if c.Access == client.Access {
@@ -270,10 +273,16 @@ func (clients *Clients) Add(client *Client) {
 }
 
 func (clients *Clients) Count() int {
+	clients.mutex.RLock()
+	defer clients.mutex.RUnlock()
+
 	return len(clients.Map)
 }
 
 func (clients *Clients) EmitCall(call *Call, restricted bool) {
+	clients.mutex.RLock()
+	defer clients.mutex.RUnlock()
+
 	for c := range clients.Map {
 		if (!restricted || c.Access.HasAccess(call)) && c.Livefeed.IsEnabled(call) {
 			c.Send <- &Message{Command: MessageCommandCall, Payload: call}
@@ -282,6 +291,9 @@ func (clients *Clients) EmitCall(call *Call, restricted bool) {
 }
 
 func (clients *Clients) EmitConfig(groups *Groups, options *Options, systems *Systems, tags *Tags, restricted bool) {
+	clients.mutex.RLock()
+	defer clients.mutex.RUnlock()
+
 	count := len(clients.Map)
 
 	for c := range clients.Map {
@@ -309,6 +321,10 @@ func (clients *Clients) EmitTranscript(id uint, system uint, talkgroup uint, tra
 		"talkgroup":  talkgroup,
 		"transcript": transcript,
 	}
+
+	clients.mutex.RLock()
+	defer clients.mutex.RUnlock()
+
 	for c := range clients.Map {
 		if restricted && c.Access != nil && !c.Access.HasAccess(probe) {
 			continue
@@ -323,6 +339,9 @@ func (clients *Clients) EmitTranscript(id uint, system uint, talkgroup uint, tra
 }
 
 func (clients *Clients) EmitListenersCount() {
+	clients.mutex.RLock()
+	defer clients.mutex.RUnlock()
+
 	count := len(clients.Map)
 
 	for c := range clients.Map {
