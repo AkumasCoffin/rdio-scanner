@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## Version 6.9.2
+
+Android-only patch release covering two background-resume bugs reported after 6.9.1 shipped. Server and webapp are unchanged but get the version bump so the whole stack stays at a single number.
+
+### Android
+
+- **Reconnect on resume:** users would return to the app after a long background and find themselves stuck on the Connect screen with no automatic recovery. Two real-world failure modes both ended there — Doze froze `RdioClient.scheduleReconnect`'s `delay(30s)` backoff so the retry timer never fired, and an activity destroy during a mid-reconnect cycle pinned the visible state at the last `Error`. Now `MainActivity` hooks `Lifecycle.Event.ON_RESUME` and re-fires `connectWithSavedCredentials()` when state has dropped to `Disconnected`/`Error` but a session was established earlier in this process. Cold starts (no prior session) keep landing on the profile picker — intentional UX for multi-profile setups.
+- **System media notification:** lock-screen, notification-panel, Quick Settings tile, and Bluetooth-display surfaces were all blank even while audio was playing. `MediaSessionService` only calls `startForeground()` and posts its notification once a `MediaController` connects to the session; the UI was driving `CallPlayer.player` directly, so nothing ever bound and the service stayed a plain started service. `MainActivity` now builds a `MediaController` against `AudioService` in `onCreate` and releases it in `onDestroy` — UI commands keep going through `CallPlayer`, the controller exists only to wake the notification flow.
+- **Audio focus:** wired `AudioAttributes(USAGE_MEDIA, CONTENT_TYPE_SPEECH, handleAudioFocus = true)` on the `ExoPlayer`. The previous setup did neither ducking for nav prompts nor pausing for phone calls, and some OEM media surfaces wouldn't recognise the player as media playback worth surfacing.
+- **Diagnostic logging:** added warning-level logs at the four playback handoff points (`RdioClient.handle(Incoming.Call)` stale-generation drops and tryEmit failures, `AudioService.pipeJob` state-mismatch drops, `CallPlayer.enqueue/playNow` empty-audio drops, `Player.Listener.onPlayerError`) so future "calls aren't playing" reports can be triaged from a logcat without a code change. Drop logs at debug level for expected filter paths (hold / avoid / livefeed disabled).
+
 ## Version 6.9.1
 
 Android transcripts integration plus a 20-item audit pass across server, webapp, and Android. Android `versionName` is now synced with the webapp/server (`6.9.1`) so the whole stack tracks a single number.
