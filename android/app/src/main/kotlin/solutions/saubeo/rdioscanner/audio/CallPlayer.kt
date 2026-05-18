@@ -3,6 +3,8 @@ package solutions.saubeo.rdioscanner.audio
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -55,7 +57,6 @@ class CallPlayer(private val context: Context) {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            Log.d(TAG, "onIsPlayingChanged: $isPlaying")
             _isPlaying.value = isPlaying
         }
 
@@ -75,7 +76,6 @@ class CallPlayer(private val context: Context) {
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
-            Log.d(TAG, "onPlaybackStateChanged: ${stateName(playbackState)} (count=${player.mediaItemCount}, isPlaying=${player.isPlaying})")
             if (playbackState == Player.STATE_ENDED) {
                 _playing.value?.let { recordHistory(it) }
                 _playing.value = null
@@ -94,6 +94,18 @@ class CallPlayer(private val context: Context) {
 
     val player: ExoPlayer = ExoPlayer.Builder(context)
         .setHandleAudioBecomingNoisy(true)
+        // Without explicit attributes + handleAudioFocus, the player doesn't
+        // duck for nav prompts or pause for phone calls, and some OEM media
+        // surfaces won't recognise it as media-playback worth showing on
+        // lock screen / Bluetooth displays. SPEECH is the right content
+        // type for scanner traffic.
+        .setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                .build(),
+            /* handleAudioFocus = */ true,
+        )
         .build()
         .apply {
             playWhenReady = true
@@ -106,7 +118,6 @@ class CallPlayer(private val context: Context) {
         talkgroupLabel: String?,
         talkgroupName: String? = null,
     ) {
-        Log.d(TAG, "enqueue: id=${call.id} audio=${call.audio.size}b sys=$systemLabel tg=$talkgroupLabel")
         if (call.audio.isEmpty()) {
             Log.w(TAG, "enqueue: id=${call.id} audio bytes empty — skipping")
             return
@@ -169,7 +180,6 @@ class CallPlayer(private val context: Context) {
         talkgroupLabel: String?,
         talkgroupName: String? = null,
     ) {
-        Log.d(TAG, "playNow: id=${call.id} audio=${call.audio.size}b sys=$systemLabel tg=$talkgroupLabel")
         if (call.audio.isEmpty()) {
             Log.w(TAG, "playNow: id=${call.id} audio bytes empty — skipping")
             return
@@ -267,14 +277,6 @@ class CallPlayer(private val context: Context) {
     companion object {
         const val HISTORY_LIMIT = 100
         private const val TAG = "CallPlayer"
-
-        private fun stateName(s: Int): String = when (s) {
-            Player.STATE_IDLE -> "IDLE"
-            Player.STATE_BUFFERING -> "BUFFERING"
-            Player.STATE_READY -> "READY"
-            Player.STATE_ENDED -> "ENDED"
-            else -> "UNKNOWN($s)"
-        }
     }
 
     /**

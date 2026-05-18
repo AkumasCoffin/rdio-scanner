@@ -33,7 +33,6 @@ class AudioService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "onCreate: starting AudioService")
         val app = application as RdioApplication
         callPlayer = app.audio
         val launch = Intent(this, MainActivity::class.java).apply {
@@ -76,7 +75,6 @@ class AudioService : MediaSessionService() {
                 }
             }
             val labels = resolveLabels(repo.config.value, call)
-            Log.d(TAG, "pipeJob: accepting CAL id=${call.id} userRequested=$userRequested audio=${call.audio.size}b")
             if (userRequested) {
                 // Switch-now semantics: insert right after the current
                 // item and seek to it, so tapping play on a different
@@ -97,7 +95,6 @@ class AudioService : MediaSessionService() {
                 )
             }
         }.launchIn(scope)
-        Log.d(TAG, "onCreate: pipeJob subscribed to repo.playbackCalls")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

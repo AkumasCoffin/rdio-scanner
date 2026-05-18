@@ -322,23 +322,23 @@ class RdioClient(
             }
 
             is Incoming.Call -> {
-                Log.d(TAG, "handle: CAL id=${msg.payload.id} flag=${msg.flag} sys=${msg.payload.system} tg=${msg.payload.talkgroup} audio=${msg.payload.audio.size}b")
                 // Re-check generation inside the launch: if connect() bumped
                 // it (profile switch) between decode and dispatch, drop the
                 // emission so it can't leak into the new profile's subscribers.
                 scope.launch {
-                    if (gen == generation.get()) {
-                        val emitted = _calls.tryEmit(msg.payload to msg.flag)
-                        if (!emitted) {
-                            // Buffer overflow with no subscriber means the
-                            // AudioService pipeJob isn't attached — call goes
-                            // nowhere. Use emit() to suspend instead of
-                            // dropping silently.
-                            Log.w(TAG, "handle: CAL id=${msg.payload.id} tryEmit failed (no subscriber?), falling back to suspending emit")
-                            _calls.emit(msg.payload to msg.flag)
-                        }
-                    } else {
-                        Log.d(TAG, "handle: CAL id=${msg.payload.id} dropped — stale generation (gen=$gen, current=${generation.get()})")
+                    if (gen != generation.get()) {
+                        Log.w(TAG, "handle: CAL id=${msg.payload.id} dropped — stale generation (gen=$gen, current=${generation.get()})")
+                        return@launch
+                    }
+                    val emitted = _calls.tryEmit(msg.payload to msg.flag)
+                    if (!emitted) {
+                        // Buffer overflow with no subscriber means the
+                        // AudioService pipeJob isn't attached — call goes
+                        // nowhere. Use emit() to suspend instead of
+                        // dropping silently, and shout about it so QA logs
+                        // catch the "AudioService died" failure mode.
+                        Log.w(TAG, "handle: CAL id=${msg.payload.id} tryEmit failed (no subscriber?), falling back to suspending emit")
+                        _calls.emit(msg.payload to msg.flag)
                     }
                 }
             }
