@@ -199,11 +199,17 @@ class CallPlayer(private val context: Context) {
         // playWhenReady immediately so the output sink drops sample feeding.
         player.playWhenReady = false
         player.pause()
+        // clearMediaItems() synchronously fires onMediaItemTransition with a
+        // null item, so the listener drives _playing/_isPlaying down to a
+        // consistent state. Doing it before stop() also avoids a stray
+        // late onIsPlayingChanged(false) overwriting a fresh playNow that
+        // lands between stop() and the listener — which was making the
+        // Search row Play/Stop icon flicker on rapid stop-then-play. The
+        // listener is the single writer for these flows; do not poke them
+        // from here.
         player.clearMediaItems()
         player.stop()
         _queue.value = emptyList()
-        _playing.value = null
-        _isPlaying.value = false
         mediaIdToQueued.values.forEach { it.file.delete() }
         mediaIdToQueued.clear()
     }

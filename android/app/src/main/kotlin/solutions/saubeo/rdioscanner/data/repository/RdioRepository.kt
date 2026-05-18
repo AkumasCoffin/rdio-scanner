@@ -158,6 +158,13 @@ class RdioRepository(
         _transcripts.value = emptyMap()
     }
 
+    /**
+     * Drop any cached search payload held by the client. Used during the
+     * profile-switch reset so the Search screen doesn't momentarily render
+     * profile-A's results against profile-B's config.
+     */
+    fun clearSearchResults() = client.clearSearchResults()
+
     private fun buildFullLivefeedMap(
         cfg: ConfigDto,
         selection: Map<Int, Map<Int, Boolean>>,
@@ -197,6 +204,11 @@ class RdioRepository(
             accessCode = profile.accessCode.trim(),
             profileId = profile.id,
         )
+        // Reset livefeed-on as part of the per-session state so a profile
+        // switch can't inherit profile-A's "off" toggle — otherwise
+        // AudioService would silently drop every incoming call on the new
+        // profile while the LIVE FEED button flips active via the LFM ack.
+        _livefeedEnabled.value = true
         client.connect(
             RdioCredentials(
                 profile.serverUrl.trim(),

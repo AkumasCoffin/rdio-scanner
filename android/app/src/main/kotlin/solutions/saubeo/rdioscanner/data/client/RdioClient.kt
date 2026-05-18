@@ -175,6 +175,16 @@ class RdioClient(
         }
     }
 
+    /**
+     * Drop the cached search payload. Called on profile switch so the
+     * Search screen can't briefly render profile-A's rows against
+     * profile-B's config (and LazyColumn keys can't collide across
+     * profiles that happen to share call ids).
+     */
+    fun clearSearchResults() {
+        _searchResults.value = null
+    }
+
     fun requestConfig() {
         send(Wire.config())
     }
@@ -256,7 +266,7 @@ class RdioClient(
         override fun onMessage(webSocket: WebSocket, text: String) {
             if (!current()) return
             val msg = Wire.decode(text) ?: return
-            handle(msg)
+            handle(msg, gen)
         }
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
@@ -300,7 +310,7 @@ class RdioClient(
         }
     }
 
-    private fun handle(msg: Incoming) {
+    private fun handle(msg: Incoming, gen: Int) {
         when (msg) {
             is Incoming.Version -> _version.value = msg.payload
 
@@ -312,7 +322,12 @@ class RdioClient(
             }
 
             is Incoming.Call -> {
-                scope.launch { _calls.emit(msg.payload to msg.flag) }
+                // Re-check generation inside the launch: if connect() bumped
+                // it (profile switch) between decode and dispatch, drop the
+                // emission so it can't leak into the new profile's subscribers.
+                scope.launch {
+                    if (gen == generation.get()) _calls.emit(msg.payload to msg.flag)
+                }
             }
 
             is Incoming.Listeners -> _listeners.value = msg.count
@@ -326,7 +341,11 @@ class RdioClient(
 
             is Incoming.Transcript -> {
                 Log.d(TAG, "handle: TRX id=${msg.callId} len=${msg.text.length}")
-                scope.launch { _transcripts.emit(msg.callId to msg.text) }
+                // Same generation guard as CAL — drop late TRX dispatches
+                // from a listener whose socket has been retired.
+                scope.launch {
+                    if (gen == generation.get()) _transcripts.emit(msg.callId to msg.text)
+                }
             }
 
             Incoming.PinRequested -> {

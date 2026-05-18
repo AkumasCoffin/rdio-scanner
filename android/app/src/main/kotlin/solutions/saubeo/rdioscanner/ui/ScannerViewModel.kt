@@ -132,6 +132,11 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
             // accidentally pick up the old server's text under a colliding
             // call id.
             repo.clearTranscripts()
+            // Same reasoning for the cached search payload — without this,
+            // opening Search after a profile switch briefly renders the
+            // previous server's rows resolved against the new server's
+            // config, and LazyColumn key collisions corrupt the layout.
+            repo.clearSearchResults()
             // Wipe the saved talkgroup selection + init flag so the new
             // profile's first CFG re-seeds every talkgroup to ON. Without
             // this, on/off toggles from the previous server would leak
