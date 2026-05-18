@@ -22,6 +22,12 @@
         android:theme="@style/Theme.RdioScanner"
         tools:targetApi="34">
 
+        <!-- Declares the app as an Android Auto media app. Required for AA
+             to enumerate and bind the MediaLibraryService for browsing. -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -33,12 +39,18 @@
             </intent-filter>
         </activity>
 
+        <!-- exported=true so Android Auto / Assistant / Wear can bind from
+             outside our process. Intent filters declare both the Media3
+             library-service action and the legacy MediaBrowserService
+             action that pre-Media3 AA host versions still discover by. -->
         <service
             android:name=".audio.AudioService"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
+                <action android:name="androidx.media3.session.MediaLibraryService" />
                 <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
     </application>

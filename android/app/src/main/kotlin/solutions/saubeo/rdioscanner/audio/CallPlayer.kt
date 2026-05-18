@@ -2,6 +2,8 @@ package solutions.saubeo.rdioscanner.audio
 
 import android.content.Context
 import android.net.Uri
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -90,6 +92,19 @@ class CallPlayer(private val context: Context) {
 
     val player: ExoPlayer = ExoPlayer.Builder(context)
         .setHandleAudioBecomingNoisy(true)
+        // Without explicit attributes + handleAudioFocus, the player doesn't
+        // duck for navigation prompts or pause for phone calls, and some
+        // OEM media surfaces won't recognize it as media-playback worth
+        // showing in the lock screen / Bluetooth display. SPEECH is the
+        // right content type for radio traffic — drives small focus-loss
+        // behaviors like ducking for nav voice.
+        .setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                .build(),
+            /* handleAudioFocus = */ true,
+        )
         .build()
         .apply {
             playWhenReady = true
@@ -225,6 +240,41 @@ class CallPlayer(private val context: Context) {
         _history.value = emptyList()
     }
 
+    /**
+     * Splices an updated transcript into the metadata of every queued item
+     * matching [callId] — including the currently-playing one, so a Whisper
+     * result that arrives mid-playback gets reflected on the lock screen
+     * and Bluetooth/AA surfaces. No-op if the call isn't in the queue
+     * anymore (already played and dropped).
+     */
+    fun applyTranscript(callId: Long, transcript: String) {
+        val text = transcript.trim()
+        if (text.isEmpty()) return
+        val count = player.mediaItemCount
+        for (i in 0 until count) {
+            val item = player.getMediaItemAt(i)
+            val queued = mediaIdToQueued[item.mediaId] ?: continue
+            if (queued.call.id != callId) continue
+            val updatedCall = queued.call.copy(transcript = text)
+            mediaIdToQueued[item.mediaId] = queued.copy(call = updatedCall)
+            val newMeta = buildCallMetadata(
+                updatedCall, queued.systemLabel, queued.talkgroupLabel, queued.talkgroupName,
+            )
+            player.replaceMediaItem(
+                i,
+                item.buildUpon().setMediaMetadata(newMeta).build(),
+            )
+        }
+        // Mirror into the _playing/_history flows so any UI bound to them
+        // also sees the transcript, not just the system media surfaces.
+        _playing.value?.takeIf { it.call.id == callId }?.let {
+            _playing.value = it.copy(call = it.call.copy(transcript = text))
+        }
+        _history.value = _history.value.map {
+            if (it.call.id == callId) it.copy(call = it.call.copy(transcript = text)) else it
+        }
+    }
+
     fun release() {
         player.removeListener(playerListener)
         player.release()
@@ -257,9 +307,11 @@ class CallPlayer(private val context: Context) {
     }
 
     /**
-     * Metadata used by Android's media notification and lock-screen controls.
-     * Title carries the talkgroup name (or label), artist carries the system
-     * so both appear on the system-level player surface.
+     * Metadata used by Android's media notification, lock-screen controls,
+     * and external surfaces (Bluetooth/Android Auto). Three-line layout:
+     * talkgroup → system → transcript. Transcript also lands in
+     * description so surfaces that expand (Android Auto, Wear) can show
+     * the full text instead of the truncated album line.
      */
     private fun buildCallMetadata(
         call: CallDto,
@@ -270,20 +322,24 @@ class CallPlayer(private val context: Context) {
         val sys = systemLabel?.ifBlank { null } ?: "System ${call.system}"
         val tgLabel = talkgroupLabel?.ifBlank { null } ?: "TG ${call.talkgroup}"
         val tgName = talkgroupName?.ifBlank { null }
-        // Primary title: the descriptive name if we have one, else the short
-        // label. Matches the webapp's big-row `callTalkgroupName`.
+        // Primary title: descriptive name if available, else short label.
         val title = tgName ?: tgLabel
-        // Subtitle mirrors the webapp's system · talkgroup status line.
-        val subtitle = if (tgName != null && tgName != tgLabel) "$sys  ·  $tgLabel" else sys
+        // Transcript is null until Whisper finishes — fall back to the
+        // long-form talkgroup label so the third line isn't empty for
+        // calls without a transcript yet.
+        val transcript = call.transcript?.trim()?.takeIf { it.isNotEmpty() }
+        val third = transcript ?: if (tgName != null && tgName != tgLabel) tgLabel else null
         return MediaMetadata.Builder()
             .setTitle(title)
             .setDisplayTitle(title)
             .setArtist(sys)
-            .setSubtitle(subtitle)
-            .setAlbumTitle(sys)
+            .setSubtitle(sys)
+            .setAlbumTitle(third)
+            .setStation(sys)
+            .apply { transcript?.let { setDescription(it) } }
             .setIsPlayable(true)
             .setIsBrowsable(false)
-            .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+            .setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION)
             .build()
     }
 
