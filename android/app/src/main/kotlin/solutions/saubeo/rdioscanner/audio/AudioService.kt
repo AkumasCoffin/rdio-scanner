@@ -2,6 +2,7 @@ package solutions.saubeo.rdioscanner.audio
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.util.Log
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import solutions.saubeo.rdioscanner.MainActivity
@@ -32,6 +33,7 @@ class AudioService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.d(TAG, "onCreate: starting AudioService")
         val app = application as RdioApplication
         callPlayer = app.audio
         val launch = Intent(this, MainActivity::class.java).apply {
@@ -50,17 +52,31 @@ class AudioService : MediaSessionService() {
             // Drop anything that arrives while disconnected — there's a narrow
             // window between closing the socket and the kernel actually
             // flushing it where an in-flight CAL frame can still land.
-            if (repo.state.value !is ConnectionState.Connected) return@onEach
+            val curState = repo.state.value
+            if (curState !is ConnectionState.Connected) {
+                Log.w(TAG, "pipeJob: dropping CAL id=${call.id} flag=$flag — state is $curState (expected Connected)")
+                return@onEach
+            }
             val userRequested = flag == FLAG_PLAY
             // User-requested calls (flag "p", from Search/Replay) bypass
             // hold/avoid/livefeed filters — only unsolicited feed calls
             // respect them.
             if (!userRequested) {
-                if (!repo.held.value.allows(call)) return@onEach
-                if (repo.isAvoided(call.system, call.talkgroup)) return@onEach
-                if (!repo.livefeedEnabled.value) return@onEach
+                if (!repo.held.value.allows(call)) {
+                    Log.d(TAG, "pipeJob: dropping CAL id=${call.id} — hold filter")
+                    return@onEach
+                }
+                if (repo.isAvoided(call.system, call.talkgroup)) {
+                    Log.d(TAG, "pipeJob: dropping CAL id=${call.id} — avoided sys=${call.system} tg=${call.talkgroup}")
+                    return@onEach
+                }
+                if (!repo.livefeedEnabled.value) {
+                    Log.d(TAG, "pipeJob: dropping CAL id=${call.id} — livefeed disabled")
+                    return@onEach
+                }
             }
             val labels = resolveLabels(repo.config.value, call)
+            Log.d(TAG, "pipeJob: accepting CAL id=${call.id} userRequested=$userRequested audio=${call.audio.size}b")
             if (userRequested) {
                 // Switch-now semantics: insert right after the current
                 // item and seek to it, so tapping play on a different
@@ -81,6 +97,7 @@ class AudioService : MediaSessionService() {
                 )
             }
         }.launchIn(scope)
+        Log.d(TAG, "onCreate: pipeJob subscribed to repo.playbackCalls")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -110,6 +127,10 @@ class AudioService : MediaSessionService() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         callPlayer.stopAndClear()
         stopSelf()
+    }
+
+    companion object {
+        private const val TAG = "AudioService"
     }
 
     private data class ResolvedLabels(

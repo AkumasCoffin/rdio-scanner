@@ -2,6 +2,7 @@ package solutions.saubeo.rdioscanner.audio
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -54,19 +55,12 @@ class CallPlayer(private val context: Context) {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            Log.d(TAG, "onIsPlayingChanged: $isPlaying")
             _isPlaying.value = isPlaying
         }
 
-        override fun onPlaybackStateChanged(playbackState: Int) {
-            if (playbackState == Player.STATE_ENDED) {
-                _playing.value?.let { recordHistory(it) }
-                _playing.value = null
-                _queue.value = emptyList()
-                cleanupPastItems()
-            }
-        }
-
         override fun onPlayerError(error: PlaybackException) {
+            Log.e(TAG, "onPlayerError: code=${error.errorCode} name=${error.errorCodeName} msg=${error.message}", error)
             // Broken item — advance past it. If it was the last, the STATE_ENDED
             // handler will clean up on its own.
             if (player.hasNextMediaItem()) {
@@ -77,6 +71,16 @@ class CallPlayer(private val context: Context) {
             } else {
                 player.clearMediaItems()
                 player.stop()
+            }
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            Log.d(TAG, "onPlaybackStateChanged: ${stateName(playbackState)} (count=${player.mediaItemCount}, isPlaying=${player.isPlaying})")
+            if (playbackState == Player.STATE_ENDED) {
+                _playing.value?.let { recordHistory(it) }
+                _playing.value = null
+                _queue.value = emptyList()
+                cleanupPastItems()
             }
         }
     }
@@ -102,7 +106,11 @@ class CallPlayer(private val context: Context) {
         talkgroupLabel: String?,
         talkgroupName: String? = null,
     ) {
-        if (call.audio.isEmpty()) return
+        Log.d(TAG, "enqueue: id=${call.id} audio=${call.audio.size}b sys=$systemLabel tg=$talkgroupLabel")
+        if (call.audio.isEmpty()) {
+            Log.w(TAG, "enqueue: id=${call.id} audio bytes empty — skipping")
+            return
+        }
         val ext = call.audioName?.substringAfterLast('.', "m4a")?.takeIf { it.isNotBlank() } ?: "m4a"
         val file = File(cacheDir, "${UUID.randomUUID()}.$ext")
         file.writeBytes(call.audio)
@@ -161,7 +169,11 @@ class CallPlayer(private val context: Context) {
         talkgroupLabel: String?,
         talkgroupName: String? = null,
     ) {
-        if (call.audio.isEmpty()) return
+        Log.d(TAG, "playNow: id=${call.id} audio=${call.audio.size}b sys=$systemLabel tg=$talkgroupLabel")
+        if (call.audio.isEmpty()) {
+            Log.w(TAG, "playNow: id=${call.id} audio bytes empty — skipping")
+            return
+        }
         val ext = call.audioName?.substringAfterLast('.', "m4a")?.takeIf { it.isNotBlank() } ?: "m4a"
         val file = File(cacheDir, "${UUID.randomUUID()}.$ext")
         file.writeBytes(call.audio)
@@ -254,6 +266,15 @@ class CallPlayer(private val context: Context) {
 
     companion object {
         const val HISTORY_LIMIT = 100
+        private const val TAG = "CallPlayer"
+
+        private fun stateName(s: Int): String = when (s) {
+            Player.STATE_IDLE -> "IDLE"
+            Player.STATE_BUFFERING -> "BUFFERING"
+            Player.STATE_READY -> "READY"
+            Player.STATE_ENDED -> "ENDED"
+            else -> "UNKNOWN($s)"
+        }
     }
 
     /**
