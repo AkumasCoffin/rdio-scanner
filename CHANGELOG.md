@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+_(nothing yet — bullets land here as work is merged to master)_
+
+## Released
+
 ## Version 6.9.2
 
 Android-only patch release covering two background-resume bugs reported after 6.9.1 shipped. Server and webapp are unchanged but get the version bump so the whole stack stays at a single number.
