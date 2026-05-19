@@ -2,24 +2,31 @@
 
 ## Unreleased
 
+_(nothing yet — bullets land here as work is merged to master)_
+
+## Released
+
+## Version 6.10.0
+
+Two-feature release: server-side call delay and per-talkgroup/system alert tones, wired through the admin UI, webapp playback, and Android playback. Field shapes match upstream chuot/rdio-scanner v7-wip (`Talkgroup.Alert`, `System.Alert`, `Talkgroup.Delay`, `System.Delay`) so the on-the-wire schema stays compatible with the upstream feature — except the `delay` value is **seconds** here, vs **minutes** upstream, chosen for finer control.
+
 ### Server
 
-- **Delayer:** new per-talkgroup and per-system "delay" setting (seconds) holds calls server-side before forwarding to listeners and downstreams. Talkgroup delay overrides system delay; either being 0 (the default) falls through to immediate emit, so existing deployments behave identically until an admin sets a value. Pending delays persist across restarts via a new `rdioScannerDelayed` table — `Delayer.Start()` on boot replays queued calls, emitting immediately for any whose timestamp has already passed and re-arming the rest. `IngestCall` routes through `Delayer.Delay(call)` instead of calling `EmitCall` directly. Schema migrations add the `delay` column to `rdioScannerTalkgroups` and `rdioScannerSystems` (default 0) on all three supported drivers and create the `rdioScannerDelayed` table.
-- **Alert tones (wired end-to-end):** new per-talkgroup "alert" setting selects one of 9 built-in oscillator presets (`alert1`..`alert9`) to play as an announcement tone before that talkgroup's call audio. Server stores the preset name on the talkgroup row, exposes the preset library in the config payload, and surfaces the per-talkgroup choice in the scoped systems map. Migration adds the `alert` column to `rdioScannerTalkgroups`.
+- **Delayer:** per-talkgroup and per-system `delay` (seconds) holds calls server-side before forwarding to listeners and downstreams. Talkgroup delay overrides system delay; either being 0 (the default) falls through to immediate emit, so existing deployments behave identically until an admin sets a value. Pending delays persist across restarts via a new `rdioScannerDelayed` table — `Delayer.Start()` on boot replays queued calls, emitting immediately for any whose timestamp has already passed and re-arming the rest. `IngestCall` routes through `Delayer.Delay(call)` instead of calling `EmitCall` directly. Schema migrations add the `delay` column to `rdioScannerTalkgroups` and `rdioScannerSystems` (default 0) on all three supported drivers and create the `rdioScannerDelayed` table.
+- **Alert tones:** per-talkgroup and per-system `alert` (string) selects one of 9 built-in oscillator presets (`alert1`..`alert9`) to play as an announcement tone before each call. Talkgroup alert wins; falls back to system alert; empty on both = no tone. Server stores the preset name on both the talkgroup and system rows, exposes the full preset library (`Alerts` from `alert.go`) in the CFG payload, and surfaces both choices in the scoped systems/talkgroups maps. Two migrations add the `alert` column to `rdioScannerTalkgroups` and `rdioScannerSystems`. `oscillator.go` defines the `OscillatorData` struct shared with the webapp's existing `keypadBeeps`.
+- **Admin config GET:** `GetConfig()` now emits `system.delay` and `system.alert` in each system map. Without these the admin form would post a value, the server would write it, and the next reload would zero out the form because the GET response didn't surface the field — talkgroups weren't affected because they round-trip via the `Talkgroup` struct's JSON tags.
 
 ### Webapp
 
-- Admin UI: new "Delay (seconds)" input on both the talkgroup and system config forms, with caption explaining the override precedence and that 0 means immediate emit.
-- Admin UI: new "Alert Tone" dropdown on the talkgroup form (None / alert1..alert9). Selection is sent through with the talkgroup config.
-- Playback: when a call arrives with an alert assigned to its talkgroup, the preset's oscillator sequence is scheduled on the audio context and the call audio's start time is offset so the alert plays first, then the audio — no overlap.
+- **Admin UI:** new "Delay (seconds)" input and "Alert Tone" dropdown (None / alert1..alert9) on both the talkgroup and system config forms. Captions explain the talkgroup-then-system precedence and that 0/None disables the feature.
+- **Playback:** when a call arrives, the resolved alert preset's oscillator sequence is scheduled on the audio context at `currentTime` and the call audio source's `start()` is offset by the preset's duration — alert plays first, audio follows, no overlap. The CFG message handler now copies the `alerts` library off the wire payload so the playback code can look it up by name.
 
 ### Android
 
-- Adds `AlertPlayer` that synthesizes square / sine / triangle / sawtooth waveforms from the server's `OscillatorBeep[]` into 16-bit mono PCM and plays via `AudioTrack`.
-- `CallPlayer` accepts an alert preset per queued call and pauses ExoPlayer at the media-item transition, plays the alert, then resumes the call audio. Each media id alerts at most once so seeks / pause-resume don't re-fire the tone.
-- `TalkgroupDto`/`ConfigDto` model updates carry the alert name + preset library across the wire.
-
-## Released
+- New `AlertPlayer` synthesizes square / sine / triangle / sawtooth waveforms from `OscillatorBeep[]` into 16-bit mono 44.1 kHz PCM and plays via `AudioTrack`, suspending until drain.
+- `CallPlayer` carries the resolved preset on each `QueuedCall`. The transition listener pauses ExoPlayer, plays the alert on `Dispatchers.IO`, then resumes the call audio — with a per-mediaId guard so seeks and pause/resume don't re-fire the tone.
+- `AudioService.resolveAlertBeeps` looks up `talkgroup.alert` → `system.alert` → `config.alerts[name]` before each `enqueue`/`playNow`, matching the webapp's precedence.
+- `TalkgroupDto`, `SystemDto`, `ConfigDto` carry the alert name and preset library across the wire (auto-populated by kotlinx.serialization).
 
 ## Version 6.9.2
 
