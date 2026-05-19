@@ -36,26 +36,32 @@ import solutions.saubeo.rdioscanner.data.repository.RdioRepository.Companion.FLA
  * MediaSessionService that owns the [CallPlayer] and bridges server calls
  * from the repository into the playback queue.
  *
- * Foreground lifecycle: this service goes foreground as soon as the WS
- * connects (with a quiet "Listening to live feed" notification) and stays
- * foreground until the user explicitly disconnects. That keeps the process
- * out of Doze, so the OkHttp ping fires on its 30s schedule and the WS
- * survives long background periods. Without this gating, MediaSessionService
- * only goes foreground while ExoPlayer is actively playing — and the silent
- * gaps between calls let Doze freeze the ping, which lets any reverse proxy
- * in front of the server (Cloudflare, nginx) close the idle socket.
+ * Foreground lifecycle: the activity-side Composable fires
+ * [ACTION_ENTER_FG] via `Context.startForegroundService()` from a foreground
+ * context (its `LaunchedEffect` only runs while the activity is composing,
+ * which guarantees a TOP state); this service responds in [onStartCommand]
+ * by calling `startForeground()` with the "Listening to live feed"
+ * notification. Once promoted, we keep the service foreground until the
+ * activity fires [ACTION_EXIT_FG] (user-initiated disconnect) or the
+ * service is destroyed.
  *
- * During actual playback Media3 swaps in its own media-notification with
- * playback controls; when playback ends and the player goes idle, we
- * re-assert our Listening notification so foreground state never drops
- * while we're still connected.
+ * The WS-state observer in this service NEVER calls `startForeground`
+ * directly — Android 12+ refuses to promote a service to foreground from
+ * a background coroutine (`mAllowStartForeground = false`), which we hit
+ * hard on Samsung Android 16. Instead, the observer just refreshes the
+ * notification text via [NotificationManager.notify], which works from
+ * any context as long as the notification ID already exists.
+ *
+ * Media3 manages its own playback notification while a call plays. After
+ * playback ends our service should still be foreground because we never
+ * called `stopForeground` — Media3 only detaches its own notification id.
  */
 class AudioService : MediaSessionService() {
     private lateinit var callPlayer: CallPlayer
     private var session: MediaSession? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var pipeJob: Job? = null
-    private var foregroundJob: Job? = null
+    private var notificationJob: Job? = null
     private var foregroundActive = false
 
     override fun onCreate() {
@@ -77,28 +83,21 @@ class AudioService : MediaSessionService() {
 
         val repo = app.repository
 
-        // Drive our foreground state off the WS connection: as long as the
-        // user has a live link to the server we show the Listening
-        // notification, even between calls. Media3 takes over with its own
-        // media-controls notification while a call is actually playing,
-        // then we put ours back when playback ends — re-asserting via
-        // startForeground() every time prevents Doze from kicking in during
-        // the silent gaps.
-        foregroundJob = combine(
+        // Refresh the notification text when the WS state changes. This is
+        // notify-only — never startForeground from here (we'd hit
+        // mAllowStartForeground = false on background coroutines and the
+        // resulting ForegroundServiceStartNotAllowedException would crash
+        // a debug build). Promotion happens via ACTION_ENTER_FG from the UI
+        // layer's LaunchedEffect, which is guaranteed to fire while the
+        // activity is composing — i.e. foreground.
+        notificationJob = combine(
             repo.state,
             callPlayer.isPlaying,
         ) { state, playing -> state to playing }
             .distinctUntilChanged()
             .onEach { (state, playing) ->
-                val connected = state is ConnectionState.Connected ||
-                    state is ConnectionState.Authenticating ||
-                    state is ConnectionState.Connecting
-                when {
-                    connected && !playing -> startListeningForeground(state)
-                    !connected && !playing -> stopListeningForeground()
-                    // playing == true: Media3 owns the foreground notification
-                    // until playback ends; do nothing here.
-                    else -> Unit
+                if (foregroundActive && !playing) {
+                    refreshListeningNotification(state)
                 }
             }
             .launchIn(scope)
@@ -157,6 +156,19 @@ class AudioService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Handle our own actions before delegating to MediaSessionService. The
+        // app-side Composable fires ACTION_ENTER_FG via
+        // Context.startForegroundService() from a foreground context (the
+        // LaunchedEffect inside RdioApp), which is the only safe place to
+        // promote ourselves to foreground on Android 12+.
+        when (intent?.action) {
+            ACTION_ENTER_FG -> {
+                val app = application as RdioApplication
+                val state = app.repository.state.value
+                startListeningForeground(state)
+            }
+            ACTION_EXIT_FG -> stopListeningForeground()
+        }
         super.onStartCommand(intent, flags, startId)
         return START_STICKY
     }
@@ -165,7 +177,7 @@ class AudioService : MediaSessionService() {
 
     override fun onDestroy() {
         pipeJob?.cancel()
-        foregroundJob?.cancel()
+        notificationJob?.cancel()
         stopListeningForeground()
         // stopAndClear handles playback halt + queue teardown + cache-file
         // cleanup. Without it, a process-level service kill leaves the
@@ -248,6 +260,10 @@ class AudioService : MediaSessionService() {
             }
             foregroundActive = true
         } catch (t: Throwable) {
+            // Will hit on Android 12+ if the caller wasn't actually in a
+            // foreground context when sending ACTION_ENTER_FG. Logged so the
+            // failure is debuggable, not crashed — the WS still runs as a
+            // background process; it just won't survive Doze.
             Log.w(TAG, "startListeningForeground failed: ${t.message}", t)
         }
     }
@@ -261,6 +277,19 @@ class AudioService : MediaSessionService() {
         foregroundActive = false
     }
 
+    /** Updates the existing Listening notification's text in place. Safe to
+     *  call from any context — NotificationManager.notify does not require
+     *  the FGS-launch exemption that startForeground does. No-op if we
+     *  aren't actually foreground (no notification to update). */
+    private fun refreshListeningNotification(state: ConnectionState) {
+        val nm = getSystemService<NotificationManager>() ?: return
+        val notif = buildListeningNotification(state)
+        try {
+            nm.notify(LISTENING_NOTIFICATION_ID, notif)
+        } catch (_: Throwable) {
+        }
+    }
+
     companion object {
         private const val TAG = "AudioService"
         // Different from Media3's playback-notification ID so the
@@ -269,6 +298,15 @@ class AudioService : MediaSessionService() {
         // calls fighting over the same slot.
         private const val LISTENING_NOTIFICATION_ID = 2002
         private const val LISTENING_CHANNEL_ID = "rdio_scanner_live_feed"
+        /** Intent action: promote the service to foreground with the
+         *  Listening notification. MUST be sent via
+         *  Context.startForegroundService() from a foreground context
+         *  (e.g. a Composable's LaunchedEffect). */
+        const val ACTION_ENTER_FG = "solutions.saubeo.rdioscanner.action.ENTER_FG"
+        /** Intent action: demote the service from foreground. Safe to send
+         *  from any context — stopForeground doesn't need the FGS-launch
+         *  exemption. */
+        const val ACTION_EXIT_FG = "solutions.saubeo.rdioscanner.action.EXIT_FG"
     }
 
     private data class ResolvedLabels(

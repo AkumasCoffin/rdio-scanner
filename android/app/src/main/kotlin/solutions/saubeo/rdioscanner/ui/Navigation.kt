@@ -1,10 +1,13 @@
 package solutions.saubeo.rdioscanner.ui
 
+import android.content.Intent
 import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -13,6 +16,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import solutions.saubeo.rdioscanner.audio.AudioService
 import solutions.saubeo.rdioscanner.data.client.ConnectionState
 import solutions.saubeo.rdioscanner.ui.screens.ConnectScreen
 import solutions.saubeo.rdioscanner.ui.screens.LivefeedScreen
@@ -34,6 +38,7 @@ fun RdioApp() {
     val vm: ScannerViewModel = viewModel()
     val navController = rememberNavController()
     val state by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     // Cold starts land on the Connect screen so the user can pick a profile.
     // The ON_RESUME hook below only auto-retries once we've actually been
@@ -48,6 +53,38 @@ fun RdioApp() {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Foreground-service promotion. We send ACTION_ENTER_FG from inside this
+    // LaunchedEffect because Android 12+ refuses startForeground() unless
+    // the caller is in a foreground context — and a Composable's
+    // LaunchedEffect only runs while the activity is composing, which is
+    // guaranteed to be a foreground (TOP) state. If we did this from
+    // AudioService's own state observer instead, the call would land on a
+    // background coroutine after the activity backgrounded and Android
+    // would throw ForegroundServiceStartNotAllowedException.
+    //
+    // While the activity is in the background the composition pauses, the
+    // effect doesn't re-fire on state changes, and the service stays
+    // foreground (we never sent EXIT_FG). When the user comes back to the
+    // foreground, this effect re-runs and re-promotes if needed.
+    LaunchedEffect(state) {
+        val shouldBeForeground = state is ConnectionState.Connected ||
+            state is ConnectionState.Authenticating ||
+            state is ConnectionState.Connecting
+        val intent = Intent(context, AudioService::class.java).apply {
+            action = if (shouldBeForeground) AudioService.ACTION_ENTER_FG
+                else AudioService.ACTION_EXIT_FG
+        }
+        try {
+            if (shouldBeForeground) {
+                ContextCompat.startForegroundService(context, intent)
+            } else {
+                context.startService(intent)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "AudioService FG intent dispatch failed: ${t.message}")
+        }
     }
 
     LaunchedEffect(state) {
