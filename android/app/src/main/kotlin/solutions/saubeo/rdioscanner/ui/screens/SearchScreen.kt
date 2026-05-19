@@ -622,10 +622,12 @@ private fun ResultRow(
             // that case so the row hydrates without user action.
             val display = effectiveTranscript?.trim().orEmpty()
             if (display.isNotBlank()) {
+                // No maxLines cap — show the full transcript. Search rows
+                // are the natural place to read complete call content; if
+                // a row gets tall the user just scrolls past it.
                 Text(
                     text = display,
                     color = RdioPalette.TextMain,
-                    maxLines = 4,
                     style = LocalTextStyle.current.copy(
                         fontSize = 12.sp,
                         lineHeight = 16.sp,

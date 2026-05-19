@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -182,11 +183,12 @@ fun LcdText(
     weight: FontWeight = FontWeight.Normal,
     color: Color? = null,
     overflow: TextOverflow = TextOverflow.Ellipsis,
+    maxLines: Int = 1,
 ) {
     Text(
         text,
         color = color ?: if (muted) RdioPalette.TextMuted else RdioPalette.TextMain,
-        maxLines = 1,
+        maxLines = maxLines,
         overflow = overflow,
         style = TextStyle(
             fontSize = size.sp,
@@ -196,16 +198,16 @@ fun LcdText(
     )
 }
 
-/** Big 24-sp row used for the talkgroup name. */
+/** Big 24-sp row used for the talkgroup name. Wraps to as many lines as the
+ *  name needs — long names like "South Eastern Zone | Rescue" used to clip
+ *  at one line, so the user only saw "South Eastern Zone | R…". */
 @Composable
 fun LcdBigText(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
-        modifier = modifier.fillMaxWidth().height(32.dp),
+        modifier = modifier.fillMaxWidth().heightIn(min = 32.dp),
         color = RdioPalette.TextMain,
         textAlign = TextAlign.Start,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
         style = TextStyle(
             fontSize = 24.sp,
             lineHeight = 32.sp,

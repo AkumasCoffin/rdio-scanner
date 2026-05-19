@@ -292,6 +292,9 @@ private fun TranscriptPanel(
             color = if (hasText) ledColor else RdioPalette.TextMuted,
         )
         if (hasText) {
+            // No maxLines cap: long transcripts should show in full so the
+            // user can read everything Whisper returned without scrolling
+            // to a different screen.
             Text(
                 text = text,
                 color = RdioPalette.TextMain,
@@ -301,7 +304,6 @@ private fun TranscriptPanel(
                     fontWeight = FontWeight.Normal,
                 ),
                 minLines = 2,
-                maxLines = 4,
             )
         } else {
             Text(
@@ -445,13 +447,17 @@ private fun HistoryRow(
     transcripts: Map<Long, String>,
 ) {
     val rowBackground = if (replaying) Color(0x22F97316) else Color.Transparent
+    // Was height(22.dp) — too short once the Name column wraps. Use a min
+    // height so single-line rows still look uniform but a long talkgroup
+    // name can grow the row vertically.
     Row(
         Modifier
             .fillMaxWidth()
-            .height(22.dp)
-            .background(rowBackground),
+            .heightIn(min = 22.dp)
+            .background(rowBackground)
+            .padding(vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
     ) {
         val ts = parseIso(item.call.dateTime)?.let(timeFmt::format).orEmpty()
         HistoryCell(ts, weight = 0.22f, highlight = replaying)
@@ -463,6 +469,10 @@ private fun HistoryRow(
                 ?: "",
             weight = 0.38f,
             highlight = replaying,
+            // Talkgroup names like "South Eastern Zone | Rescue" used to
+            // ellipsize at one line; unbounded here so the full name shows
+            // and the row grows to fit.
+            maxLines = Int.MAX_VALUE,
         )
     }
     val historyTranscript = transcripts[item.call.id]?.takeIf { it.isNotBlank() }
@@ -474,10 +484,11 @@ private fun HistoryRow(
                 .background(rowBackground)
                 .padding(start = 6.dp, end = 6.dp, bottom = 2.dp),
         ) {
+            // No maxLines cap — show the full transcript snippet under the
+            // row so the user can read everything without opening Search.
             Text(
                 text = snippet,
                 color = if (replaying) RdioPalette.Accent.copy(alpha = 0.85f) else RdioPalette.TextMuted,
-                maxLines = 2,
                 style = TextStyle(
                     fontSize = 10.5.sp,
                     lineHeight = 13.sp,
@@ -500,6 +511,7 @@ private fun androidx.compose.foundation.layout.RowScope.HistoryCell(
     text: String,
     weight: Float,
     highlight: Boolean,
+    maxLines: Int = 1,
 ) {
     Box(Modifier.weight(weight)) {
         LcdText(
@@ -507,6 +519,7 @@ private fun androidx.compose.foundation.layout.RowScope.HistoryCell(
             size = 11f,
             weight = if (highlight) FontWeight.Bold else FontWeight.Normal,
             color = if (highlight) RdioPalette.Accent else RdioPalette.TextMain,
+            maxLines = maxLines,
         )
     }
 }
