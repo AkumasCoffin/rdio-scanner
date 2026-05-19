@@ -28,6 +28,7 @@ import solutions.saubeo.rdioscanner.data.protocol.SearchOptions
 import solutions.saubeo.rdioscanner.data.protocol.SearchResults
 import solutions.saubeo.rdioscanner.data.protocol.ServerVersion
 import solutions.saubeo.rdioscanner.data.protocol.Wire
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -52,6 +53,7 @@ data class RdioCredentials(val baseUrl: String, val accessCode: String? = null)
  */
 class RdioClient(
     private val httpClient: OkHttpClient = defaultHttpClient(),
+    private val networkMonitor: NetworkMonitor? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -225,7 +227,43 @@ class RdioClient(
         webSocket = null
         val gen = generation.incrementAndGet()
         _state.value = ConnectionState.Connecting
+
+        // If we know the system has no internet network right now (e.g.
+        // app just resumed and the radios are still coming back up),
+        // suspend the actual WS open until ConnectivityManager signals
+        // availability. Without this gate the OkHttp DNS lookup races the
+        // network restoration and throws UnknownHostException, driving
+        // scheduleReconnect into long backoff while the user stares at
+        // the error.
+        val monitor = networkMonitor
+        if (monitor != null && !monitor.isNetworkAvailable()) {
+            Log.d(TAG, "openSocket: gen=$gen, no network yet — awaiting connectivity")
+            scope.launch {
+                val ok = monitor.awaitNetwork(timeoutMs = 30_000L)
+                // If a newer openSocket() bumped the generation while we
+                // were waiting, drop this attempt.
+                if (gen != generation.get()) return@launch
+                if (!ok) {
+                    Log.w(TAG, "openSocket: gen=$gen, network wait timed out")
+                    if (shouldReconnect.get()) {
+                        _state.value = ConnectionState.Error("waiting for network")
+                        scheduleReconnect()
+                    } else {
+                        _state.value = ConnectionState.Disconnected
+                    }
+                    return@launch
+                }
+                Log.d(TAG, "openSocket: gen=$gen, network up — opening WS")
+                actuallyOpenSocket(gen, url)
+            }
+            return
+        }
+
         Log.d(TAG, "openSocket: gen=$gen, url=$url, state -> Connecting")
+        actuallyOpenSocket(gen, url)
+    }
+
+    private fun actuallyOpenSocket(gen: Int, url: String) {
         val req = Request.Builder().url(url).build()
         webSocket = httpClient.newWebSocket(req, Listener(gen))
     }
@@ -300,6 +338,17 @@ class RdioClient(
             }
             this@RdioClient.webSocket = null
             if (shouldReconnect.get()) {
+                // DNS resolution failure is almost always transient post-
+                // resume: ConnectivityManager said the network is up, but
+                // Android's resolver hasn't picked up the new nameservers
+                // yet, or the negative cache hasn't expired. Reset the
+                // backoff so we retry quickly (1s) instead of drifting
+                // toward the 30s plateau on something that'll succeed on
+                // the very next attempt.
+                if (t is UnknownHostException) {
+                    Log.w(TAG, "Listener[$gen].onFailure: UnknownHostException — resetting backoff")
+                    reconnectAttempts = 0
+                }
                 Log.w(TAG, "Listener[$gen].onFailure: ${t.message} -> Error + reconnect", t)
                 _state.value = ConnectionState.Error(t.message ?: "connection failed")
                 scheduleReconnect()
