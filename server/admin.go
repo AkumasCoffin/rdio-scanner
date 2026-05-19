@@ -317,8 +317,10 @@ func (admin *Admin) GetConfig() map[string]any {
 	for _, system := range admin.Controller.Systems.List {
 		systems = append(systems, map[string]any{
 			"_id":                 system.RowId,
+			"alert":               system.Alert,
 			"autoPopulate":        system.AutoPopulate,
 			"blacklists":          system.Blacklists,
+			"delay":               system.Delay,
 			"id":                  system.Id,
 			"label":               system.Label,
 			"led":                 system.Led,
