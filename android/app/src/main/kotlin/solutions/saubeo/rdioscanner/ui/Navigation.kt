@@ -72,10 +72,10 @@ fun RdioApp() {
         val shouldBeForeground = state is ConnectionState.Connected ||
             state is ConnectionState.Authenticating ||
             state is ConnectionState.Connecting
-        val intent = Intent(context, AudioService::class.java).apply {
-            action = if (shouldBeForeground) AudioService.ACTION_ENTER_FG
-                else AudioService.ACTION_EXIT_FG
-        }
+        val action = if (shouldBeForeground) AudioService.ACTION_ENTER_FG
+            else AudioService.ACTION_EXIT_FG
+        val intent = Intent(context, AudioService::class.java).apply { this.action = action }
+        Log.i(TAG, "FG-intent dispatch: state=$state -> $action (shouldBeForeground=$shouldBeForeground)")
         try {
             if (shouldBeForeground) {
                 ContextCompat.startForegroundService(context, intent)

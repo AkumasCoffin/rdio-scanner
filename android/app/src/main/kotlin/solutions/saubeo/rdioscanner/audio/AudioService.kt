@@ -161,7 +161,9 @@ class AudioService : MediaSessionService() {
         // Context.startForegroundService() from a foreground context (the
         // LaunchedEffect inside RdioApp), which is the only safe place to
         // promote ourselves to foreground on Android 12+.
-        when (intent?.action) {
+        val action = intent?.action
+        Log.d(TAG, "onStartCommand: action=$action flags=$flags startId=$startId foregroundActive=$foregroundActive")
+        when (action) {
             ACTION_ENTER_FG -> {
                 val app = application as RdioApplication
                 val state = app.repository.state.value
@@ -259,20 +261,26 @@ class AudioService : MediaSessionService() {
                 startForeground(LISTENING_NOTIFICATION_ID, notif)
             }
             foregroundActive = true
+            Log.i(TAG, "startListeningForeground: OK state=$state notifId=$LISTENING_NOTIFICATION_ID")
         } catch (t: Throwable) {
             // Will hit on Android 12+ if the caller wasn't actually in a
             // foreground context when sending ACTION_ENTER_FG. Logged so the
             // failure is debuggable, not crashed — the WS still runs as a
             // background process; it just won't survive Doze.
-            Log.w(TAG, "startListeningForeground failed: ${t.message}", t)
+            Log.w(TAG, "startListeningForeground FAILED state=$state: ${t.message}", t)
         }
     }
 
     private fun stopListeningForeground() {
-        if (!foregroundActive) return
+        if (!foregroundActive) {
+            Log.d(TAG, "stopListeningForeground: skip — not currently foreground")
+            return
+        }
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
-        } catch (_: Throwable) {
+            Log.i(TAG, "stopListeningForeground: OK")
+        } catch (t: Throwable) {
+            Log.w(TAG, "stopListeningForeground FAILED: ${t.message}", t)
         }
         foregroundActive = false
     }

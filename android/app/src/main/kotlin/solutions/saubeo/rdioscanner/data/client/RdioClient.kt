@@ -112,6 +112,11 @@ class RdioClient(
         credentials = creds
         shouldReconnect.set(true)
         reconnectAttempts = 0
+        // Pin the Wi-Fi radio awake for the lifetime of this session. Samsung
+        // (and most OEMs) put Wi-Fi into power-save when the screen turns off
+        // — without the lock, our OkHttp ping schedule gets starved between
+        // DTIM intervals even though we have an FGS.
+        networkMonitor?.acquireWifiLock()
         // Defensively close any prior socket + pending reconnect: prevents two
         // parallel WS connections from both feeding the same SharedFlow, which
         // would make every incoming CAL play twice. Bump generation BEFORE
@@ -152,6 +157,8 @@ class RdioClient(
         _config.value = null
         _version.value = null
         _livefeedActive.value = false
+        // Release the Wi-Fi radio so the OS can power-save it again.
+        networkMonitor?.releaseWifiLock()
     }
 
     fun setLivefeedMap(map: LivefeedMap) {

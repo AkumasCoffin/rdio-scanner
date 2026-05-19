@@ -5,6 +5,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
+import android.util.Log
 import androidx.core.content.getSystemService
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -23,7 +25,45 @@ import kotlin.coroutines.resume
  * 8 → 16 → 30s plateau) and the user gives up and taps Connect manually.
  */
 class NetworkMonitor(context: Context) {
-    private val cm = context.applicationContext.getSystemService<ConnectivityManager>()
+    private val appContext = context.applicationContext
+    private val cm = appContext.getSystemService<ConnectivityManager>()
+    private val wifiManager = appContext.getSystemService<WifiManager>()
+
+    // High-perf Wi-Fi lock: keeps the radio awake at full performance while
+    // held. Without it, Samsung (and most OEMs) put Wi-Fi into power-save
+    // mode when the screen turns off, which starves our OkHttp ping
+    // schedule even though we have an FGS — the radio just isn't online to
+    // send/receive packets between batched DTIM intervals. Reference-counted
+    // = false so a stray double-acquire can't pin the radio after release.
+    private val wifiLock: WifiManager.WifiLock? = wifiManager
+        ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "rdio-scanner-ws")
+        ?.apply { setReferenceCounted(false) }
+
+    fun acquireWifiLock() {
+        val lock = wifiLock ?: return
+        if (lock.isHeld) return
+        try {
+            lock.acquire()
+            Log.d(TAG, "Wi-Fi high-perf lock acquired")
+        } catch (t: Throwable) {
+            Log.w(TAG, "acquireWifiLock failed: ${t.message}")
+        }
+    }
+
+    fun releaseWifiLock() {
+        val lock = wifiLock ?: return
+        if (!lock.isHeld) return
+        try {
+            lock.release()
+            Log.d(TAG, "Wi-Fi high-perf lock released")
+        } catch (t: Throwable) {
+            Log.w(TAG, "releaseWifiLock failed: ${t.message}")
+        }
+    }
+
+    companion object {
+        private const val TAG = "NetworkMonitor"
+    }
 
     /**
      * `true` if the system currently has an active network with the
