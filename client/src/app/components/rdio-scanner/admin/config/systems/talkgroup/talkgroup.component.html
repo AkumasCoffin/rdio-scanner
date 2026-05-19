@@ -110,6 +110,34 @@
             <mat-slide-toggle color="primary" formControlName="transcribe"></mat-slide-toggle>
         </div>
     </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Delay (seconds)</span><br>
+            <span class="mat-caption">Hold calls on this talkgroup before forwarding to listeners and downstreams.
+                Overrides the system-level delay. Set to 0 (or leave blank) for immediate emit.</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <input type="number" min="0" matInput formControlName="delay" placeholder="Delay">
+            <mat-error *ngIf="form?.get('delay')?.errors">
+                Invalid delay
+            </mat-error>
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Alert Tone</span><br>
+            <span class="mat-caption">Announcement tone played before the call audio. Choose from nine built-in
+                presets, or leave on "None" for no tone.</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <mat-select formControlName="alert" placeholder="Alert">
+                <mat-option [value]="null">None</mat-option>
+                <mat-option *ngFor="let alert of alerts" [value]="alert">
+                    {{ alert | titlecase }}
+                </mat-option>
+            </mat-select>
+        </mat-form-field>
+    </div>
     <div class="row bottom">
         <button *ngIf="form.get('id')?.value" type="button" mat-button (click)="blacklist.emit()">
             Blacklist talkgroup

@@ -268,6 +268,18 @@ func (db *Database) migrate() error {
 	if err == nil {
 		err = db.migration20260424110000(verbose)
 	}
+	if err == nil {
+		err = db.migration20260519100000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260519110000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260519120000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260519130000(verbose)
+	}
 
 	return err
 }
@@ -929,6 +941,86 @@ func (db *Database) migration20260421120000(verbose bool) error {
 		}
 	}
 	return db.migrateWithSchema("20260421120000-add-call-transcript", queries, verbose)
+}
+
+// migration20260519100000 adds a `delay` column (minutes) to both
+// rdioScannerTalkgroups and rdioScannerSystems. Default 0 means no delay,
+// which preserves current immediate-emit behavior.
+func (db *Database) migration20260519100000(verbose bool) error {
+	var queries []string
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerTalkgroups" add column "delay" integer not null default 0`,
+			`alter table "rdioScannerSystems" add column "delay" integer not null default 0`,
+		}
+	default:
+		queries = []string{
+			"alter table `rdioScannerTalkgroups` add column `delay` integer not null default 0",
+			"alter table `rdioScannerSystems` add column `delay` integer not null default 0",
+		}
+	}
+	return db.migrateWithSchema("20260519100000-add-delay-columns", queries, verbose)
+}
+
+// migration20260519130000 adds the `alert` column to rdioScannerSystems.
+// Provides system-level fallback for talkgroups that don't have their own
+// alert preset assigned — matches upstream v7-wip's data model where both
+// System.Alert and Talkgroup.Alert exist with talkgroup winning.
+func (db *Database) migration20260519130000(verbose bool) error {
+	var queries []string
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerSystems" add column "alert" varchar(64) not null default ''`,
+		}
+	default:
+		queries = []string{
+			"alter table `rdioScannerSystems` add column `alert` varchar(64) not null default ''",
+		}
+	}
+	return db.migrateWithSchema("20260519130000-add-system-alert", queries, verbose)
+}
+
+// migration20260519120000 adds the `alert` column to rdioScannerTalkgroups.
+// Stores the name of a preset from server/alert.go (e.g. "alert3"); empty
+// string means no announcement tone before this talkgroup's audio.
+func (db *Database) migration20260519120000(verbose bool) error {
+	var queries []string
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerTalkgroups" add column "alert" varchar(64) not null default ''`,
+		}
+	default:
+		queries = []string{
+			"alter table `rdioScannerTalkgroups` add column `alert` varchar(64) not null default ''",
+		}
+	}
+	return db.migrateWithSchema("20260519120000-add-talkgroup-alert", queries, verbose)
+}
+
+// migration20260519110000 creates the rdioScannerDelayed table used by the
+// Delayer to persist queued calls across server restarts. callId references
+// rdioScannerCalls.id; timestamp is the unix-millisecond moment at which the
+// call should be emitted to clients/downstreams.
+func (db *Database) migration20260519110000(verbose bool) error {
+	var queries []string
+	switch db.Config.DbType {
+	case DbTypeSqlite:
+		queries = []string{
+			"create table `rdioScannerDelayed` (`callId` integer primary key, `timestamp` integer not null)",
+		}
+	case DbTypePostgres:
+		queries = []string{
+			`create table "rdioScannerDelayed" ("callId" integer primary key, "timestamp" bigint not null)`,
+		}
+	default:
+		queries = []string{
+			"create table `rdioScannerDelayed` (`callId` integer primary key, `timestamp` bigint not null)",
+		}
+	}
+	return db.migrateWithSchema("20260519110000-create-delayed-table", queries, verbose)
 }
 
 func (db *Database) prepareMigration() (bool, error) {

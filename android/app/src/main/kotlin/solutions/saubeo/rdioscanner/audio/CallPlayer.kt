@@ -10,10 +10,18 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import solutions.saubeo.rdioscanner.data.protocol.CallDto
+import solutions.saubeo.rdioscanner.data.protocol.OscillatorBeep
 import java.io.File
 import java.util.UUID
 
@@ -23,6 +31,8 @@ data class QueuedCall(
     val systemLabel: String?,
     val talkgroupLabel: String?,
     val talkgroupName: String? = null,
+    /** Oscillator preset to play before this call's audio. Null = no alert. */
+    val alertBeeps: List<OscillatorBeep>? = null,
 )
 
 /**
@@ -49,11 +59,19 @@ class CallPlayer(private val context: Context) {
 
     private val mediaIdToQueued = HashMap<String, QueuedCall>()
 
+    private val alertPlayer = AlertPlayer()
+    private val alertScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var alertJob: Job? = null
+    /** Tracks which mediaId we've already played an alert for, so resuming
+     *  a paused item or transitions caused by seek don't re-fire the alert. */
+    private val alertedMediaIds = HashSet<String>()
+
     private val playerListener = object : Player.Listener {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             _playing.value?.let { recordHistory(it) }
             updatePlayingAndQueue()
             cleanupPastItems()
+            mediaItem?.let { maybePlayAlertFor(it) }
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -117,6 +135,7 @@ class CallPlayer(private val context: Context) {
         systemLabel: String?,
         talkgroupLabel: String?,
         talkgroupName: String? = null,
+        alertBeeps: List<OscillatorBeep>? = null,
     ) {
         if (call.audio.isEmpty()) {
             Log.w(TAG, "enqueue: id=${call.id} audio bytes empty — skipping")
@@ -126,7 +145,7 @@ class CallPlayer(private val context: Context) {
         val file = File(cacheDir, "${UUID.randomUUID()}.$ext")
         file.writeBytes(call.audio)
         val mediaId = file.nameWithoutExtension
-        mediaIdToQueued[mediaId] = QueuedCall(call, file, systemLabel, talkgroupLabel, talkgroupName)
+        mediaIdToQueued[mediaId] = QueuedCall(call, file, systemLabel, talkgroupLabel, talkgroupName, alertBeeps)
 
         val item = MediaItem.Builder()
             .setMediaId(mediaId)
@@ -164,6 +183,7 @@ class CallPlayer(private val context: Context) {
             systemLabel = queued.systemLabel,
             talkgroupLabel = queued.talkgroupLabel,
             talkgroupName = queued.talkgroupName,
+            alertBeeps = queued.alertBeeps,
         )
     }
 
@@ -179,6 +199,7 @@ class CallPlayer(private val context: Context) {
         systemLabel: String?,
         talkgroupLabel: String?,
         talkgroupName: String? = null,
+        alertBeeps: List<OscillatorBeep>? = null,
     ) {
         if (call.audio.isEmpty()) {
             Log.w(TAG, "playNow: id=${call.id} audio bytes empty — skipping")
@@ -189,7 +210,7 @@ class CallPlayer(private val context: Context) {
         file.writeBytes(call.audio)
         val mediaId = file.nameWithoutExtension
         mediaIdToQueued[mediaId] = QueuedCall(
-            call, file, systemLabel, talkgroupLabel, talkgroupName,
+            call, file, systemLabel, talkgroupLabel, talkgroupName, alertBeeps,
         )
 
         val item = MediaItem.Builder()
@@ -248,10 +269,53 @@ class CallPlayer(private val context: Context) {
     }
 
     fun release() {
+        alertJob?.cancel()
+        alertScope.cancel()
         player.removeListener(playerListener)
         player.release()
         cacheDir.listFiles()?.forEach { it.delete() }
         mediaIdToQueued.clear()
+        alertedMediaIds.clear()
+    }
+
+    /**
+     * When ExoPlayer transitions to a new media item with an attached alert
+     * preset, pauses playback, plays the alert synchronously on IO, and
+     * resumes. Each mediaId is alerted at most once so seeks / pause-resume
+     * don't replay the tone.
+     */
+    private fun maybePlayAlertFor(mediaItem: MediaItem) {
+        val mediaId = mediaItem.mediaId ?: return
+        if (mediaId in alertedMediaIds) return
+        val queued = mediaIdToQueued[mediaId] ?: return
+        val beeps = queued.alertBeeps?.takeIf { it.isNotEmpty() } ?: return
+
+        alertedMediaIds.add(mediaId)
+        player.playWhenReady = false
+        alertJob?.cancel()
+        alertJob = alertScope.launch {
+            try {
+                alertPlayer.play(beeps)
+            } catch (t: Throwable) {
+                Log.w(TAG, "alert preset playback failed: ${t.message}")
+            }
+            withContext(Dispatchers.Main) {
+                // If the user switched calls or stopped while the alert was
+                // playing, don't yank playback back to true.
+                val currentId = currentMediaItemId()
+                if (currentId == mediaId) {
+                    player.playWhenReady = true
+                    if (!player.isPlaying) player.play()
+                }
+            }
+        }
+    }
+
+    private fun currentMediaItemId(): String? {
+        val count = player.mediaItemCount
+        if (count == 0) return null
+        val idx = player.currentMediaItemIndex.coerceIn(0, count - 1)
+        return player.getMediaItemAt(idx).mediaId
     }
 
     private fun updatePlayingAndQueue() {

@@ -37,6 +37,8 @@ type System struct {
 	Transcribe          bool        `json:"transcribe"`
 	TranscriptionPrompt string      `json:"transcriptionPrompt"`
 	Units               *Units      `json:"units"`
+	Delay               uint        `json:"delay"`
+	Alert               string      `json:"alert"`
 }
 
 func NewSystem() *System {
@@ -103,6 +105,16 @@ func (system *System) FromMap(m map[string]any) *System {
 	switch v := m["units"].(type) {
 	case []any:
 		system.Units.FromMap(v)
+	}
+
+	switch v := m["delay"].(type) {
+	case float64:
+		system.Delay = uint(v)
+	}
+
+	switch v := m["alert"].(type) {
+	case string:
+		system.Alert = v
 	}
 
 	return system
@@ -296,6 +308,10 @@ func (systems *Systems) GetScopedSystems(client *Client, groups *Groups, tags *T
 				talkgroupMap["led"] = rawTalkgroup.Led
 			}
 
+			if rawTalkgroup.Alert != "" {
+				talkgroupMap["alert"] = rawTalkgroup.Alert
+			}
+
 			talkgroupsMap = append(talkgroupsMap, talkgroupMap)
 		}
 
@@ -318,6 +334,10 @@ func (systems *Systems) GetScopedSystems(client *Client, groups *Groups, tags *T
 
 		if rawSystem.Led != nil {
 			systemMap["led"] = rawSystem.Led
+		}
+
+		if rawSystem.Alert != "" {
+			systemMap["alert"] = rawSystem.Alert
 		}
 
 		systemsMap = append(systemsMap, systemMap)
@@ -354,7 +374,8 @@ func (systems *Systems) Read(db *Database) error {
 		return fmt.Errorf("systems.read: %v", err)
 	}
 
-	if rows, err = db.Query("select `_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`, `transcribe`, `transcriptionPrompt` from `rdioScannerSystems`"); err != nil {
+	var alert sql.NullString
+	if rows, err = db.Query("select `_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`, `transcribe`, `transcriptionPrompt`, `delay`, `alert` from `rdioScannerSystems`"); err != nil {
 		return formatError(err)
 	}
 
@@ -364,8 +385,12 @@ func (systems *Systems) Read(db *Database) error {
 			Units:      NewUnits(),
 		}
 
-		if err = rows.Scan(&rowId, &system.AutoPopulate, &blacklists, &system.Id, &system.Label, &led, &order, &system.Transcribe, &system.TranscriptionPrompt); err != nil {
+		if err = rows.Scan(&rowId, &system.AutoPopulate, &blacklists, &system.Id, &system.Label, &led, &order, &system.Transcribe, &system.TranscriptionPrompt, &system.Delay, &alert); err != nil {
 			break
+		}
+
+		if alert.Valid {
+			system.Alert = alert.String
 		}
 
 		if rowId.Valid && rowId.Float64 > 0 {
@@ -498,15 +523,15 @@ func (systems *Systems) Write(db *Database) error {
 		if count == 0 {
 			rowIdVal, hasRowId := system.RowId.(uint)
 			if db.Config.DbType == DbTypePostgres && (!hasRowId || rowIdVal == 0) {
-				_, err = db.Exec("insert into `rdioScannerSystems` (`autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`, `transcribe`, `transcriptionPrompt`) values (?, ?, ?, ?, ?, ?, ?, ?)", system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order, system.Transcribe, system.TranscriptionPrompt)
+				_, err = db.Exec("insert into `rdioScannerSystems` (`autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`, `transcribe`, `transcriptionPrompt`, `delay`, `alert`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order, system.Transcribe, system.TranscriptionPrompt, system.Delay, system.Alert)
 			} else {
-				_, err = db.Exec("insert into `rdioScannerSystems` (`_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`, `transcribe`, `transcriptionPrompt`) values (?, ?, ?, ?, ?, ?, ?, ?, ?)", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order, system.Transcribe, system.TranscriptionPrompt)
+				_, err = db.Exec("insert into `rdioScannerSystems` (`_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`, `transcribe`, `transcriptionPrompt`, `delay`, `alert`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order, system.Transcribe, system.TranscriptionPrompt, system.Delay, system.Alert)
 			}
 			if err != nil {
 				break
 			}
 
-		} else if _, err = db.Exec("update `rdioScannerSystems` set `_id` = ?, `autoPopulate` = ?, `blacklists` = ?, `id` = ?, `label` = ?, `led` = ?, `order` = ?, `transcribe` = ?, `transcriptionPrompt` = ? where `_id` = ?", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order, system.Transcribe, system.TranscriptionPrompt, system.RowId); err != nil {
+		} else if _, err = db.Exec("update `rdioScannerSystems` set `_id` = ?, `autoPopulate` = ?, `blacklists` = ?, `id` = ?, `label` = ?, `led` = ?, `order` = ?, `transcribe` = ?, `transcriptionPrompt` = ?, `delay` = ?, `alert` = ? where `_id` = ?", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order, system.Transcribe, system.TranscriptionPrompt, system.Delay, system.Alert, system.RowId); err != nil {
 			break
 		}
 

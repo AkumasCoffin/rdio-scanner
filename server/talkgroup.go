@@ -35,6 +35,8 @@ type Talkgroup struct {
 	Order      uint   `json:"order"`
 	TagId      uint   `json:"tagId"`
 	Transcribe bool   `json:"transcribe"`
+	Delay      uint   `json:"delay"`
+	Alert      string `json:"alert"`
 	tag        string
 }
 
@@ -94,6 +96,16 @@ func (talkgroup *Talkgroup) FromMap(m map[string]any) *Talkgroup {
 	switch v := m["tagId"].(type) {
 	case float64:
 		talkgroup.TagId = uint(v)
+	}
+
+	switch v := m["delay"].(type) {
+	case float64:
+		talkgroup.Delay = uint(v)
+	}
+
+	switch v := m["alert"].(type) {
+	case string:
+		talkgroup.Alert = v
 	}
 
 	return talkgroup
@@ -170,15 +182,20 @@ func (talkgroups *Talkgroups) Read(db *Database, systemId uint) error {
 		return fmt.Errorf("talkgroups.read: %v", err)
 	}
 
-	if rows, err = db.Query("select `frequency`, `groupId`, `id`, `label`, `led`, `name`, `order`, `tagId`, `transcribe` from `rdioScannerTalkgroups` where `systemId` = ?", systemId); err != nil {
+	var alert sql.NullString
+	if rows, err = db.Query("select `frequency`, `groupId`, `id`, `label`, `led`, `name`, `order`, `tagId`, `transcribe`, `delay`, `alert` from `rdioScannerTalkgroups` where `systemId` = ?", systemId); err != nil {
 		return formatError(err)
 	}
 
 	for rows.Next() {
 		talkgroup := &Talkgroup{}
 
-		if err = rows.Scan(&frequency, &talkgroup.GroupId, &talkgroup.Id, &talkgroup.Label, &led, &talkgroup.Name, &talkgroup.Order, &talkgroup.TagId, &talkgroup.Transcribe); err != nil {
+		if err = rows.Scan(&frequency, &talkgroup.GroupId, &talkgroup.Id, &talkgroup.Label, &led, &talkgroup.Name, &talkgroup.Order, &talkgroup.TagId, &talkgroup.Transcribe, &talkgroup.Delay, &alert); err != nil {
 			break
+		}
+
+		if alert.Valid {
+			talkgroup.Alert = alert.String
 		}
 
 		if frequency.Valid && frequency.Float64 > 0 {
@@ -265,11 +282,11 @@ func (talkgroups *Talkgroups) Write(db *Database, systemId uint) error {
 		}
 
 		if count == 0 {
-			if _, err = db.Exec("insert into `rdioScannerTalkgroups` (`frequency`, `groupId`, `id`, `label`, `led`, `name`, `order`, `systemId`, `tagId`, `transcribe`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", talkgroup.Frequency, talkgroup.GroupId, talkgroup.Id, talkgroup.Label, talkgroup.Led, talkgroup.Name, talkgroup.Order, systemId, talkgroup.TagId, talkgroup.Transcribe); err != nil {
+			if _, err = db.Exec("insert into `rdioScannerTalkgroups` (`frequency`, `groupId`, `id`, `label`, `led`, `name`, `order`, `systemId`, `tagId`, `transcribe`, `delay`, `alert`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", talkgroup.Frequency, talkgroup.GroupId, talkgroup.Id, talkgroup.Label, talkgroup.Led, talkgroup.Name, talkgroup.Order, systemId, talkgroup.TagId, talkgroup.Transcribe, talkgroup.Delay, talkgroup.Alert); err != nil {
 				break
 			}
 
-		} else if _, err = db.Exec("update `rdioScannerTalkgroups` set `frequency` = ?, `groupId` = ?, `label` = ?, `led` = ?, `name` = ?, `order` = ?, `tagId` = ?, `transcribe` = ? where `id` = ? and `systemId` = ?", talkgroup.Frequency, talkgroup.GroupId, talkgroup.Label, talkgroup.Led, talkgroup.Name, talkgroup.Order, talkgroup.TagId, talkgroup.Transcribe, talkgroup.Id, systemId); err != nil {
+		} else if _, err = db.Exec("update `rdioScannerTalkgroups` set `frequency` = ?, `groupId` = ?, `label` = ?, `led` = ?, `name` = ?, `order` = ?, `tagId` = ?, `transcribe` = ?, `delay` = ?, `alert` = ? where `id` = ? and `systemId` = ?", talkgroup.Frequency, talkgroup.GroupId, talkgroup.Label, talkgroup.Led, talkgroup.Name, talkgroup.Order, talkgroup.TagId, talkgroup.Transcribe, talkgroup.Delay, talkgroup.Alert, talkgroup.Id, systemId); err != nil {
 			break
 		}
 	}

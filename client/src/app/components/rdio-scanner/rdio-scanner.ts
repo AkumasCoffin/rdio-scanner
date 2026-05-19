@@ -95,6 +95,7 @@ export enum RdioScannerCategoryType {
 
 export interface RdioScannerConfig {
     afs?: string;
+    alerts?: { [name: string]: RdioScannerBeep[] };
     branding?: string;
     dimmerDelay: number | false;
     email?: string;
@@ -189,6 +190,7 @@ export interface RdioScannerSystem {
     order?: number;
     talkgroups: RdioScannerTalkgroup[];
     units: RdioScannerUnit[];
+    alert?: string;
 }
 
 export interface RdioScannerTalkgroup {
@@ -199,6 +201,7 @@ export interface RdioScannerTalkgroup {
     led?: 'blue' | 'cyan' | 'green' | 'magenta' | 'orange' | 'red' | 'white' | 'yellow';
     name: string;
     tag: string;
+    alert?: string;
 }
 
 export interface RdioScannerUnit {

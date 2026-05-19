@@ -33,6 +33,8 @@ data class TalkgroupDto(
     val tag: String = "",
     val frequency: Double? = null,
     val led: String? = null,
+    /** Name of an alert preset (alert1..alert9) to play before this talkgroup's calls. */
+    val alert: String? = null,
 )
 
 @Serializable
@@ -49,11 +51,23 @@ data class SystemDto(
     val order: Int? = null,
     val talkgroups: List<TalkgroupDto> = emptyList(),
     val units: List<UnitDto> = emptyList(),
+    /** System-level alert preset name; per-talkgroup alert wins. */
+    val alert: String? = null,
+)
+
+@Serializable
+data class OscillatorBeep(
+    val begin: Float,
+    val end: Float,
+    val frequency: Int,
+    /** Wire-side field is `type` ("square", "sine", "triangle", "sawtooth"). */
+    val type: String = "square",
 )
 
 @Serializable
 data class ConfigDto(
     val afs: String? = null,
+    val alerts: Map<String, List<OscillatorBeep>>? = null,
     val branding: String? = null,
     val email: String? = null,
     val systems: List<SystemDto> = emptyList(),

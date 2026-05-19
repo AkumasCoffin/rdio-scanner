@@ -40,6 +40,7 @@ type Call struct {
 	System         uint      `json:"system"`
 	Talkgroup      uint      `json:"talkgroup"`
 	Transcript     any       `json:"transcript,omitempty"`
+	Delayed        bool      `json:"delayed,omitempty"`
 	systemLabel    any
 	talkgroupGroup any
 	talkgroupLabel any
@@ -107,6 +108,10 @@ func (call *Call) MarshalJSON() ([]byte, error) {
 
 	if call.Transcript != nil {
 		out["transcript"] = call.Transcript
+	}
+
+	if call.Delayed {
+		out["delayed"] = true
 	}
 
 	return json.Marshal(out)

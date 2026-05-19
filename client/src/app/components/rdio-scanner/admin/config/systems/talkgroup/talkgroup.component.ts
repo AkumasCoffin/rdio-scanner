@@ -34,6 +34,8 @@ export class RdioScannerAdminTalkgroupComponent {
 
     leds = this.adminService.getLeds();
 
+    alerts = ['alert1', 'alert2', 'alert3', 'alert4', 'alert5', 'alert6', 'alert7', 'alert8', 'alert9'];
+
     get groups(): Group[] {
         return this.form?.root.get('groups')?.value as Group[];
     }

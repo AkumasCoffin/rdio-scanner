@@ -34,6 +34,7 @@ type Controller struct {
 	Calls       *Calls
 	Config      *Config
 	Database    *Database
+	Delayer     *Delayer
 	Accesses    *Accesses
 	Apikeys     *Apikeys
 	Dirwatches  *Dirwatches
@@ -91,6 +92,7 @@ func NewController(config *Config) *Controller {
 	controller.Api = NewApi(controller)
 	controller.PublicApi = NewPublicApi(controller)
 	controller.Database = NewDatabase(config)
+	controller.Delayer = NewDelayer(controller)
 	controller.Scheduler = NewScheduler(controller)
 	controller.Stats = NewStats(controller)
 	controller.Transcriber = NewTranscriber(controller)
@@ -371,7 +373,7 @@ func (controller *Controller) IngestCall(call *Call) {
 
 		logCall(call, LogLevelInfo, "success")
 
-		controller.EmitCall(call)
+		controller.Delayer.Delay(call)
 
 		if system.Transcribe && talkgroup.Transcribe {
 			controller.Transcriber.TranscribeCallAsync(id, call)
@@ -628,6 +630,11 @@ func (controller *Controller) Start() error {
 	}
 	if err = controller.Scheduler.Start(); err != nil {
 		return err
+	}
+	if err = controller.Delayer.Start(); err != nil {
+		// Delayer restore failure is non-fatal — log and continue. Any
+		// orphaned rows in rdioScannerDelayed will retry on next boot.
+		controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("delayer start: %v", err))
 	}
 
 	// Warm the unrestricted CFG cache so the very first client connect

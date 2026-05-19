@@ -91,6 +91,34 @@
             </mat-error>
         </mat-form-field>
     </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Delay (seconds)</span><br>
+            <span class="mat-caption">Hold calls on every talkgroup of this system before forwarding to listeners and
+                downstreams. Per-talkgroup delay overrides this. Set to 0 (or leave blank) for immediate emit.</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <input type="number" min="0" matInput formControlName="delay" placeholder="Delay">
+            <mat-error *ngIf="form?.get('delay')?.errors">
+                Invalid delay
+            </mat-error>
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Alert Tone</span><br>
+            <span class="mat-caption">Announcement tone played before any call on this system. Per-talkgroup alert
+                overrides this. Choose from nine built-in presets, or leave on "None" for no tone.</span>
+        </p>
+        <mat-form-field floatLabel="never">
+            <mat-select formControlName="alert" placeholder="Alert">
+                <mat-option [value]="null">None</mat-option>
+                <mat-option *ngFor="let alert of alerts" [value]="alert">
+                    {{ alert | titlecase }}
+                </mat-option>
+            </mat-select>
+        </mat-form-field>
+    </div>
     <mat-accordion displayMode="flat">
         <mat-expansion-panel>
             <mat-expansion-panel-header>

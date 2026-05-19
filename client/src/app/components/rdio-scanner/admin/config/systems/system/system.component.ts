@@ -40,6 +40,8 @@ export class RdioScannerAdminSystemComponent {
 
     leds = this.adminService.getLeds();
 
+    alerts = ['alert1', 'alert2', 'alert3', 'alert4', 'alert5', 'alert6', 'alert7', 'alert8', 'alert9'];
+
     get talkgroups(): FormGroup[] {
         const talkgroups = this.form.get('talkgroups') as FormArray;
 

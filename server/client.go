@@ -192,6 +192,7 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 	}
 
 	var payload = map[string]any{
+		"alerts":             Alerts,
 		"branding":           options.Branding,
 		"dimmerDelay":        options.DimmerDelay,
 		"email":              options.Email,

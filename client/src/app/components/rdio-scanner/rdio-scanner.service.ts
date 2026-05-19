@@ -347,6 +347,45 @@ export class RdioScannerService implements OnDestroy {
         });
     }
 
+    private getCallAlertName(call: RdioScannerCall): string | undefined {
+        const systems = this.config?.systems;
+        if (!systems) {
+            return undefined;
+        }
+        const system = systems.find((s) => s.id === call.system);
+        const talkgroup = system?.talkgroups?.find((t) => t.id === call.talkgroup);
+        // Talkgroup alert wins; fall back to system-level alert. Matches
+        // upstream v7 precedence.
+        return talkgroup?.alert || system?.alert || undefined;
+    }
+
+    // Schedules an alert preset on the playback audio context starting at
+    // `startTime` and returns its total duration in seconds. Caller can use
+    // the duration to schedule the call audio source to start right after.
+    private scheduleAlert(name: string, startTime: number): number {
+        const context = this.audioContext;
+        const seq = this.config?.alerts?.[name];
+        if (!context || !seq || seq.length === 0) {
+            return 0;
+        }
+        const gn = context.createGain();
+        gn.gain.value = 0.04 * RdioScannerService.MAX_GAIN;
+        gn.connect(context.destination);
+        let maxEnd = 0;
+        for (const beep of seq) {
+            const osc = context.createOscillator();
+            osc.connect(gn);
+            osc.frequency.value = beep.frequency;
+            osc.type = beep.type;
+            osc.start(startTime + beep.begin);
+            osc.stop(startTime + beep.end);
+            if (beep.end > maxEnd) {
+                maxEnd = beep.end;
+            }
+        }
+        return maxEnd;
+    }
+
     clearPin(): void {
         window?.localStorage.removeItem(RdioScannerService.LOCAL_STORAGE_KEY_PIN);
     }
@@ -812,7 +851,12 @@ export class RdioScannerService implements OnDestroy {
 
             this.audioSource.connect(this.gainNode);
             this.audioSource.onended = () => this.skip({ delay: true });
-            this.audioSource.start();
+
+            const alertName = this.getCallAlertName(this.call);
+            const alertDuration = alertName
+                ? this.scheduleAlert(alertName, this.audioContext.currentTime)
+                : 0;
+            this.audioSource.start(this.audioContext.currentTime + alertDuration);
 
             this.event.emit({ call: this.call, queue });
 

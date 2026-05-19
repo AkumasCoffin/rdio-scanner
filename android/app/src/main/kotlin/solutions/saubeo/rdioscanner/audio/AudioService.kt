@@ -17,6 +17,7 @@ import solutions.saubeo.rdioscanner.RdioApplication
 import solutions.saubeo.rdioscanner.data.client.ConnectionState
 import solutions.saubeo.rdioscanner.data.protocol.CallDto
 import solutions.saubeo.rdioscanner.data.protocol.ConfigDto
+import solutions.saubeo.rdioscanner.data.protocol.OscillatorBeep
 import solutions.saubeo.rdioscanner.data.protocol.SystemDto
 import solutions.saubeo.rdioscanner.data.protocol.TalkgroupDto
 import solutions.saubeo.rdioscanner.data.repository.RdioRepository.Companion.FLAG_PLAY
@@ -75,6 +76,7 @@ class AudioService : MediaSessionService() {
                 }
             }
             val labels = resolveLabels(repo.config.value, call)
+            val alertBeeps = resolveAlertBeeps(repo.config.value, call)
             if (userRequested) {
                 // Switch-now semantics: insert right after the current
                 // item and seek to it, so tapping play on a different
@@ -85,6 +87,7 @@ class AudioService : MediaSessionService() {
                     systemLabel = labels.systemLabel,
                     talkgroupLabel = labels.talkgroupLabel,
                     talkgroupName = labels.talkgroupName,
+                    alertBeeps = alertBeeps,
                 )
             } else {
                 callPlayer.enqueue(
@@ -92,6 +95,7 @@ class AudioService : MediaSessionService() {
                     systemLabel = labels.systemLabel,
                     talkgroupLabel = labels.talkgroupLabel,
                     talkgroupName = labels.talkgroupName,
+                    alertBeeps = alertBeeps,
                 )
             }
         }.launchIn(scope)
@@ -145,5 +149,22 @@ class AudioService : MediaSessionService() {
             ?: "TG ${call.talkgroup}"
         val tgName = tg?.name?.ifBlank { null }
         return ResolvedLabels(sysLabel, tgLabel, tgName)
+    }
+
+    /**
+     * Looks up the alert preset name assigned to this call's talkgroup, then
+     * resolves it against the config's [ConfigDto.alerts] map. Returns null
+     * when no alert is assigned, the name is unknown, or the preset is empty.
+     */
+    private fun resolveAlertBeeps(cfg: ConfigDto?, call: CallDto): List<OscillatorBeep>? {
+        val system = cfg?.systems?.firstOrNull { it.id == call.system } ?: return null
+        // Talkgroup alert wins; fall back to system-level alert. Matches
+        // upstream v7 precedence and the webapp's lookup in
+        // RdioScannerService.getCallAlertName.
+        val name = system.talkgroups.firstOrNull { it.id == call.talkgroup }
+            ?.alert?.takeIf { it.isNotBlank() }
+            ?: system.alert?.takeIf { it.isNotBlank() }
+            ?: return null
+        return cfg.alerts?.get(name)?.takeIf { it.isNotEmpty() }
     }
 }

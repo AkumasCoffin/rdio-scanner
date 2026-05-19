@@ -173,6 +173,8 @@ export interface System {
     transcribe?: boolean;
     transcriptionPrompt?: string;
     units?: Unit[];
+    delay?: number;
+    alert?: string | null;
 }
 
 export interface Tag {
@@ -190,6 +192,8 @@ export interface Talkgroup {
     order?: number;
     tagId?: number;
     transcribe?: boolean;
+    delay?: number;
+    alert?: string | null;
 }
 
 export interface Unit {
@@ -596,6 +600,8 @@ export class RdioScannerAdminService implements OnDestroy {
             transcribe: [system?.transcribe ?? true],
             transcriptionPrompt: [system?.transcriptionPrompt ?? ''],
             units: this.ngFormBuilder.array(system?.units?.map((unit) => this.newUnitForm(unit)) || []),
+            delay: [system?.delay ?? 0, Validators.min(0)],
+            alert: [system?.alert ?? null],
         });
     }
 
@@ -610,6 +616,8 @@ export class RdioScannerAdminService implements OnDestroy {
             order: [talkgroup?.order],
             tagId: [talkgroup?.tagId, [Validators.required, this.validateTag()]],
             transcribe: [talkgroup?.transcribe ?? true],
+            delay: [talkgroup?.delay ?? 0, Validators.min(0)],
+            alert: [talkgroup?.alert ?? null],
         });
     }
 
