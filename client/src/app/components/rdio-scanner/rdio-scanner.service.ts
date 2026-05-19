@@ -1470,6 +1470,7 @@ export class RdioScannerService implements OnDestroy {
                     const config = message[1];
 
                     this.config = {
+                        alerts: config.alerts !== null && typeof config.alerts === 'object' ? config.alerts : undefined,
                         branding: typeof config.branding === 'string' ? config.branding : '',
                         dimmerDelay: typeof config.dimmerDelay === 'number' ? config.dimmerDelay : 5000,
                         email: typeof config.email === 'string' ? config.email : '',
