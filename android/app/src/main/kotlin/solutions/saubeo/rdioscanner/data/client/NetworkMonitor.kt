@@ -6,6 +6,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiManager
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.content.getSystemService
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -39,25 +40,57 @@ class NetworkMonitor(context: Context) {
         ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "rdio-scanner-ws")
         ?.apply { setReferenceCounted(false) }
 
+    // Partial wake lock: keeps the CPU schedulable while the WS is connected
+    // so OkHttp's pingInterval scheduler actually fires on time during light-
+    // Doze. WiFi lock alone keeps the radio on but doesn't prevent the CPU
+    // from sleeping between alarms — and when the CPU sleeps, our ping
+    // tasks queue up but don't run. Battery-expensive but acceptable for a
+    // live-feed app the user has explicitly chosen to keep listening; the
+    // FGS notification makes it visible.
+    private val powerManager = appContext.getSystemService<PowerManager>()
+    private val wakeLock: PowerManager.WakeLock? = powerManager
+        ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "rdio-scanner-ws:cpu")
+        ?.apply { setReferenceCounted(false) }
+
     fun acquireWifiLock() {
-        val lock = wifiLock ?: return
-        if (lock.isHeld) return
-        try {
-            lock.acquire()
-            Log.d(TAG, "Wi-Fi high-perf lock acquired")
-        } catch (t: Throwable) {
-            Log.w(TAG, "acquireWifiLock failed: ${t.message}")
+        val wl = wifiLock
+        if (wl != null && !wl.isHeld) {
+            try {
+                wl.acquire()
+                Log.d(TAG, "Wi-Fi high-perf lock acquired")
+            } catch (t: Throwable) {
+                Log.w(TAG, "acquireWifiLock failed: ${t.message}")
+            }
+        }
+        val pl = wakeLock
+        if (pl != null && !pl.isHeld) {
+            try {
+                pl.acquire()
+                Log.d(TAG, "Partial wake lock acquired")
+            } catch (t: Throwable) {
+                Log.w(TAG, "acquireWakeLock failed: ${t.message}")
+            }
         }
     }
 
     fun releaseWifiLock() {
-        val lock = wifiLock ?: return
-        if (!lock.isHeld) return
-        try {
-            lock.release()
-            Log.d(TAG, "Wi-Fi high-perf lock released")
-        } catch (t: Throwable) {
-            Log.w(TAG, "releaseWifiLock failed: ${t.message}")
+        val wl = wifiLock
+        if (wl != null && wl.isHeld) {
+            try {
+                wl.release()
+                Log.d(TAG, "Wi-Fi high-perf lock released")
+            } catch (t: Throwable) {
+                Log.w(TAG, "releaseWifiLock failed: ${t.message}")
+            }
+        }
+        val pl = wakeLock
+        if (pl != null && pl.isHeld) {
+            try {
+                pl.release()
+                Log.d(TAG, "Partial wake lock released")
+            } catch (t: Throwable) {
+                Log.w(TAG, "releaseWakeLock failed: ${t.message}")
+            }
         }
     }
 

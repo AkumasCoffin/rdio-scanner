@@ -449,7 +449,16 @@ class RdioClient(
         fun defaultHttpClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.SECONDS)
-            .pingInterval(30, TimeUnit.SECONDS)
+            // 15s app-level WS ping is half of the 30s default — gives us a
+            // second probe before the Cloudflare 100s idle ceiling kicks in
+            // even if the first ping is deferred by Doze.
+            .pingInterval(15, TimeUnit.SECONDS)
+            // Kernel-level TCP keepalive on every socket. Runs in the OS
+            // network stack on its own clock, so it survives CPU sleep and
+            // light-Doze deferrals that throttle the OkHttp ping scheduler.
+            // Probes start after 30s idle (well under Cloudflare's 100s) and
+            // declare death after 3 unanswered probes at 10s intervals.
+            .socketFactory(KeepAliveSocketFactory())
             .retryOnConnectionFailure(true)
             .build()
     }
