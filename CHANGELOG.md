@@ -6,6 +6,19 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.10.2
+
+Android-focused patch on top of 6.10.1, resolving the persistent "WS drops in the background" issue on Samsung Android 16. Server and webapp have no functional changes; they ride the version bump so the whole stack stays at a single number.
+
+### Android
+
+- **Battery-optimization exemption prompt + permission-gated background mode.** Mirrors the POST_NOTIFICATIONS pattern: at first launch the app fires `Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, which pops a real OS dialog asking the user to allow the app to ignore battery optimization. The ask happens exactly once per install (tracked in DataStore); the user re-grants or revokes from Settings > Apps > Rdio Scanner > Battery from then on. All background-mode machinery — the foreground service promotion, the WifiLock / partial WakeLock pair, and the TCP-keepalive sockets — is gated on `PowerManager.isIgnoringBatteryOptimizations()` at runtime, so when the user denies (or revokes) the exemption the app simply runs as a foreground-only app instead of fighting the OEM power-restriction layer. No in-app UI changes; the system permission is the only knob.
+- **Foreground-service promotion moved to a Composable `LaunchedEffect`.** Earlier `combine(state, isPlaying)` observer fired from `Dispatchers.Main.immediate` and threw `ForegroundServiceStartNotAllowedException` on every WS-state change after the activity backgrounded (Android 12+ refuses `startForeground` from a background coroutine). New design dispatches `ACTION_ENTER_FG` / `ACTION_EXIT_FG` via `ContextCompat.startForegroundService` from inside `RdioApp()`'s `LaunchedEffect`, which only runs while the composable is composing — a state the activity guarantees is TOP. The `AudioService.onStartCommand` handler does the actual `startForeground` call, well inside the 5-second post-`startForegroundService` exemption window.
+- **Kernel-level TCP keepalive on every WS socket.** New `KeepAliveSocketFactory` plugged into OkHttp sets `SO_KEEPALIVE=true` plus `TCP_KEEPIDLE=30s`, `TCP_KEEPINTVL=10s`, `TCP_KEEPCNT=3` via reflection on `java.net.Socket` (not subject to the Android hidden-API restriction). The Linux network stack sends keepalive probes itself, on its own clock, so the path stays warm even when OkHttp's `pingInterval` scheduler is deferred under light-Doze. App-level `pingInterval` shortened from 30s → 15s as a second layer; both well under Cloudflare's 100s idle ceiling.
+- **WifiLock (high-perf) + partial WakeLock.** Acquired in `RdioClient.connect`, released in `disconnect`, owned by `NetworkMonitor`. WiFi lock prevents the radio from power-saving between DTIM intervals; partial wake lock keeps OkHttp's ping scheduler firing on time during light-Doze maintenance windows. Both acquisitions no-op when the battery-opt exemption isn't granted, so battery isn't drained chasing a foreground state the OEM will defeat anyway.
+- **Verbose diagnostic logging** at every step of the FG promotion path (`RdioNav`, `AudioService`, `NetworkMonitor`, `KeepAliveSocketFactory`) so future "still broken" reports can be triaged from a single logcat capture.
+- **Version label on the Connect screen** (`v6.10.2 · debug` when applicable) sourced from `BuildConfig.VERSION_NAME`, so QA can confirm at a glance which build is loaded.
+
 ## Version 6.10.1
 
 Android-focused patch on top of 6.10.0. Three independent fixes covering text rendering on the LCD/history/search surfaces and the post-background reconnect path. Server and webapp have no functional changes; they ride the version bump so the stack stays at a single number.
