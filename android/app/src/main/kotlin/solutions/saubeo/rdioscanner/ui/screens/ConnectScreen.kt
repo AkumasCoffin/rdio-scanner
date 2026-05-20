@@ -2,6 +2,8 @@
 
 package solutions.saubeo.rdioscanner.ui.screens
 
+import solutions.saubeo.rdioscanner.BuildConfig
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -94,15 +96,33 @@ fun ConnectScreen(vm: ScannerViewModel) {
             ),
         )
         Spacer(Modifier.height(4.dp))
-        Text(
-            text = "Connections",
-            color = RdioPalette.TextSoft,
-            style = LocalTextStyle.current.copy(
-                fontSize = 11.sp,
-                letterSpacing = 2.sp,
-                fontWeight = FontWeight.SemiBold,
-            ),
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Connections",
+                color = RdioPalette.TextSoft,
+                style = LocalTextStyle.current.copy(
+                    fontSize = 11.sp,
+                    letterSpacing = 2.sp,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+            )
+            Spacer(Modifier.weight(1f))
+            // Build label so the user (and bug reporters) can identify exactly
+            // which APK is installed without scrolling system settings.
+            // Includes the .debug applicationIdSuffix when applicable so we can
+            // tell debug-vs-release flavor installs apart at a glance.
+            Text(
+                text = "v${BuildConfig.VERSION_NAME}" +
+                    if (BuildConfig.DEBUG) " · debug" else "",
+                color = RdioPalette.TextSoft,
+                style = LocalTextStyle.current.copy(
+                    fontSize = 10.sp,
+                    letterSpacing = 1.sp,
+                ),
+            )
+        }
         Spacer(Modifier.height(16.dp))
 
         if (profiles.isEmpty()) {
