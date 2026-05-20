@@ -16,6 +16,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import solutions.saubeo.rdioscanner.BackgroundPermissions
 import solutions.saubeo.rdioscanner.audio.AudioService
 import solutions.saubeo.rdioscanner.data.client.ConnectionState
 import solutions.saubeo.rdioscanner.ui.screens.ConnectScreen
@@ -69,13 +70,22 @@ fun RdioApp() {
     // foreground (we never sent EXIT_FG). When the user comes back to the
     // foreground, this effect re-runs and re-promotes if needed.
     LaunchedEffect(state) {
-        val shouldBeForeground = state is ConnectionState.Connected ||
+        val connectedLike = state is ConnectionState.Connected ||
             state is ConnectionState.Authenticating ||
             state is ConnectionState.Connecting
+        // Background mode requires the OS-level battery-optimization
+        // exemption. Without it, OEM power-restrictions (Samsung NETD DNS
+        // blocks, etc.) defeat any FGS we'd try to promote — so don't even
+        // bother dispatching ENTER_FG. The user is asked for the exemption
+        // once at first launch via MainActivity.maybeAskBatteryOptimization
+        // and can re-grant/revoke any time from Settings > Apps > Rdio
+        // Scanner > Battery.
+        val canRunBg = BackgroundPermissions.canRunInBackground(context)
+        val shouldBeForeground = connectedLike && canRunBg
         val action = if (shouldBeForeground) AudioService.ACTION_ENTER_FG
             else AudioService.ACTION_EXIT_FG
         val intent = Intent(context, AudioService::class.java).apply { this.action = action }
-        Log.i(TAG, "FG-intent dispatch: state=$state -> $action (shouldBeForeground=$shouldBeForeground)")
+        Log.i(TAG, "FG-intent dispatch: state=$state canRunBg=$canRunBg -> $action")
         try {
             if (shouldBeForeground) {
                 ContextCompat.startForegroundService(context, intent)

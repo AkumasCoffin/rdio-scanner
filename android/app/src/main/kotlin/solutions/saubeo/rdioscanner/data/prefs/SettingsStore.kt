@@ -59,6 +59,12 @@ class SettingsStore(private val context: Context) {
     private val keyPresets = stringPreferencesKey("presets_json")
     private val keyProfiles = stringPreferencesKey("profiles_json")
     private val keyLastProfileId = stringPreferencesKey("last_profile_id")
+    // Tracks whether we've already shown the system's
+    // REQUEST_IGNORE_BATTERY_OPTIMIZATIONS dialog on this install. The
+    // intent shows the dialog every time it's fired (no per-app suppression
+    // from the platform), so we suppress ourselves after asking once — like
+    // POST_NOTIFICATIONS, the user can re-grant later via system Settings.
+    private val keyBatteryOptAsked = booleanPreferencesKey("battery_opt_asked")
 
     val serverUrl: Flow<String> = context.dataStore.data.map { it[keyServerUrl].orEmpty() }
     val accessCode: Flow<String> = context.dataStore.data.map { it[keyAccessCode].orEmpty() }
@@ -89,6 +95,13 @@ class SettingsStore(private val context: Context) {
 
     val lastProfileId: Flow<String?> = context.dataStore.data.map {
         it[keyLastProfileId]?.ifBlank { null }
+    }
+
+    suspend fun batteryOptAsked(): Boolean =
+        context.dataStore.data.map { it[keyBatteryOptAsked] == true }.first()
+
+    suspend fun markBatteryOptAsked() {
+        context.dataStore.edit { prefs -> prefs[keyBatteryOptAsked] = true }
     }
 
     suspend fun setServer(url: String, accessCode: String) {

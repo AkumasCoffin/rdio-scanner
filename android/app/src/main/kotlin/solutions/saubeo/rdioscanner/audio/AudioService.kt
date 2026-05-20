@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.getSystemService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import solutions.saubeo.rdioscanner.BackgroundPermissions
 import solutions.saubeo.rdioscanner.MainActivity
 import solutions.saubeo.rdioscanner.R
 import kotlinx.coroutines.CoroutineScope
@@ -165,6 +166,15 @@ class AudioService : MediaSessionService() {
         Log.d(TAG, "onStartCommand: action=$action flags=$flags startId=$startId foregroundActive=$foregroundActive")
         when (action) {
             ACTION_ENTER_FG -> {
+                // Defense in depth: even if the Composable dispatched
+                // ENTER_FG, double-check the runtime permission state here.
+                // If the user revoked the battery-optimization exemption
+                // since the activity loaded, we'd just thrash trying to
+                // hold a foreground state the OS will revoke.
+                if (!BackgroundPermissions.canRunInBackground(this)) {
+                    Log.i(TAG, "onStartCommand: ENTER_FG skipped — battery-opt exemption not granted")
+                    return START_NOT_STICKY
+                }
                 val app = application as RdioApplication
                 val state = app.repository.state.value
                 startListeningForeground(state)

@@ -12,9 +12,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.launch
 import solutions.saubeo.rdioscanner.audio.AudioService
 import solutions.saubeo.rdioscanner.ui.LocalClickSound
 import solutions.saubeo.rdioscanner.ui.RdioApp
@@ -30,6 +32,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         maybeAskNotificationPermission()
+        maybeAskBatteryOptimization()
         startAudioService()
         bindMediaController()
         val app = application as RdioApplication
@@ -75,5 +78,26 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
         if (!granted) requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    /**
+     * Mirrors [maybeAskNotificationPermission]: pop the system battery-
+     * optimization-exemption dialog once per install. Skip if already
+     * granted, or if we've already asked (the platform doesn't suppress
+     * repeated REQUEST_IGNORE_BATTERY_OPTIMIZATIONS intents on its own, so
+     * we track the ask flag in SettingsStore). The user can re-grant or
+     * revoke at any time via Settings > Apps > Rdio Scanner > Battery; the
+     * runtime checks elsewhere in the codebase honor whatever's current.
+     */
+    private fun maybeAskBatteryOptimization() {
+        if (BackgroundPermissions.canRunInBackground(this)) return
+        val app = application as RdioApplication
+        lifecycleScope.launch {
+            if (app.settings.batteryOptAsked()) return@launch
+            // Mark asked BEFORE firing so that even if the activity dies
+            // mid-prompt we don't re-pester on next launch.
+            app.settings.markBatteryOptAsked()
+            BackgroundPermissions.requestBatteryOptimizationExemption(this@MainActivity)
+        }
     }
 }

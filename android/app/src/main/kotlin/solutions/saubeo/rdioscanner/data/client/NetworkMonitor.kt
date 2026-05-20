@@ -9,6 +9,7 @@ import android.net.wifi.WifiManager
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.content.getSystemService
+import solutions.saubeo.rdioscanner.BackgroundPermissions
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
@@ -53,6 +54,15 @@ class NetworkMonitor(context: Context) {
         ?.apply { setReferenceCounted(false) }
 
     fun acquireWifiLock() {
+        // No-op when the user hasn't granted the battery-optimization
+        // exemption — holding these locks would only burn battery without
+        // actually keeping the WS alive (NETD blocks DNS, FGS gets demoted,
+        // etc.). Caller is expected to honor [BackgroundPermissions.
+        // canRunInBackground]; this gate is defense-in-depth.
+        if (!BackgroundPermissions.canRunInBackground(appContext)) {
+            Log.d(TAG, "acquireWifiLock skipped — battery-opt exemption not granted")
+            return
+        }
         val wl = wifiLock
         if (wl != null && !wl.isHeld) {
             try {
