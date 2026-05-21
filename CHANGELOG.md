@@ -6,6 +6,19 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.10.3-beta.1
+
+Pre-release for testing. Server only; Android and webapp ride the version bump.
+
+### Server
+
+- **Downstream transcript forwarding.** After a call is transcribed locally, the server now pushes the transcript to any configured downstream that supports the new `transcript-forward` feature. The sending instance probes each downstream's `/api/capabilities` endpoint once per hour; legacy instances (original repo) return 404 and are silently skipped — no behavioural change for existing setups.
+- **New endpoints (receiving side):**
+  - `GET /api/capabilities` — advertises `{"features":["transcript-forward"]}` so upstream instances can detect support.
+  - `POST /api/call-transcript` — receives `{key, system, talkgroup, dateTime, transcript}`, looks up the matching local call record by a ±500 ms datetime window, stores the transcript, and broadcasts it to live WebSocket clients via the existing `EmitTranscript` path.
+- Transcript pushes are gated on the same API-key access-control check used by `/api/call-upload`, so a downstream only accepts transcripts for systems/talkgroups the key is scoped to.
+- Fully backwards compatible: no changes to `/api/call-upload` or any existing endpoint.
+
 ## Version 6.10.2
 
 Android-focused patch on top of 6.10.1, resolving the persistent "WS drops in the background" issue on Samsung Android 16. Server and webapp have no functional changes; they ride the version bump so the whole stack stays at a single number.
