@@ -406,6 +406,9 @@ func ParseMultipartContent(call *Call, p *multipart.Part, b []byte) {
 		if s := string(b); len(s) > 0 && s != "-" {
 			call.talkgroupTag = s
 		}
+
+	case "transcriptPending":
+		call.transcriptPending = string(b) == "1"
 	}
 }
 

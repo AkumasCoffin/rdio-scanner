@@ -373,9 +373,19 @@ func (controller *Controller) IngestCall(call *Call) {
 
 		logCall(call, LogLevelInfo, "success")
 
+		// Hint to downstream instances that this server will transcribe the call
+		// and forward the result. Only set when transcription is actually enabled
+		// here — if not, downstreams should transcribe for themselves.
+		if system.Transcribe && talkgroup.Transcribe && controller.Transcriber.Enabled() {
+			call.transcriptWillForward = true
+		}
+
 		controller.Delayer.Delay(call)
 
-		if system.Transcribe && talkgroup.Transcribe {
+		// transcriptPending means an upstream server sent this call and will push
+		// the transcript separately — skip local transcription to avoid doing
+		// the same work twice.
+		if system.Transcribe && talkgroup.Transcribe && !call.transcriptPending {
 			controller.Transcriber.TranscribeCallAsync(id, call)
 		}
 

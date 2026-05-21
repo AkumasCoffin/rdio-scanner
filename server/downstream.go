@@ -343,6 +343,16 @@ func (downstream *Downstream) Send(call *Call) error {
 		}
 	}
 
+	if call.transcriptWillForward {
+		if w, err := mw.CreateFormField("transcriptPending"); err == nil {
+			if _, err = w.Write([]byte("1")); err != nil {
+				return formatError(err)
+			}
+		} else {
+			return formatError(err)
+		}
+	}
+
 	if err := mw.Close(); err != nil {
 		return formatError(err)
 	}

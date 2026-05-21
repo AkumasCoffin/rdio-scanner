@@ -48,6 +48,14 @@ type Call struct {
 	talkgroupTag   any
 	units          any
 	apiKeyIdent    string
+	// transcriptWillForward is set by this instance before forwarding the call
+	// downstream, when local transcription is enabled. Downstream.Send includes
+	// it in the form so the receiver knows a transcript is coming.
+	transcriptWillForward bool
+	// transcriptPending is parsed from the incoming call-upload form field. When
+	// true, local transcription is suppressed — the upstream will push the
+	// transcript via /api/call-transcript once Whisper finishes.
+	transcriptPending bool
 }
 
 func NewCall() *Call {
