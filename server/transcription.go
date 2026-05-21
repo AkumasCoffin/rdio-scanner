@@ -485,5 +485,7 @@ func (t *Transcriber) TranscribeCallAsync(id uint, call *Call) {
 		// row the moment Whisper finishes.
 		t.Controller.Clients.EmitTranscript(id, call.System, call.Talkgroup, text, t.Controller.Accesses.IsRestricted())
 		t.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcribed call %v (%d chars)", id, len(text)))
+		// Forward to downstreams that support transcript-forward.
+		t.Controller.Downstreams.SendTranscript(t.Controller, call)
 	}(id, call)
 }

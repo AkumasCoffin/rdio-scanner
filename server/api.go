@@ -16,12 +16,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type Api struct {
@@ -177,6 +179,83 @@ func (api *Api) TrunkRecorderCallUploadHandler(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		w.Write([]byte("Unsupported method\n"))
 	}
+}
+
+// CapabilitiesHandler advertises optional features this server supports.
+// Downstream probers hit this before attempting transcript-forward pushes;
+// the original repo returns 404 here, which callers treat as "not supported".
+func (api *Api) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"features":["transcript-forward"]}`))
+}
+
+type callTranscriptRequest struct {
+	Key        string `json:"key"`
+	System     uint   `json:"system"`
+	Talkgroup  uint   `json:"talkgroup"`
+	DateTime   string `json:"dateTime"`
+	Transcript string `json:"transcript"`
+}
+
+// CallTranscriptHandler receives a transcript forwarded by an upstream instance
+// and stores it against the matching local call record.
+func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		api.exitWithError(w, http.StatusBadRequest, "cannot read body")
+		return
+	}
+
+	var req callTranscriptRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		api.exitWithError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	dt, err := time.Parse(time.RFC3339, req.DateTime)
+	if err != nil {
+		api.exitWithError(w, http.StatusBadRequest, "invalid dateTime")
+		return
+	}
+
+	stub := &Call{System: req.System, Talkgroup: req.Talkgroup}
+	apikey, ok := api.Controller.Apikeys.GetApikey(req.Key)
+	if !ok || !apikey.HasAccess(stub) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(fmt.Sprintf("Invalid API key for system %v talkgroup %v.\n", req.System, req.Talkgroup)))
+		return
+	}
+
+	db := api.Controller.Database
+	id, err := api.Controller.Calls.GetIdByKey(req.System, req.Talkgroup, dt, db)
+	if err != nil {
+		api.exitWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if id == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("Call not found.\n"))
+		return
+	}
+
+	if err := api.Controller.Calls.UpdateTranscript(id, req.Transcript, db); err != nil {
+		api.exitWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	api.Controller.Clients.EmitTranscript(id, req.System, req.Talkgroup, req.Transcript, api.Controller.Accesses.IsRestricted())
+	api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript received: system=%v talkgroup=%v id=%v (%d chars)", req.System, req.Talkgroup, id, len(req.Transcript)))
+
+	w.Write([]byte("Transcript updated successfully.\n"))
 }
 
 func (api *Api) exitWithError(w http.ResponseWriter, status int, message string) {

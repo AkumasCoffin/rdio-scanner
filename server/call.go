@@ -288,6 +288,29 @@ func (calls *Calls) UpdateTranscript(id uint, transcript string, db *Database) e
 	return err
 }
 
+// GetIdByKey looks up the DB id of a call by (system, talkgroup, dateTime).
+// Uses a ±500 ms window around dateTime — same approach as CheckDuplicate —
+// so minor timezone/format differences between DB drivers don't cause misses.
+// Returns 0 with no error when no matching call exists.
+func (calls *Calls) GetIdByKey(system uint, talkgroup uint, dateTime time.Time, db *Database) (uint, error) {
+	var id sql.NullFloat64
+	d := 500 * time.Millisecond
+	from := dateTime.UTC().Add(-d).Format(db.DateTimeFormat)
+	to := dateTime.UTC().Add(d).Format(db.DateTimeFormat)
+	query := fmt.Sprintf("select `id` from `rdioScannerCalls` where `system` = %v and `talkgroup` = %v and (`dateTime` between '%v' and '%v') limit 1",
+		system, talkgroup, from, to)
+	if err := db.QueryRow(query).Scan(&id); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("getidbykey: %v", err)
+	}
+	if id.Valid {
+		return uint(id.Float64), nil
+	}
+	return 0, nil
+}
+
 func (calls *Calls) Prune(db *Database, pruneDays uint) error {
 	date := time.Now().Add(-24 * time.Hour * time.Duration(pruneDays)).Format(db.DateTimeFormat)
 	_, err := db.Exec("delete from `rdioScannerCalls` where `dateTime` < ?", date)

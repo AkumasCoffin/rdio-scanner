@@ -129,6 +129,10 @@ func main() {
 
 	http.HandleFunc("/api/trunk-recorder-call-upload", controller.Api.TrunkRecorderCallUploadHandler)
 
+	http.HandleFunc("/api/capabilities", controller.Api.CapabilitiesHandler)
+
+	http.HandleFunc("/api/call-transcript", controller.Api.CallTranscriptHandler)
+
 	http.HandleFunc("/api/v1/calls", gzipHandler(controller.PublicApi.CallsRouter))
 	http.HandleFunc("/api/v1/calls/", gzipHandler(controller.PublicApi.CallsRouter))
 
