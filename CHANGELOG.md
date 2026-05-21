@@ -6,6 +6,14 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.10.3-beta.2
+
+Follow-up to beta.1.
+
+### Server
+
+- **Suppress double-transcription across the forwarding hop.** When this instance has transcription enabled and forwards a call to a downstream, the call-upload now carries `transcriptPending=1`. The downstream parses this field and skips its own `TranscribeCallAsync` for that call — the upstream will push the completed transcript via `/api/call-transcript` once Whisper finishes, instead of both sides transcribing the same audio. If the upstream has no transcription key configured, the field is never sent and downstreams transcribe normally; no behavioural change for existing deployments.
+
 ## Version 6.10.3-beta.1
 
 Pre-release for testing. Server only; Android and webapp ride the version bump.
