@@ -6,6 +6,19 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.10.3-beta.4
+
+Receive-side diagnostic logging only — pure observability bump, no behaviour change.
+
+### Server
+
+- **Log every `POST /api/call-transcript` request as it arrives**, regardless of outcome. Previously only successful updates were logged, which meant requests that hit auth failures or call-lookup misses were silent — operators couldn't tell whether the upstream was even reaching them. Three new log lines:
+  - `transcript push received: system=X talkgroup=Y dateTime=Z` (Info) — fires on every well-formed request, before auth.
+  - `transcript push auth failed: system=X talkgroup=Y dateTime=Z` (Warn) — the API key didn't validate, or didn't have access to that system/talkgroup.
+  - `transcript push no matching call: system=X talkgroup=Y dateTime=Z (already pruned, datetime mismatch, or call never arrived)` (Info) — the request was accepted but `GetIdByKey` returned no row.
+- Existing `transcript received: ...` log on full success remains unchanged.
+- **Only the receiver needs to upgrade** for these logs to appear — the upstream's behaviour is unchanged.
+
 ## Version 6.10.3-beta.3
 
 Follow-up to beta.2 — adds diagnostic logging for the transcript-forward path so operators can confirm the suppression is working.
