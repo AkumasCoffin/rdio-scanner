@@ -373,6 +373,10 @@ func (controller *Controller) IngestCall(call *Call) {
 
 		logCall(call, LogLevelInfo, "success")
 
+		if call.transcriptPending {
+			controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("call from upstream with pending transcript: system=%v talkgroup=%v id=%v (awaiting /api/call-transcript push)", call.System, call.Talkgroup, id))
+		}
+
 		// Hint to downstream instances that this server will transcribe the call
 		// and forward the result. Only set when transcription is actually enabled
 		// here — if not, downstreams should transcribe for themselves.
@@ -385,8 +389,12 @@ func (controller *Controller) IngestCall(call *Call) {
 		// transcriptPending means an upstream server sent this call and will push
 		// the transcript separately — skip local transcription to avoid doing
 		// the same work twice.
-		if system.Transcribe && talkgroup.Transcribe && !call.transcriptPending {
-			controller.Transcriber.TranscribeCallAsync(id, call)
+		if system.Transcribe && talkgroup.Transcribe {
+			if call.transcriptPending {
+				controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("local transcription skipped: system=%v talkgroup=%v id=%v (deferred to upstream)", call.System, call.Talkgroup, id))
+			} else {
+				controller.Transcriber.TranscribeCallAsync(id, call)
+			}
 		}
 
 	} else {

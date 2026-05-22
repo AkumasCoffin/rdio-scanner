@@ -6,6 +6,18 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.10.3-beta.3
+
+Follow-up to beta.2 — adds diagnostic logging for the transcript-forward path so operators can confirm the suppression is working.
+
+### Server
+
+- **Two new log lines on the receiving downstream:**
+  - On call ingest with `transcriptPending=1`: `call from upstream with pending transcript: system=X talkgroup=Y id=Z (awaiting /api/call-transcript push)`
+  - At the transcription branch: `local transcription skipped: system=X talkgroup=Y id=Z (deferred to upstream)`
+- Combined with the existing `transcript received: ...` log line in beta.1, the full lifecycle of a forwarded transcript is visible in the admin log viewer.
+- **Both ends must run beta.2+** for the receiving side to see these logs — beta.1 and the original repo don't emit the `transcriptPending` form field, so the receiver just transcribes locally as before.
+
 ## Version 6.10.3-beta.2
 
 Follow-up to beta.1.
