@@ -227,16 +227,16 @@ func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript push received: system=%v talkgroup=%v dateTime=%v", req.System, req.Talkgroup, req.DateTime))
-
 	stub := &Call{System: req.System, Talkgroup: req.Talkgroup}
 	apikey, ok := api.Controller.Apikeys.GetApikey(req.Key)
 	if !ok || !apikey.HasAccess(stub) {
-		api.Controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("transcript push auth failed: system=%v talkgroup=%v dateTime=%v", req.System, req.Talkgroup, req.DateTime))
+		api.Controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("transcript push auth failed: system=%v talkgroup=%v dateTime=%v key=…%s", req.System, req.Talkgroup, req.DateTime, keyTail(req.Key)))
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(fmt.Sprintf("Invalid API key for system %v talkgroup %v.\n", req.System, req.Talkgroup)))
 		return
 	}
+
+	api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript push received: [%v] system=%v talkgroup=%v dateTime=%v", apikey.Ident, req.System, req.Talkgroup, req.DateTime))
 
 	db := api.Controller.Database
 	id, err := api.Controller.Calls.GetIdByKey(req.System, req.Talkgroup, dt, db)
@@ -245,7 +245,7 @@ func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id == 0 {
-		api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript push no matching call: system=%v talkgroup=%v dateTime=%v (already pruned, datetime mismatch, or call never arrived)", req.System, req.Talkgroup, req.DateTime))
+		api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript push no matching call: [%v] system=%v talkgroup=%v dateTime=%v (already pruned, datetime mismatch, or call never arrived)", apikey.Ident, req.System, req.Talkgroup, req.DateTime))
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("Call not found.\n"))
 		return
@@ -257,7 +257,7 @@ func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	api.Controller.Clients.EmitTranscript(id, req.System, req.Talkgroup, req.Transcript, api.Controller.Accesses.IsRestricted())
-	api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript received: system=%v talkgroup=%v id=%v (%d chars)", req.System, req.Talkgroup, id, len(req.Transcript)))
+	api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript received: [%v] system=%v talkgroup=%v id=%v (%d chars)", apikey.Ident, req.System, req.Talkgroup, id, len(req.Transcript)))
 
 	w.Write([]byte("Transcript updated successfully.\n"))
 }

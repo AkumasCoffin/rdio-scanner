@@ -6,6 +6,19 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.10.3-beta.5
+
+Receive-side log polish — adds the API-key identifier to the transcript-push log lines, matching the `[ident]` format used by the existing `newcall` log entries.
+
+### Server
+
+- **API key identifier** (the `Ident` field configured per key on the Admin → API keys page) now appears in each transcript-push log line, so operators can attribute incoming transcripts to a specific upstream:
+  - `transcript push received: [Richard] system=X talkgroup=Y dateTime=Z`
+  - `transcript push no matching call: [Richard] system=X talkgroup=Y dateTime=Z (...)`
+  - `transcript received: [Richard] system=X talkgroup=Y id=Z (N chars)`
+- Auth-failed entries can't show the ident (the key didn't validate), so they show the trailing four chars of the submitted key instead: `transcript push auth failed: system=X talkgroup=Y dateTime=Z key=…aBcD`. Lets operators correlate a failing upstream with the wrong key it's sending.
+- Receiver-only change — upstream behaviour is unchanged.
+
 ## Version 6.10.3-beta.4
 
 Receive-side diagnostic logging only — pure observability bump, no behaviour change.
