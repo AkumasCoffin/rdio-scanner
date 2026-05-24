@@ -6,6 +6,19 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.10.3-beta.9
+
+Audit pass — four correctness fixes after a code review of the transcript-forwarding feature. No protocol changes; behaviour-only improvements for chain forwarding, race-window closure, mutex hygiene, and log noise reduction.
+
+### Server
+
+- **Chain forwarding (A → B → C).** When this server receives a transcript from upstream (either via the synchronous `CallTranscriptHandler` apply path or from the pending-transcripts cache hit in `IngestCall`), it now also fires `Downstreams.SendTranscript` so the transcript propagates to *its own* downstreams. Previously only locally-Whisper'd transcripts were forwarded, which broke multi-hop setups where a middle server isn't transcribing itself.
+- **Race-window close in `CallTranscriptHandler`.** After `Store`-ing a deferred transcript, immediately re-runs `GetIdByKey`; if the matching call arrived between the first lookup and the Store, `Take` and apply directly so the cache entry doesn't expire unused. Eliminates a rare microsecond-wide window that could otherwise leave a call permanently untranscribed.
+- **Locked read of `Downstream.transcriptSupport`.** New `Downstream.supportsTranscript()` helper that acquires `transcriptMu` for the read. Eliminates the data race in `Downstreams.SendTranscript` that `-race` would flag (the value was always monotonic enough at the hardware level for it not to matter in practice, but it's clean now).
+- **One-shot log on transcript-support transitions.** `probeTranscriptSupport` now logs once when the cached support state for a downstream changes (Unknown→No, Unknown→Yes, Yes→No, No→Yes). Re-probes that confirm the existing state stay silent, so the log doesn't get spammed with "downstream X doesn't support transcript-forward" on every call when the downstream is on the original repo. Messages:
+  - `downstream URL does not support transcript-forward — transcripts will not be pushed to it`
+  - `downstream URL supports transcript-forward — transcripts will be pushed`
+
 ## Version 6.10.3-beta.8
 
 Sender-side correctness: `transcriptPending=1` is now only set on outgoing call-uploads when this server is **actually** going to attempt transcription. Previously the hint was set purely from configuration (`system.Transcribe && talkgroup.Transcribe && Transcriber.Enabled()`), which meant downstreams were told a transcript was coming for calls that `TranscribeCallAsync` was going to silently skip — leaving those calls untranscribed on the downstream after the receiver's 5-minute pending-transcripts cache TTL expired.

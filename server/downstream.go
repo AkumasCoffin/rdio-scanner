@@ -378,13 +378,25 @@ func (downstream *Downstream) Send(call *Call) error {
 	return nil
 }
 
+// supportsTranscript returns the cached transcript-forward support state
+// under the per-downstream mutex. Safe to call concurrently.
+func (downstream *Downstream) supportsTranscript() bool {
+	downstream.transcriptMu.Lock()
+	defer downstream.transcriptMu.Unlock()
+	return downstream.transcriptSupport == transcriptSupportYes
+}
+
 // probeTranscriptSupport checks whether the downstream's server supports the
 // /api/call-transcript endpoint by hitting /api/capabilities. Results are
 // cached for transcriptSupportCacheTTL. The HTTP call is made without holding
 // the mutex so callers aren't serialised behind the network round-trip; the
 // worst case is several concurrent probes on the very first call after startup,
 // all arriving at the same result.
-func (downstream *Downstream) probeTranscriptSupport() bool {
+//
+// Logs once at the moment the support state transitions (Unknown/Yes -> No or
+// Unknown/No -> Yes). Repeated probes that confirm the existing state stay
+// silent so the log isn't spammed.
+func (downstream *Downstream) probeTranscriptSupport(controller *Controller) bool {
 	downstream.transcriptMu.Lock()
 	if downstream.transcriptSupport != transcriptSupportUnknown &&
 		time.Since(downstream.transcriptChecked) < transcriptSupportCacheTTL {
@@ -425,9 +437,21 @@ func (downstream *Downstream) probeTranscriptSupport() bool {
 	}
 
 	downstream.transcriptMu.Lock()
+	prev := downstream.transcriptSupport
 	downstream.transcriptSupport = support
 	downstream.transcriptChecked = time.Now()
 	downstream.transcriptMu.Unlock()
+
+	// Log only on a real state change. Unknown/Yes -> No or Unknown/No -> Yes
+	// fires once. A re-probe that confirms the same state stays silent.
+	if controller != nil && prev != support {
+		switch support {
+		case transcriptSupportNo:
+			controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("downstream %v does not support transcript-forward — transcripts will not be pushed to it", downstream.Url))
+		case transcriptSupportYes:
+			controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("downstream %v supports transcript-forward — transcripts will be pushed", downstream.Url))
+		}
+	}
 
 	return support == transcriptSupportYes
 }
@@ -435,7 +459,7 @@ func (downstream *Downstream) probeTranscriptSupport() bool {
 // SendTranscript pushes a completed transcript to this downstream if it
 // supports the transcript-forward feature. Returns nil for legacy downstreams
 // (404 on capabilities probe) so callers don't log spurious warnings.
-func (downstream *Downstream) SendTranscript(call *Call) error {
+func (downstream *Downstream) SendTranscript(controller *Controller, call *Call) error {
 	if downstream.Disabled {
 		return nil
 	}
@@ -445,7 +469,7 @@ func (downstream *Downstream) SendTranscript(call *Call) error {
 		return nil
 	}
 
-	if !downstream.probeTranscriptSupport() {
+	if !downstream.probeTranscriptSupport(controller) {
 		return nil
 	}
 
@@ -595,8 +619,13 @@ func (downstreams *Downstreams) Send(controller *Controller, call *Call) {
 }
 
 // SendTranscript pushes a completed transcript to all eligible downstreams.
-// Called from the transcription goroutine after UpdateTranscript succeeds.
-// Skips downstreams that don't support transcript-forward (legacy servers).
+// Called from the transcription goroutine after UpdateTranscript succeeds, and
+// from CallTranscriptHandler / IngestCall when a transcript arrives from
+// upstream (so chained A->B->C forwarding propagates correctly).
+//
+// Silently skips downstreams that don't support transcript-forward — the
+// support-state log inside probeTranscriptSupport fires once on the
+// transition, then stays silent.
 func (downstreams *Downstreams) SendTranscript(controller *Controller, call *Call) {
 	downstreams.mutex.Lock()
 	list := make([]*Downstream, len(downstreams.List))
@@ -610,9 +639,9 @@ func (downstreams *Downstreams) SendTranscript(controller *Controller, call *Cal
 		logEvent := func(logLevel string, message string) {
 			controller.Logs.LogEvent(logLevel, fmt.Sprintf("downstream.transcript: system=%v talkgroup=%v to %v %v", call.System, call.Talkgroup, downstream.Url, message))
 		}
-		if err := downstream.SendTranscript(call); err != nil {
+		if err := downstream.SendTranscript(controller, call); err != nil {
 			logEvent(LogLevelWarn, err.Error())
-		} else if downstream.transcriptSupport == transcriptSupportYes {
+		} else if downstream.supportsTranscript() {
 			logEvent(LogLevelInfo, "success")
 		}
 	}

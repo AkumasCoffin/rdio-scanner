@@ -251,6 +251,25 @@ func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
 		// after pendingTranscriptTTL if the call never arrives.
 		api.Controller.PendingTranscripts.Store(req.System, req.Talkgroup, dt, req.Transcript, apikey.Ident)
 		api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript deferred (holding for incoming call): [%v] system=%v talkgroup=%v dateTime=%v", apikey.Ident, req.System, req.Talkgroup, req.DateTime))
+
+		// Tight-race close: it's possible the call arrived between our
+		// GetIdByKey above and our Store just now. IngestCall's Take ran
+		// before our Store, so the entry would otherwise sit unused until
+		// the cache TTL. Re-check and apply directly if the call landed.
+		if id2, err := api.Controller.Calls.GetIdByKey(req.System, req.Talkgroup, dt, db); err == nil && id2 != 0 {
+			if held, heldIdent, ok := api.Controller.PendingTranscripts.Take(req.System, req.Talkgroup, dt); ok {
+				if uerr := api.Controller.Calls.UpdateTranscript(id2, held, db); uerr == nil {
+					api.Controller.Clients.EmitTranscript(id2, req.System, req.Talkgroup, held, api.Controller.Accesses.IsRestricted())
+					api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript applied (race-window close): [%v] system=%v talkgroup=%v id=%v (%d chars)", heldIdent, req.System, req.Talkgroup, id2, len(held)))
+					// Chain-forward the transcript downstream so multi-hop
+					// setups (A->B->C) propagate correctly. Goroutine so we
+					// don't block the response to the upstream on our own
+					// per-downstream HTTP calls.
+					go api.Controller.Downstreams.SendTranscript(api.Controller, &Call{System: req.System, Talkgroup: req.Talkgroup, DateTime: dt, Transcript: held})
+				}
+			}
+		}
+
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Transcript accepted (deferred until matching call arrives).\n"))
 		return
@@ -263,6 +282,10 @@ func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
 
 	api.Controller.Clients.EmitTranscript(id, req.System, req.Talkgroup, req.Transcript, api.Controller.Accesses.IsRestricted())
 	api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript received: [%v] system=%v talkgroup=%v id=%v (%d chars)", apikey.Ident, req.System, req.Talkgroup, id, len(req.Transcript)))
+	// Chain-forward the transcript so multi-hop setups (A->B->C) propagate.
+	// Goroutine so we don't block the response to the upstream on our own
+	// per-downstream HTTP calls.
+	go api.Controller.Downstreams.SendTranscript(api.Controller, &Call{System: req.System, Talkgroup: req.Talkgroup, DateTime: dt, Transcript: req.Transcript})
 
 	w.Write([]byte("Transcript updated successfully.\n"))
 }

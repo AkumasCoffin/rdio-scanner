@@ -409,6 +409,11 @@ func (controller *Controller) IngestCall(call *Call) {
 				call.Transcript = held
 				controller.Clients.EmitTranscript(id, call.System, call.Talkgroup, held, controller.Accesses.IsRestricted())
 				controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript applied from pending: [%v] system=%v talkgroup=%v id=%v (%d chars)", heldIdent, call.System, call.Talkgroup, id, len(held)))
+				// Chain-forward to our own downstreams so multi-hop setups
+				// (A -> B -> C) propagate the transcript past us. Runs in its
+				// own goroutine inside Downstreams.SendTranscript via per-
+				// downstream HTTP, so it doesn't block ingest.
+				go controller.Downstreams.SendTranscript(controller, call)
 			}
 		}
 
