@@ -413,10 +413,25 @@ func (controller *Controller) IngestCall(call *Call) {
 		}
 
 		// Hint to downstream instances that this server will transcribe the call
-		// and forward the result. Only set when transcription is actually enabled
-		// here — if not, downstreams should transcribe for themselves.
+		// and forward the result. Only set when transcription is *actually*
+		// going to be attempted here — feature enabled, system+talkgroup opted
+		// in, and the audio passes the same size predicates TranscribeCallAsync
+		// uses to decide whether to dispatch the goroutine. Otherwise the
+		// downstream would wait for a transcript that's never coming (audio
+		// too short, no Whisper attempt fires, no push is sent).
+		//
+		// Runtime skips (all Groq keys paused on 429, or all at per-key cap)
+		// can't be predicted here — those are caught by the receiver's
+		// pending-transcripts cache TTL.
 		if system.Transcribe && talkgroup.Transcribe && controller.Transcriber.Enabled() {
-			call.transcriptWillForward = true
+			audioLen := uint(len(call.Audio))
+			minBytes := uint(45) // hard floor: <=44 = no real audio in Transcribe()
+			if cfgMin := controller.Options.TranscriptionMinAudioBytes; cfgMin > minBytes {
+				minBytes = cfgMin
+			}
+			if audioLen >= minBytes {
+				call.transcriptWillForward = true
+			}
 		}
 
 		// Fire downstream forwarding immediately — Delayer below only holds

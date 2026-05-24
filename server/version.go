@@ -15,4 +15,4 @@
 
 package main
 
-const Version = "6.10.3-beta.7"
+const Version = "6.10.3-beta.8"

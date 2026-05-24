@@ -6,6 +6,21 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.10.3-beta.8
+
+Sender-side correctness: `transcriptPending=1` is now only set on outgoing call-uploads when this server is **actually** going to attempt transcription. Previously the hint was set purely from configuration (`system.Transcribe && talkgroup.Transcribe && Transcriber.Enabled()`), which meant downstreams were told a transcript was coming for calls that `TranscribeCallAsync` was going to silently skip — leaving those calls untranscribed on the downstream after the receiver's 5-minute pending-transcripts cache TTL expired.
+
+### Server
+
+- **`IngestCall` now applies the same audio-size predicates `TranscribeCallAsync` uses** before setting `call.transcriptWillForward`:
+  - Hard floor: `len(call.Audio) >= 45` (matches the `<= 44 = no real audio` check in `Transcribe()`)
+  - Configurable: `len(call.Audio) >= TranscriptionMinAudioBytes` (matches the early-bail check in `TranscribeCallAsync`)
+- If either predicate fails, `transcriptWillForward` is **not** set, so:
+  - No `transcriptPending=1` form field in the multipart upload
+  - The downstream transcribes the call locally as normal (no false expectation of an incoming push)
+- Runtime skips (all Groq keys paused on a 429 backoff, or all keys at the per-key per-minute cap) can't be predicted at ingest time — those still rely on the receiver's pending-transcripts cache TTL to clean up gracefully if the push never arrives.
+- Receiver-side behaviour and protocol are unchanged.
+
 ## Version 6.10.3-beta.7
 
 Behavioural change to the Delayer: now only delays **listeners** (live WebSocket clients), not **downstreams** (forwarded servers). Fully backwards compatible — no protocol or wire-format change, no field changes, downstreams running the original [chuot/rdio-scanner](https://github.com/chuot/rdio-scanner) repo behave identically (they just receive calls a bit sooner).
