@@ -47,12 +47,13 @@ type Controller struct {
 	Stats       *Stats
 	Systems     *Systems
 	Tags        *Tags
-	Transcriber *Transcriber
-	Clients     *Clients
-	Register    chan *Client
-	Unregister  chan *Client
-	Ingest      chan *Call
-	running     bool
+	Transcriber        *Transcriber
+	PendingTranscripts *PendingTranscripts
+	Clients            *Clients
+	Register           chan *Client
+	Unregister         chan *Client
+	Ingest             chan *Call
+	running            bool
 
 	// Cached "unrestricted access" view of the systems/groups/tags maps.
 	// Most clients hit the server with no access code so they all get the
@@ -96,6 +97,7 @@ func NewController(config *Config) *Controller {
 	controller.Scheduler = NewScheduler(controller)
 	controller.Stats = NewStats(controller)
 	controller.Transcriber = NewTranscriber(controller)
+	controller.PendingTranscripts = NewPendingTranscripts()
 
 	controller.Logs.setDaemon(config.daemon)
 	controller.Logs.setDatabase(controller.Database)
@@ -375,6 +377,20 @@ func (controller *Controller) IngestCall(call *Call) {
 
 		if call.transcriptPending {
 			controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("call from upstream with pending transcript: system=%v talkgroup=%v id=%v (awaiting /api/call-transcript push)", call.System, call.Talkgroup, id))
+		}
+
+		// Pick up any transcript that raced ahead of this call. Common case:
+		// upstream's small JSON push beat its own large multipart upload on
+		// the wire, so CallTranscriptHandler stashed the transcript instead
+		// of 404-ing it.
+		if held, heldIdent, ok := controller.PendingTranscripts.Take(call.System, call.Talkgroup, call.DateTime); ok {
+			if err := controller.Calls.UpdateTranscript(id, held, controller.Database); err != nil {
+				controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("transcript apply from pending failed: id=%v %v", id, err))
+			} else {
+				call.Transcript = held
+				controller.Clients.EmitTranscript(id, call.System, call.Talkgroup, held, controller.Accesses.IsRestricted())
+				controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript applied from pending: [%v] system=%v talkgroup=%v id=%v (%d chars)", heldIdent, call.System, call.Talkgroup, id, len(held)))
+			}
 		}
 
 		// Hint to downstream instances that this server will transcribe the call

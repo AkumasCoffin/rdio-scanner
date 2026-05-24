@@ -6,6 +6,19 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.10.3-beta.6
+
+Fixes the race that caused every forwarded transcript push to fail with `transcript push no matching call`. The upstream's tiny JSON transcript-push was overtaking its own large multipart call-upload on the wire, so `CallTranscriptHandler` ran a DB lookup before the call had been stored, returned 404, and the transcript was lost forever.
+
+### Server
+
+- **New `PendingTranscripts` in-memory cache** (`server/pending_transcripts.go`). When a transcript push arrives for a call that isn't in the DB yet, the transcript is stashed in this cache keyed by `(system, talkgroup, dateTime)` with a 5-minute TTL and a 1000-entry cap (expired entries pruned on every write; oldest dropped if still over the cap). The handler now returns 200 "deferred" instead of 404.
+- **`IngestCall` consults the cache** after `WriteCall` succeeds. If a transcript was waiting for this call, it's applied via `UpdateTranscript` and broadcast to live clients via `EmitTranscript`, all in the same code path as a locally-generated transcript.
+- **New log line:**
+  - `transcript deferred (holding for incoming call): [ident] system=X talkgroup=Y dateTime=Z` — replaces the old `transcript push no matching call` log when the lookup misses.
+  - `transcript applied from pending: [ident] system=X talkgroup=Y id=Z (N chars)` — fires from `IngestCall` when the held transcript is finally applied.
+- Receiver-only change — the upstream's behaviour and code are unchanged. Order-independent: call and transcript can arrive in any order with any latency between them and the result is correct.
+
 ## Version 6.10.3-beta.5
 
 Receive-side log polish — adds the API-key identifier to the transcript-push log lines, matching the `[ident]` format used by the existing `newcall` log entries.

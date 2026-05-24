@@ -245,9 +245,14 @@ func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id == 0 {
-		api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript push no matching call: [%v] system=%v talkgroup=%v dateTime=%v (already pruned, datetime mismatch, or call never arrived)", apikey.Ident, req.System, req.Talkgroup, req.DateTime))
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("Call not found.\n"))
+		// Race: the upstream's tiny transcript push beat its own large
+		// call-upload to the wire. Stash the transcript; IngestCall will
+		// pick it up when the matching call lands. Entry self-expires
+		// after pendingTranscriptTTL if the call never arrives.
+		api.Controller.PendingTranscripts.Store(req.System, req.Talkgroup, dt, req.Transcript, apikey.Ident)
+		api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript deferred (holding for incoming call): [%v] system=%v talkgroup=%v dateTime=%v", apikey.Ident, req.System, req.Talkgroup, req.DateTime))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Transcript accepted (deferred until matching call arrives).\n"))
 		return
 	}
 
