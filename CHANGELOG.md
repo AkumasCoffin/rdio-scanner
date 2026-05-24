@@ -6,6 +6,20 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.10.3-beta.7
+
+Behavioural change to the Delayer: now only delays **listeners** (live WebSocket clients), not **downstreams** (forwarded servers). Fully backwards compatible — no protocol or wire-format change, no field changes, downstreams running the original [chuot/rdio-scanner](https://github.com/chuot/rdio-scanner) repo behave identically (they just receive calls a bit sooner).
+
+### Server
+
+- **`Controller.EmitCall` split into two methods:**
+  - `EmitCallToDownstreams(call)` — fires `Downstreams.Send` only.
+  - `EmitCallToClients(call)` — fires `Clients.EmitCall` only.
+  - The original `EmitCall` is preserved as a thin wrapper that calls both (legacy callers unaffected).
+- **`Delayer.Delay` now calls `EmitCallToClients` instead of `EmitCall`** in all four invocations (immediate-zero-delay, past-timestamp restore, timer-fire callback, and `Start()` catch-up after restart). Listener UX is unchanged — the configured delay still applies to what live listeners see.
+- **`IngestCall` now fires `EmitCallToDownstreams(call)` synchronously** right after `transcriptWillForward` is set and before `Delayer.Delay(call)`. Downstreams receive calls at near-real-time regardless of local delay config.
+- Companion benefit for transcript-forward setups: the call-upload no longer has the Delayer's hold layered on top of network upload time, so the multipart upload usually beats the transcript push to the receiver — the pending-transcripts cache from beta.6 is still in place as a safety net but rarely gets used in practice.
+
 ## Version 6.10.3-beta.6
 
 Fixes the race that caused every forwarded transcript push to fail with `transcript push no matching call`. The upstream's tiny JSON transcript-push was overtaking its own large multipart call-upload on the wire, so `CallTranscriptHandler` ran a DB lookup before the call had been stored, returned 404, and the transcript was lost forever.

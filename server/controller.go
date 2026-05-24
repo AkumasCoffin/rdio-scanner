@@ -145,9 +145,28 @@ func (controller *Controller) InvalidateConfigCache() {
 	controller.configCacheMu.Unlock()
 }
 
-func (controller *Controller) EmitCall(call *Call) {
+// EmitCallToDownstreams forwards a call to configured downstream servers.
+// Bypasses the Delayer — downstreams receive calls immediately on ingest so
+// transcript-forward setups don't add network/Delayer time on top of each
+// other, and downstream-side delays (if any) stay the responsibility of the
+// downstream's own admin config.
+func (controller *Controller) EmitCallToDownstreams(call *Call) {
 	go controller.Downstreams.Send(controller, call)
+}
+
+// EmitCallToClients pushes a call to live WebSocket listeners. Subject to the
+// Delayer's per-talkgroup/per-system hold so listener UX matches the
+// configured rebroadcast delay.
+func (controller *Controller) EmitCallToClients(call *Call) {
 	go controller.Clients.EmitCall(call, controller.Accesses.IsRestricted())
+}
+
+// EmitCall is the legacy "do both" path. Preserved for any external/future
+// callers but no longer used internally — Delayer fires EmitCallToClients;
+// IngestCall fires EmitCallToDownstreams synchronously on ingest.
+func (controller *Controller) EmitCall(call *Call) {
+	controller.EmitCallToDownstreams(call)
+	controller.EmitCallToClients(call)
 }
 
 func (controller *Controller) EmitConfig() {
@@ -399,6 +418,12 @@ func (controller *Controller) IngestCall(call *Call) {
 		if system.Transcribe && talkgroup.Transcribe && controller.Transcriber.Enabled() {
 			call.transcriptWillForward = true
 		}
+
+		// Fire downstream forwarding immediately — Delayer below only holds
+		// the local listener emit. Forwarding before the delay means
+		// downstreams receive calls at near-real-time and the transcript-push
+		// race (where small JSON beats large multipart) loses its head start.
+		controller.EmitCallToDownstreams(call)
 
 		controller.Delayer.Delay(call)
 

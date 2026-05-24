@@ -21,10 +21,15 @@ import (
 	"time"
 )
 
-// Delayer defers emitting calls to clients/downstreams by a configurable
+// Delayer defers emitting calls to live WebSocket listeners by a configurable
 // per-talkgroup or per-system delay (seconds). Talkgroup delay takes
 // precedence over system delay; either being zero falls through to immediate
 // emit. The schedule survives restarts via the rdioScannerDelayed table.
+//
+// Downstream forwarding is NOT affected — IngestCall fires
+// EmitCallToDownstreams synchronously before handing the call to the Delayer,
+// so downstream instances receive calls as soon as they're ingested. The
+// downstream is responsible for its own listener-delay policy.
 type Delayer struct {
 	controller *Controller
 	mutex      sync.Mutex
@@ -42,7 +47,7 @@ func (delayer *Delayer) Delay(call *Call) {
 	delay := delayer.getDelay(call)
 
 	if delay == 0 {
-		delayer.controller.EmitCall(call)
+		delayer.controller.EmitCallToClients(call)
 		return
 	}
 
@@ -59,7 +64,7 @@ func (delayer *Delayer) Delay(call *Call) {
 	timestamp := delayer.getTimestamp(call)
 	remaining := time.Until(timestamp)
 	if remaining <= 0 {
-		delayer.controller.EmitCall(call)
+		delayer.controller.EmitCallToClients(call)
 		return
 	}
 
@@ -80,7 +85,7 @@ func (delayer *Delayer) Delay(call *Call) {
 		delete(delayer.timers, callId)
 		delayer.mutex.Unlock()
 
-		delayer.controller.EmitCall(call)
+		delayer.controller.EmitCallToClients(call)
 	})
 
 	delayer.mutex.Lock()
@@ -135,7 +140,7 @@ func (delayer *Delayer) Start() error {
 		call.Delayed = true
 
 		if time.UnixMilli(ts).Before(now) {
-			delayer.controller.EmitCall(call)
+			delayer.controller.EmitCallToClients(call)
 		} else {
 			delayer.Delay(call)
 		}
