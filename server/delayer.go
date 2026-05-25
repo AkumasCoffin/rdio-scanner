@@ -17,6 +17,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -131,15 +132,29 @@ func (delayer *Delayer) Start() error {
 		return formatError(err, "delete rdioScannerDelayed")
 	}
 
-	now := time.Now()
+	// Sort by scheduled emit timestamp ascending so the catchup pass
+	// re-emits elapsed calls in chronological order. Ranging over the
+	// `pending` map directly would use Go's randomized iteration and
+	// scramble the order across restarts.
+	type pendingEntry struct {
+		callId uint
+		ts     int64
+	}
+	sorted := make([]pendingEntry, 0, len(pending))
 	for callId, ts := range pending {
-		call, gerr := delayer.controller.Calls.GetCall(callId, delayer.controller.Database)
+		sorted = append(sorted, pendingEntry{callId, ts})
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ts < sorted[j].ts })
+
+	now := time.Now()
+	for _, p := range sorted {
+		call, gerr := delayer.controller.Calls.GetCall(p.callId, delayer.controller.Database)
 		if gerr != nil {
 			continue
 		}
 		call.Delayed = true
 
-		if time.UnixMilli(ts).Before(now) {
+		if time.UnixMilli(p.ts).Before(now) {
 			delayer.controller.EmitCallToClients(call)
 		} else {
 			delayer.Delay(call)

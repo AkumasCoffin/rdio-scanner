@@ -53,7 +53,17 @@ type Controller struct {
 	Register           chan *Client
 	Unregister         chan *Client
 	Ingest             chan *Call
-	running            bool
+	// clientEmitQueue serializes broadcasts to live WebSocket listeners so
+	// concurrent EmitCallToClients callers (single ingest goroutine + N
+	// Delayer timer goroutines) can't race each other and reorder calls on
+	// the wire. A single dispatcher drains it FIFO.
+	clientEmitQueue chan *Call
+	// downstreamEmitQueue is the same idea for forwarded-call HTTP POSTs to
+	// downstream instances. Kept separate from clientEmitQueue because the
+	// downstream path is slow (HTTP) and we don't want a slow downstream to
+	// hold up local listener broadcasts.
+	downstreamEmitQueue chan *Call
+	running             bool
 
 	// Cached "unrestricted access" view of the systems/groups/tags maps.
 	// Most clients hit the server with no access code so they all get the
@@ -84,9 +94,11 @@ func NewController(config *Config) *Controller {
 		Systems:     NewSystems(),
 		Tags:        NewTags(),
 		Clients:     NewClients(),
-		Register:    make(chan *Client, 8192),
-		Unregister:  make(chan *Client, 8192),
-		Ingest:      make(chan *Call, 8192),
+		Register:            make(chan *Client, 8192),
+		Unregister:          make(chan *Client, 8192),
+		Ingest:              make(chan *Call, 8192),
+		clientEmitQueue:     make(chan *Call, 8192),
+		downstreamEmitQueue: make(chan *Call, 8192),
 	}
 
 	controller.Admin = NewAdmin(controller)
@@ -150,15 +162,23 @@ func (controller *Controller) InvalidateConfigCache() {
 // transcript-forward setups don't add network/Delayer time on top of each
 // other, and downstream-side delays (if any) stay the responsibility of the
 // downstream's own admin config.
+//
+// Serialized through downstreamEmitQueue + a single dispatcher in Start() so
+// concurrent callers (multiple IngestCall paths, Delayer timers) can't race
+// and reorder forwarded calls between downstream servers.
 func (controller *Controller) EmitCallToDownstreams(call *Call) {
-	go controller.Downstreams.Send(controller, call)
+	controller.downstreamEmitQueue <- call
 }
 
 // EmitCallToClients pushes a call to live WebSocket listeners. Subject to the
 // Delayer's per-talkgroup/per-system hold so listener UX matches the
 // configured rebroadcast delay.
+//
+// Serialized through clientEmitQueue + a single dispatcher in Start() so
+// concurrent emit paths (delay=0 ingest + Delayer timer fires + Start()
+// catchup) can't reorder messages on the per-client WS connections.
 func (controller *Controller) EmitCallToClients(call *Call) {
-	go controller.Clients.EmitCall(call, controller.Accesses.IsRestricted())
+	controller.clientEmitQueue <- call
 }
 
 // EmitCall is the legacy "do both" path. Preserved for any external/future
@@ -710,6 +730,21 @@ func (controller *Controller) Start() error {
 	if err = controller.Scheduler.Start(); err != nil {
 		return err
 	}
+
+	// Start emit dispatchers BEFORE Delayer.Start() so any catchup emits
+	// from rdioScannerDelayed get drained immediately rather than piling
+	// into the channel buffer with no consumer.
+	go func() {
+		for call := range controller.clientEmitQueue {
+			controller.Clients.EmitCall(call, controller.Accesses.IsRestricted())
+		}
+	}()
+	go func() {
+		for call := range controller.downstreamEmitQueue {
+			controller.Downstreams.Send(controller, call)
+		}
+	}()
+
 	if err = controller.Delayer.Start(); err != nil {
 		// Delayer restore failure is non-fatal — log and continue. Any
 		// orphaned rows in rdioScannerDelayed will retry on next boot.

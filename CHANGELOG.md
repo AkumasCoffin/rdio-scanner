@@ -8,6 +8,30 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.11.0-beta.4
+
+Call-ordering audit fixes. Plays calls strictly in arrival order even when transcript-forwarding latency varies or when multiple emit paths fire concurrently on the server.
+
+### Webapp — pre-queue head-of-line release
+
+**The bug:** when `WaitForTranscript` was on, the `pendingTranscriptCalls` Map released held calls in transcript-arrival order, not call-arrival order. A short audio's transcript would finish first and that call would skip ahead of an earlier longer call still waiting on Whisper.
+
+**The fix:** `pendingTranscriptCalls` is now an ordered array. Each entry has a `ready` flag flipped by either the transcript landing or the timeout firing. The new `drainPendingHead()` pops consecutive head-of-line ready entries off the array — entries behind a not-yet-ready head wait until the head is released, so arrival order is preserved end-to-end. `flushPendingTranscripts()` and the talkgroup-deactivated cleanup both walk the array in order too.
+
+### Server — serialized emit dispatchers
+
+**The race:** `EmitCallToClients` and `EmitCallToDownstreams` previously spawned a goroutine per call (`go Clients.EmitCall(...)` / `go Downstreams.Send(...)`). Two concurrent goroutines competing for the same per-client `Send` channel had no FIFO guarantee — Go's scheduler could pick either one first. Microsecond window in practice but real.
+
+**The fix:** New `clientEmitQueue` and `downstreamEmitQueue` buffered channels (8192 slots each) on `Controller`. Each has a dedicated dispatcher goroutine started in `Start()` (before `Delayer.Start()` so its catchup emits drain immediately rather than buffer with no consumer). All `EmitCallToClients` / `EmitCallToDownstreams` calls push to the appropriate channel; dispatchers drain in strict FIFO. Separate channels because the downstream path is HTTP-slow and shouldn't hold up local listener broadcasts.
+
+### Server — Delayer restart catchup ordering
+
+`Delayer.Start()` previously iterated the loaded `pending` map directly via `for k, v := range`, which Go intentionally randomizes. After a server restart, elapsed delayed calls were re-emitted in random order. Now sorted by scheduled timestamp ascending so the catchup pass is chronological.
+
+### Not in this beta
+
+Android `_calls.tryEmit` is also wrapped in `scope.launch { ... }` (`RdioClient.kt:384`), which has the same coroutine-launch reorder risk as the server-side goroutine-per-call. Microsecond window, never observed in practice. Will follow up as its own beta after this one is verified.
+
 ## Version 6.11.0-beta.3
 
 UX iteration on the provider switching from beta.2.

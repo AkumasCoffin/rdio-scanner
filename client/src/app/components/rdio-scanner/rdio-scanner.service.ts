@@ -123,13 +123,20 @@ export class RdioScannerService implements OnDestroy {
     // playback queue entirely until their transcript arrives (or a timeout
     // releases them so nothing is lost). Admin-controlled — flows in via
     // the server's CFG broadcast.
+    //
+    // Stored as an ordered array (not a Map) and drained head-of-line via
+    // drainPendingHead() so calls go to the main queue in arrival order,
+    // never transcript-arrival order. A slow-Whisper call at the head holds
+    // back the tail until its transcript arrives or its timeout fires.
     private waitForTranscript = false;
-    private pendingTranscriptCalls = new Map<number, {
+    private pendingTranscriptCalls: Array<{
+        id: number;
         call: RdioScannerCall;
         priority: boolean;
+        ready: boolean;
         fetchTimer: ReturnType<typeof setTimeout>;
         timeoutTimer: ReturnType<typeof setTimeout>;
-    }>();
+    }> = [];
     private static readonly TRANSCRIPT_WAIT_MAX_MS = 30000;
     private static readonly TRANSCRIPT_WAIT_POLL_MS = 2000;
 
@@ -883,9 +890,11 @@ export class RdioScannerService implements OnDestroy {
     }
 
     // holdPendingTranscript parks a call with no transcript off the queue
-    // and starts polling for the transcript. When it arrives, the call is
-    // enqueued normally. If the configured timeout elapses without a
-    // transcript the call is enqueued anyway so nothing ever goes missing.
+    // and starts polling for the transcript. When the transcript arrives
+    // (or the timeout fires) the entry is marked ready, then drainPendingHead
+    // releases head-of-line ready entries to the main queue in arrival order.
+    // Calls behind a slow head wait — preserving arrival order matches what
+    // the listener expects.
     private holdPendingTranscript(call: RdioScannerCall, priority: boolean): void {
         if (!call.id) {
             // No id to reconcile against — fall back to normal queueing.
@@ -893,41 +902,54 @@ export class RdioScannerService implements OnDestroy {
             return;
         }
 
+        const id = call.id;
         // If we're already holding this id (e.g., duplicate CAL), ignore.
-        if (this.pendingTranscriptCalls.has(call.id)) {
+        if (this.pendingTranscriptCalls.some((e) => e.id === id)) {
             return;
         }
-
-        const id = call.id;
 
         const fetchTimer = setInterval(() => {
             this.fetchTranscript(id).then((text) => {
                 if (text) {
-                    this.releasePendingTranscript(id, text);
+                    this.markPendingReady(id, text);
                 }
             }).catch(() => { /* ignore */ });
         }, RdioScannerService.TRANSCRIPT_WAIT_POLL_MS);
 
         const timeoutTimer = setTimeout(() => {
             // Final safety net: release whatever we have so the call isn't lost.
-            this.releasePendingTranscript(id, undefined);
+            this.markPendingReady(id, undefined);
         }, RdioScannerService.TRANSCRIPT_WAIT_MAX_MS);
 
-        this.pendingTranscriptCalls.set(id, { call, priority, fetchTimer, timeoutTimer });
+        this.pendingTranscriptCalls.push({ id, call, priority, ready: false, fetchTimer, timeoutTimer });
     }
 
-    private releasePendingTranscript(id: number, transcript: string | undefined): void {
-        const entry = this.pendingTranscriptCalls.get(id);
-        if (!entry) return;
+    // markPendingReady flips a pending entry's `ready` flag (and stashes a
+    // late-arriving transcript if any), then drains any consecutive
+    // head-of-line ready entries to the main queue. Calls behind a still-
+    // not-ready head stay parked.
+    private markPendingReady(id: number, transcript: string | undefined): void {
+        const entry = this.pendingTranscriptCalls.find((e) => e.id === id);
+        if (!entry || entry.ready) return;
 
         clearInterval(entry.fetchTimer);
         clearTimeout(entry.timeoutTimer);
-        this.pendingTranscriptCalls.delete(id);
-
         if (transcript) {
             entry.call.transcript = transcript;
         }
-        this.enqueuePending(entry.call, entry.priority);
+        entry.ready = true;
+
+        this.drainPendingHead();
+    }
+
+    // drainPendingHead pops consecutive ready entries off the head of
+    // pendingTranscriptCalls and enqueues them. Stops at the first
+    // not-ready entry so arrival order is preserved.
+    private drainPendingHead(): void {
+        while (this.pendingTranscriptCalls.length > 0 && this.pendingTranscriptCalls[0].ready) {
+            const entry = this.pendingTranscriptCalls.shift()!;
+            this.enqueuePending(entry.call, entry.priority);
+        }
     }
 
     // enqueuePending is the normal queue path that a held call takes once
@@ -959,13 +981,14 @@ export class RdioScannerService implements OnDestroy {
         }
     }
 
-    // flushPendingTranscripts dumps all held calls into the queue. Used when
-    // the admin turns the toggle off mid-session.
+    // flushPendingTranscripts dumps all held calls into the queue in their
+    // existing arrival order. Used when the admin turns the toggle off
+    // mid-session.
     private flushPendingTranscripts(): void {
-        for (const [id, entry] of this.pendingTranscriptCalls.entries()) {
+        const entries = this.pendingTranscriptCalls.splice(0);
+        for (const entry of entries) {
             clearInterval(entry.fetchTimer);
             clearTimeout(entry.timeoutTimer);
-            this.pendingTranscriptCalls.delete(id);
             this.enqueuePending(entry.call, entry.priority);
         }
     }
@@ -1281,14 +1304,17 @@ export class RdioScannerService implements OnDestroy {
         // Also drop any pending-transcript holds whose talkgroup is no
         // longer active. Their timers would otherwise keep polling for up
         // to 30s and then enqueue the call into a queue that no longer
-        // wants it.
-        for (const [id, entry] of this.pendingTranscriptCalls.entries()) {
-            if (!isActive(entry.call)) {
-                clearInterval(entry.fetchTimer);
-                clearTimeout(entry.timeoutTimer);
-                this.pendingTranscriptCalls.delete(id);
-            }
-        }
+        // wants it. Filtering in-place preserves arrival order for the
+        // entries we keep.
+        this.pendingTranscriptCalls = this.pendingTranscriptCalls.filter((entry) => {
+            if (isActive(entry.call)) return true;
+            clearInterval(entry.fetchTimer);
+            clearTimeout(entry.timeoutTimer);
+            return false;
+        });
+        // A removed head could unblock newly-ready entries that were
+        // waiting on it.
+        this.drainPendingHead();
 
         if (this.call && !isActive(this.call)) {
             this.skip();
