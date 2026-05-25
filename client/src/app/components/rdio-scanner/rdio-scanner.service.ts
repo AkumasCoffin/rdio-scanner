@@ -134,8 +134,11 @@ export class RdioScannerService implements OnDestroy {
         call: RdioScannerCall;
         priority: boolean;
         ready: boolean;
-        fetchTimer: ReturnType<typeof setTimeout>;
-        timeoutTimer: ReturnType<typeof setTimeout>;
+        // Timers are absent for calls that arrived with a transcript already
+        // attached — they enter the pre-queue marked ready so head-of-line
+        // ordering still applies, but there's no polling/timeout to set up.
+        fetchTimer?: ReturnType<typeof setTimeout>;
+        timeoutTimer?: ReturnType<typeof setTimeout>;
     }> = [];
     private static readonly TRANSCRIPT_WAIT_MAX_MS = 30000;
     private static readonly TRANSCRIPT_WAIT_POLL_MS = 2000;
@@ -889,10 +892,18 @@ export class RdioScannerService implements OnDestroy {
         });
     }
 
-    // holdPendingTranscript parks a call with no transcript off the queue
-    // and starts polling for the transcript. When the transcript arrives
-    // (or the timeout fires) the entry is marked ready, then drainPendingHead
-    // releases head-of-line ready entries to the main queue in arrival order.
+    // holdPendingTranscript parks a call in the ordered pre-queue. Two cases:
+    //
+    //   - Call already has a transcript (e.g., upstream-forwarded with the
+    //     transcript baked in): the entry goes in marked ready and no timers
+    //     are set. Drain still gates release on head-of-line arrival order,
+    //     so the ready entry only escapes once earlier entries are also ready.
+    //
+    //   - Call has no transcript yet: the entry goes in NOT ready, with a
+    //     polling fetch timer and a final timeout. The transcript arrival
+    //     (via fetchTranscript) or timeout flips the ready flag and then
+    //     drainPendingHead releases consecutive head-of-line ready entries.
+    //
     // Calls behind a slow head wait — preserving arrival order matches what
     // the listener expects.
     private holdPendingTranscript(call: RdioScannerCall, priority: boolean): void {
@@ -905,6 +916,15 @@ export class RdioScannerService implements OnDestroy {
         const id = call.id;
         // If we're already holding this id (e.g., duplicate CAL), ignore.
         if (this.pendingTranscriptCalls.some((e) => e.id === id)) {
+            return;
+        }
+
+        if (call.transcript) {
+            // Already-transcribed: no polling needed; mark ready and let the
+            // drain handle order. If it's at the head (no earlier entries),
+            // drainPendingHead will release it immediately.
+            this.pendingTranscriptCalls.push({ id, call, priority, ready: true });
+            this.drainPendingHead();
             return;
         }
 
@@ -998,10 +1018,14 @@ export class RdioScannerService implements OnDestroy {
             return;
         }
 
-        // Hold back calls without transcripts when the admin has enabled
-        // wait-for-transcript, so the user sees them appear (and start
-        // playing) only when their text is ready.
-        if (this.waitForTranscript && !call.transcript && !options?.priority) {
+        // When wait-for-transcript is on, route ALL non-priority calls
+        // through the pre-queue — even ones that already arrived with a
+        // transcript attached (e.g., upstream-forwarded calls where the
+        // server applied a deferred transcript from cache before emitting).
+        // Otherwise pre-transcribed calls would skip the pre-queue and play
+        // ahead of earlier calls still waiting on local Whisper, breaking
+        // arrival-order playback.
+        if (this.waitForTranscript && !options?.priority) {
             this.holdPendingTranscript(call, false);
             return;
         }

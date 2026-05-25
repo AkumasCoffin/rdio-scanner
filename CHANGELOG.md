@@ -8,6 +8,24 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.11.0-beta.5
+
+Fixes the bug beta.4 was supposed to fix.
+
+**The case beta.4 missed:** in a forwarding setup, an upstream's transcript can arrive at the receiving server **before its call**, and on this server the deferred transcript is applied to the call's `IngestCall` path immediately. By the time the call hits the WebSocket frame heading out to the listener, it already has `call.transcript` populated.
+
+The webapp's `queue()` was checking `!call.transcript` to decide whether to hold the call — so pre-transcribed calls **skipped the pre-queue entirely** and went straight to the main queue, jumping ahead of earlier calls still parked waiting on a local Whisper run. Exactly what was observed: a Richard call that arrived 30+ seconds *after* five Ambulance calls played first because Richard's transcript was already attached on arrival, while the Ambulance calls were still parked in the pre-queue.
+
+### Fix
+
+In `queue()`, when `waitForTranscript` is on, **all** non-priority calls are routed through `holdPendingTranscript` regardless of whether they arrived with a transcript. The pre-queue is the single ordering point.
+
+`holdPendingTranscript` now handles two cases:
+- Call arrived with a transcript: entry goes in marked `ready: true`, no fetch/timeout timers. `drainPendingHead` releases it the moment all earlier entries are also ready.
+- Call arrived without a transcript: existing behaviour — entry goes in `ready: false` with poll + timeout timers, flipped to ready when the transcript lands or the timeout fires.
+
+Net effect: arrival-order playback is now actually enforced when wait-for-transcript is enabled, regardless of whether transcripts came pre-attached or have to be fetched.
+
 ## Version 6.11.0-beta.4
 
 Call-ordering audit fixes. Plays calls strictly in arrival order even when transcript-forwarding latency varies or when multiple emit paths fire concurrently on the server.
