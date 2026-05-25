@@ -53,14 +53,11 @@ type Options struct {
 	TranscriptionOpenAIBaseUrl string `json:"transcriptionOpenAIBaseUrl"`
 	TranscriptionOpenAIApiKey  string `json:"transcriptionOpenAIApiKey"`
 	TranscriptionOpenAIModel   string `json:"transcriptionOpenAIModel"`
-	// Whisper self-hosted (openai-compatible HTTP server).
+	// Whisper self-hosted (any openai-compatible HTTP server — whisper.cpp,
+	// faster-whisper-server, openai-whisper-server, etc.).
 	TranscriptionWhisperBaseUrl string `json:"transcriptionWhisperBaseUrl"`
 	TranscriptionWhisperApiKey  string `json:"transcriptionWhisperApiKey"`
 	TranscriptionWhisperModel   string `json:"transcriptionWhisperModel"`
-	// Faster-Whisper self-hosted (openai-compatible HTTP server).
-	TranscriptionFasterWhisperBaseUrl string `json:"transcriptionFasterWhisperBaseUrl"`
-	TranscriptionFasterWhisperApiKey  string `json:"transcriptionFasterWhisperApiKey"`
-	TranscriptionFasterWhisperModel   string `json:"transcriptionFasterWhisperModel"`
 	// Shared across providers.
 	TranscriptionLanguage      string `json:"transcriptionLanguage"`
 	TranscriptionPrompt        string `json:"transcriptionPrompt"`
@@ -152,9 +149,6 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	setStr("transcriptionWhisperBaseUrl", &options.TranscriptionWhisperBaseUrl)
 	setStr("transcriptionWhisperApiKey", &options.TranscriptionWhisperApiKey)
 	setStr("transcriptionWhisperModel", &options.TranscriptionWhisperModel)
-	setStr("transcriptionFasterWhisperBaseUrl", &options.TranscriptionFasterWhisperBaseUrl)
-	setStr("transcriptionFasterWhisperApiKey", &options.TranscriptionFasterWhisperApiKey)
-	setStr("transcriptionFasterWhisperModel", &options.TranscriptionFasterWhisperModel)
 	setStr("transcriptionLanguage", &options.TranscriptionLanguage)
 	setStr("transcriptionPrompt", &options.TranscriptionPrompt)
 	setUint("transcriptionMaxPerMinute", &options.TranscriptionMaxPerMinute)
@@ -206,9 +200,6 @@ func (options *Options) optionKeyValuePairs() []struct {
 		{"transcriptionWhisperBaseUrl", options.TranscriptionWhisperBaseUrl},
 		{"transcriptionWhisperApiKey", options.TranscriptionWhisperApiKey},
 		{"transcriptionWhisperModel", options.TranscriptionWhisperModel},
-		{"transcriptionFasterWhisperBaseUrl", options.TranscriptionFasterWhisperBaseUrl},
-		{"transcriptionFasterWhisperApiKey", options.TranscriptionFasterWhisperApiKey},
-		{"transcriptionFasterWhisperModel", options.TranscriptionFasterWhisperModel},
 		{"transcriptionLanguage", options.TranscriptionLanguage},
 		{"transcriptionPrompt", options.TranscriptionPrompt},
 		{"transcriptionMaxPerMinute", options.TranscriptionMaxPerMinute},
@@ -255,8 +246,6 @@ func (options *Options) Read(db *Database) error {
 	options.TranscriptionOpenAIModel = defaults.options.transcriptionOpenAIModel
 	options.TranscriptionWhisperBaseUrl = defaults.options.transcriptionWhisperBaseUrl
 	options.TranscriptionWhisperModel = defaults.options.transcriptionWhisperModel
-	options.TranscriptionFasterWhisperBaseUrl = defaults.options.transcriptionFasterWhisperBaseUrl
-	options.TranscriptionFasterWhisperModel = defaults.options.transcriptionFasterWhisperModel
 	options.TranscriptionLanguage = defaults.options.transcriptionLanguage
 	options.TranscriptionPrompt = defaults.options.transcriptionPrompt
 
@@ -340,9 +329,6 @@ func (options *Options) Read(db *Database) error {
 		applyStr("transcriptionWhisperBaseUrl", &options.TranscriptionWhisperBaseUrl)
 		applyStr("transcriptionWhisperApiKey", &options.TranscriptionWhisperApiKey)
 		applyStr("transcriptionWhisperModel", &options.TranscriptionWhisperModel)
-		applyStr("transcriptionFasterWhisperBaseUrl", &options.TranscriptionFasterWhisperBaseUrl)
-		applyStr("transcriptionFasterWhisperApiKey", &options.TranscriptionFasterWhisperApiKey)
-		applyStr("transcriptionFasterWhisperModel", &options.TranscriptionFasterWhisperModel)
 		applyStr("transcriptionLanguage", &options.TranscriptionLanguage)
 		applyStr("transcriptionPrompt", &options.TranscriptionPrompt)
 		applyUint("transcriptionMaxPerMinute", &options.TranscriptionMaxPerMinute)
@@ -417,17 +403,21 @@ func (options *Options) Write(db *Database) error {
 }
 
 // Provider name constants used by TranscriptionProvider.
+//
+// Three options collapse the protocol-identical OpenAI-compatible backends:
+//   - "groq":              the hosted Groq API
+//   - "openai":            OpenAI's hosted Whisper API (UI label: "Whisper")
+//   - "whisper-selfhosted": any self-hosted OpenAI-compatible Whisper server
+//     (whisper.cpp, openai-whisper-server, faster-whisper-server, etc.)
 const (
-	TranscriptionProviderGroq           = "groq"
-	TranscriptionProviderOpenAI         = "openai"
-	TranscriptionProviderWhisper        = "whisper-selfhosted"
-	TranscriptionProviderFasterWhisper  = "faster-whisper-selfhosted"
-	transcriptionProviderDefaultUrlGroq = "https://api.groq.com/openai/v1"
+	TranscriptionProviderGroq             = "groq"
+	TranscriptionProviderOpenAI           = "openai"
+	TranscriptionProviderWhisper          = "whisper-selfhosted"
+	transcriptionProviderDefaultUrlGroq   = "https://api.groq.com/openai/v1"
 	transcriptionProviderDefaultUrlOpenAI = "https://api.openai.com/v1"
-	transcriptionProviderDefaultModelGroq          = "whisper-large-v3-turbo"
-	transcriptionProviderDefaultModelOpenAI        = "whisper-1"
-	transcriptionProviderDefaultModelWhisper       = "whisper-1"
-	transcriptionProviderDefaultModelFasterWhisper = "Systran/faster-whisper-large-v3"
+	transcriptionProviderDefaultModelGroq    = "whisper-large-v3-turbo"
+	transcriptionProviderDefaultModelOpenAI  = "whisper-1"
+	transcriptionProviderDefaultModelWhisper = "whisper-1"
 )
 
 // ActiveTranscriptionConfig returns the (baseUrl, model, apiKey) tuple for the
@@ -459,13 +449,6 @@ func (options *Options) ActiveTranscriptionConfig() (baseUrl string, model strin
 		if model == "" {
 			model = transcriptionProviderDefaultModelWhisper
 		}
-	case TranscriptionProviderFasterWhisper:
-		baseUrl = options.TranscriptionFasterWhisperBaseUrl
-		model = options.TranscriptionFasterWhisperModel
-		apiKey = options.TranscriptionFasterWhisperApiKey
-		if model == "" {
-			model = transcriptionProviderDefaultModelFasterWhisper
-		}
 	default: // groq
 		provider = TranscriptionProviderGroq
 		baseUrl = options.TranscriptionBaseUrl
@@ -484,6 +467,6 @@ func (options *Options) ActiveTranscriptionConfig() (baseUrl string, model strin
 // IsSelfHostedTranscriptionProvider reports whether the given provider name
 // refers to a user-hosted backend (no API key required, no default URL).
 func IsSelfHostedTranscriptionProvider(provider string) bool {
-	return provider == TranscriptionProviderWhisper || provider == TranscriptionProviderFasterWhisper
+	return provider == TranscriptionProviderWhisper
 }
 

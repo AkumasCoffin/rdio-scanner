@@ -215,9 +215,8 @@
         <mat-form-field floatLabel="never">
             <mat-select formControlName="transcriptionProvider" placeholder="Provider">
                 <mat-option value="groq">Groq</mat-option>
-                <mat-option value="openai">OpenAI</mat-option>
+                <mat-option value="openai">Whisper (OpenAI)</mat-option>
                 <mat-option value="whisper-selfhosted">Whisper (self-hosted)</mat-option>
-                <mat-option value="faster-whisper-selfhosted">Faster-Whisper (self-hosted)</mat-option>
             </mat-select>
         </mat-form-field>
     </div>
@@ -261,11 +260,11 @@
         </div>
     </ng-container>
 
-    <!-- OpenAI config -->
+    <!-- OpenAI Whisper config -->
     <ng-container *ngIf="form?.get('transcriptionProvider')?.value === 'openai'">
         <div class="row">
             <p>
-                <span class="mat-body">OpenAI — Base URL</span><br>
+                <span class="mat-body">Whisper (OpenAI) — Base URL</span><br>
                 <span class="mat-caption">Defaults to <code>https://api.openai.com/v1</code>.</span>
             </p>
             <mat-form-field floatLabel="never">
@@ -275,7 +274,7 @@
         </div>
         <div class="row">
             <p>
-                <span class="mat-body">OpenAI — API Key</span><br>
+                <span class="mat-body">Whisper (OpenAI) — API Key</span><br>
                 <span class="mat-caption">Secret API key (<code>sk-…</code>). Sent as
                     <code>Authorization: Bearer</code>.</span>
             </p>
@@ -286,7 +285,7 @@
         </div>
         <div class="row">
             <p>
-                <span class="mat-body">OpenAI — Model</span><br>
+                <span class="mat-body">Whisper (OpenAI) — Model</span><br>
                 <span class="mat-caption">OpenAI's Whisper model name (currently <code>whisper-1</code>).</span>
             </p>
             <mat-form-field floatLabel="never">
@@ -295,18 +294,20 @@
         </div>
     </ng-container>
 
-    <!-- Whisper self-hosted config -->
+    <!-- Whisper self-hosted (any OpenAI-compatible server: whisper.cpp,
+         openai-whisper-server, faster-whisper-server, …) -->
     <ng-container *ngIf="form?.get('transcriptionProvider')?.value === 'whisper-selfhosted'">
         <div class="row">
             <p>
                 <span class="mat-body">Whisper (self-hosted) — Base URL</span><br>
-                <span class="mat-caption">URL of your local Whisper HTTP server (e.g. whisper.cpp server,
-                    openai-whisper-server). Must expose an OpenAI-compatible
-                    <code>/audio/transcriptions</code> endpoint. Required — no default.</span>
+                <span class="mat-caption">URL of your local Whisper HTTP server — whisper.cpp,
+                    openai-whisper-server, faster-whisper-server, or any other implementation that
+                    exposes an OpenAI-compatible <code>/audio/transcriptions</code> endpoint. Required —
+                    no default.</span>
             </p>
             <mat-form-field floatLabel="never">
                 <input type="text" matInput formControlName="transcriptionWhisperBaseUrl"
-                    placeholder="http://localhost:8080/v1">
+                    placeholder="http://localhost:8000/v1">
             </mat-form-field>
         </div>
         <div class="row">
@@ -322,46 +323,12 @@
         <div class="row">
             <p>
                 <span class="mat-body">Whisper (self-hosted) — Model</span><br>
-                <span class="mat-caption">Whatever model identifier your server expects.</span>
+                <span class="mat-caption">Whatever model identifier your server expects. Common examples:
+                    <code>whisper-1</code>, <code>whisper-large-v3</code>,
+                    <code>Systran/faster-whisper-large-v3</code>.</span>
             </p>
             <mat-form-field floatLabel="never">
                 <input type="text" matInput formControlName="transcriptionWhisperModel" placeholder="whisper-1">
-            </mat-form-field>
-        </div>
-    </ng-container>
-
-    <!-- Faster-Whisper self-hosted config -->
-    <ng-container *ngIf="form?.get('transcriptionProvider')?.value === 'faster-whisper-selfhosted'">
-        <div class="row">
-            <p>
-                <span class="mat-body">Faster-Whisper (self-hosted) — Base URL</span><br>
-                <span class="mat-caption">URL of your faster-whisper-server. Must expose an OpenAI-compatible
-                    <code>/audio/transcriptions</code> endpoint. Required — no default.</span>
-            </p>
-            <mat-form-field floatLabel="never">
-                <input type="text" matInput formControlName="transcriptionFasterWhisperBaseUrl"
-                    placeholder="http://localhost:8000/v1">
-            </mat-form-field>
-        </div>
-        <div class="row">
-            <p>
-                <span class="mat-body">Faster-Whisper (self-hosted) — API Key</span><br>
-                <span class="mat-caption">Optional. Leave blank if your server doesn't require auth.</span>
-            </p>
-            <mat-form-field floatLabel="never">
-                <textarea matInput formControlName="transcriptionFasterWhisperApiKey" placeholder="(optional)"
-                    autocomplete="off" rows="3"></textarea>
-            </mat-form-field>
-        </div>
-        <div class="row">
-            <p>
-                <span class="mat-body">Faster-Whisper (self-hosted) — Model</span><br>
-                <span class="mat-caption">Whatever model identifier your server expects (commonly
-                    <code>Systran/faster-whisper-large-v3</code>).</span>
-            </p>
-            <mat-form-field floatLabel="never">
-                <input type="text" matInput formControlName="transcriptionFasterWhisperModel"
-                    placeholder="Systran/faster-whisper-large-v3">
             </mat-form-field>
         </div>
     </ng-container>

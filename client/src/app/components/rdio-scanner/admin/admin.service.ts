@@ -157,9 +157,6 @@ export interface Options {
     transcriptionWhisperBaseUrl?: string;
     transcriptionWhisperApiKey?: string;
     transcriptionWhisperModel?: string;
-    transcriptionFasterWhisperBaseUrl?: string;
-    transcriptionFasterWhisperApiKey?: string;
-    transcriptionFasterWhisperModel?: string;
     transcriptionLanguage?: string;
     transcriptionPrompt?: string;
     transcriptionMaxPerMinute?: number;
@@ -668,9 +665,6 @@ export class RdioScannerAdminService implements OnDestroy {
             transcriptionWhisperBaseUrl: [options?.transcriptionWhisperBaseUrl ?? ''],
             transcriptionWhisperApiKey: [options?.transcriptionWhisperApiKey ?? ''],
             transcriptionWhisperModel: [options?.transcriptionWhisperModel ?? 'whisper-1'],
-            transcriptionFasterWhisperBaseUrl: [options?.transcriptionFasterWhisperBaseUrl ?? ''],
-            transcriptionFasterWhisperApiKey: [options?.transcriptionFasterWhisperApiKey ?? ''],
-            transcriptionFasterWhisperModel: [options?.transcriptionFasterWhisperModel ?? 'Systran/faster-whisper-large-v3'],
             transcriptionLanguage: [options?.transcriptionLanguage ?? ''],
             transcriptionPrompt: [options?.transcriptionPrompt ?? ''],
             transcriptionMaxPerMinute: [options?.transcriptionMaxPerMinute ?? 0, Validators.min(0)],

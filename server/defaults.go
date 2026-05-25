@@ -64,18 +64,16 @@ type DefaultOptions struct {
 	sortTalkgroups              bool
 	tagsToggle                  bool
 	time12hFormat               bool
-	transcriptionEnabled                bool
-	transcriptionProvider               string
-	transcriptionBaseUrl                string
-	transcriptionModel                  string
-	transcriptionOpenAIBaseUrl          string
-	transcriptionOpenAIModel            string
-	transcriptionWhisperBaseUrl         string
-	transcriptionWhisperModel           string
-	transcriptionFasterWhisperBaseUrl   string
-	transcriptionFasterWhisperModel     string
-	transcriptionLanguage               string
-	transcriptionPrompt                 string
+	transcriptionEnabled        bool
+	transcriptionProvider       string
+	transcriptionBaseUrl        string
+	transcriptionModel          string
+	transcriptionOpenAIBaseUrl  string
+	transcriptionOpenAIModel    string
+	transcriptionWhisperBaseUrl string
+	transcriptionWhisperModel   string
+	transcriptionLanguage       string
+	transcriptionPrompt         string
 }
 
 var defaults Defaults = Defaults{
@@ -121,18 +119,16 @@ var defaults Defaults = Defaults{
 		sortTalkgroups:              false,
 		tagsToggle:                  false,
 		time12hFormat:               false,
-		transcriptionEnabled:                false,
-		transcriptionProvider:               "groq",
-		transcriptionBaseUrl:                "https://api.groq.com/openai/v1",
-		transcriptionModel:                  "whisper-large-v3-turbo",
-		transcriptionOpenAIBaseUrl:          "https://api.openai.com/v1",
-		transcriptionOpenAIModel:            "whisper-1",
-		transcriptionWhisperBaseUrl:         "",
-		transcriptionWhisperModel:           "whisper-1",
-		transcriptionFasterWhisperBaseUrl:   "",
-		transcriptionFasterWhisperModel:     "Systran/faster-whisper-large-v3",
-		transcriptionLanguage:               "",
-		transcriptionPrompt:                 "",
+		transcriptionEnabled:        false,
+		transcriptionProvider:       "groq",
+		transcriptionBaseUrl:        "https://api.groq.com/openai/v1",
+		transcriptionModel:          "whisper-large-v3-turbo",
+		transcriptionOpenAIBaseUrl:  "https://api.openai.com/v1",
+		transcriptionOpenAIModel:    "whisper-1",
+		transcriptionWhisperBaseUrl: "",
+		transcriptionWhisperModel:   "whisper-1",
+		transcriptionLanguage:       "",
+		transcriptionPrompt:         "",
 	},
 	systems: []System{},
 	tags: []string{

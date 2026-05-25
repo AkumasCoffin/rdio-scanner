@@ -8,6 +8,21 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.11.0-beta.2
+
+Simplification of the provider dropdown from beta.1. Faster-Whisper is no longer its own option — since whisper.cpp, openai-whisper-server, and faster-whisper-server all expose the same OpenAI-compatible HTTP protocol and only differ in their accepted model identifiers, they collapse cleanly into a single "Whisper (self-hosted)" option where the user supplies their server's preferred model name.
+
+### Server
+
+- Dropped `faster-whisper-selfhosted` from the `TranscriptionProvider` enum. Three values now: `groq`, `openai`, `whisper-selfhosted`.
+- Removed the `TranscriptionFasterWhisperBaseUrl` / `TranscriptionFasterWhisperApiKey` / `TranscriptionFasterWhisperModel` fields.
+- Anyone testing beta.1 with the Faster-Whisper option needs to move their values into the Whisper (self-hosted) fields after upgrading.
+
+### Webapp
+
+- Provider dropdown now reads "Groq", "Whisper (OpenAI)", "Whisper (self-hosted)" — the OpenAI label clarifies it's specifically the hosted Whisper API.
+- The Whisper (self-hosted) field hint mentions `whisper-1`, `whisper-large-v3`, and `Systran/faster-whisper-large-v3` as common model values.
+
 ## Version 6.11.0-beta.1
 
 Multi-provider transcription support. The existing Groq integration is now one of four selectable backends; OpenAI and self-hosted Whisper / Faster-Whisper join the lineup. All four speak the same OpenAI-compatible `POST /audio/transcriptions` protocol, so the existing key-rotation / 429-backoff / rate-limit machinery is shared — only the URL, model, and auth requirement differ per provider.
