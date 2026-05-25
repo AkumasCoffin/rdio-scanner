@@ -8,6 +8,26 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.11.0-beta.6
+
+UX tweak to the wait-for-transcript hold based on real-world self-hosted Whisper latencies.
+
+### Webapp
+
+- **Hold timeout reduced from 30 s → 15 s.** Self-hosted Whisper runs can be unpredictable; 30 s held calls back too aggressively. 15 s strikes a better balance — most transcripts complete by then, and a call gets played reasonably promptly when one doesn't.
+- **Late-arriving transcripts now apply in-place.** Previously, if the 15/30-second timeout fired and released a call without a transcript, a transcript that came in afterwards was effectively lost (the resolver had already been cleaned up). New `applyLateTranscript(id, text)` runs on every WS-pushed transcript and splices the text into:
+  - any pending-transcript entry still in the pre-queue (so it has the transcript when released)
+  - the currently-playing call (re-emits so the LCD/livefeed panel re-renders)
+  - any call still sitting in the main playback queue
+  This is on top of the existing `transcriptReady` event so the history rows still get notified.
+
+### Not yet (Q1 from user)
+
+The user asked: "will calls that don't get transcribed by the first server get transcribed by the second server?". Two cases:
+
+- **First server's transcription is disabled / doesn't apply** (system or talkgroup `Transcribe` off, audio too short, etc.) — `transcriptPending=1` is never set on the forwarded call, the second server transcribes locally. **Already works.**
+- **First server tried to transcribe but failed at runtime** (Whisper rate-limited, network error, all keys paused) — `transcriptPending=1` was set, the second server skipped local transcription, and the transcript push never arrived. The call stays untranscribed after the 5-min server-side cache TTL expires. **Not handled yet.** Adding a server-side fallback transcription timer is a follow-up.
+
 ## Version 6.11.0-beta.5
 
 Fixes the bug beta.4 was supposed to fix.

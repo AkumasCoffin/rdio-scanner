@@ -140,7 +140,10 @@ export class RdioScannerService implements OnDestroy {
         fetchTimer?: ReturnType<typeof setTimeout>;
         timeoutTimer?: ReturnType<typeof setTimeout>;
     }> = [];
-    private static readonly TRANSCRIPT_WAIT_MAX_MS = 30000;
+    // Wait at most 15s for a held call's transcript before releasing the call
+    // anyway. If the transcript eventually shows up via a server WS push, it
+    // still gets applied to the call in-place — see applyLateTranscript().
+    private static readonly TRANSCRIPT_WAIT_MAX_MS = 15000;
     private static readonly TRANSCRIPT_WAIT_POLL_MS = 2000;
 
     private audioContext: AudioContext | undefined;
@@ -972,6 +975,46 @@ export class RdioScannerService implements OnDestroy {
         }
     }
 
+    // applyLateTranscript splices a transcript text into any call object we
+    // know about with the given id — the held pre-queue entry, the call
+    // currently playing, and any call still sitting in the main playback
+    // queue. Used when a transcript arrives via WS push after a held call's
+    // 15s wait-for-transcript timeout already released it without text.
+    //
+    // Returns true if at least one in-memory call was updated, so callers
+    // can decide whether further processing is needed.
+    private applyLateTranscript(id: number, text: string): boolean {
+        let touched = false;
+
+        // Held in the pre-queue (still ready=false or already-ready). Update
+        // the entry's call payload so when it's released the user sees the
+        // transcript. Doesn't change ordering.
+        for (const entry of this.pendingTranscriptCalls) {
+            if (entry.id === id && !entry.call.transcript) {
+                entry.call.transcript = text;
+                touched = true;
+            }
+        }
+
+        // Currently playing call.
+        if (this.call && this.call.id === id && !this.call.transcript) {
+            this.call.transcript = text;
+            // Re-emit so the LCD / live-feed panel re-renders with the text.
+            this.event.emit({ call: this.call });
+            touched = true;
+        }
+
+        // Anything still queued.
+        for (const queued of this.callQueue) {
+            if (queued.id === id && !queued.transcript) {
+                queued.transcript = text;
+                touched = true;
+            }
+        }
+
+        return touched;
+    }
+
     // enqueuePending is the normal queue path that a held call takes once
     // its transcript has arrived (or its timeout elapsed).
     private enqueuePending(call: RdioScannerCall, priority: boolean): void {
@@ -1630,7 +1673,15 @@ export class RdioScannerService implements OnDestroy {
                     if (payload && typeof payload === 'object') {
                         const id = (payload as any).id;
                         const text: string = typeof (payload as any).transcript === 'string' ? (payload as any).transcript : '';
-                        if (typeof id === 'number') {
+                        if (typeof id === 'number' && text) {
+                            // Apply the transcript in-place to any held / queued /
+                            // currently-playing call with this id. Handles the
+                            // "wait-for-transcript timed out at 15s, then the
+                            // transcript finally arrived 20s later" case so the
+                            // call's transcript still updates instead of being
+                            // silently lost.
+                            this.applyLateTranscript(id, text);
+
                             const resolver = this.transcriptResolvers.get(id);
                             if (resolver) {
                                 // Pending fetchTranscript() request — resolve it.
