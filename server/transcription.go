@@ -75,31 +75,52 @@ func NewTranscriber(controller *Controller) *Transcriber {
 	}
 }
 
-// refreshKeys parses the configured transcriptionApiKey value (which may hold
-// multiple keys separated by commas, newlines, or whitespace) and updates the
-// in-memory key ring when it changes. Safe to call from any goroutine.
+// anonymousKeySentinel marks the single "no auth" key entry used when the
+// active provider is self-hosted and the user hasn't configured a key. The
+// sentinel string itself is never sent on the wire — callTranscriptionAPI
+// recognises it and omits the Authorization header.
+const anonymousKeySentinel = "__anonymous__"
+
+// refreshKeys parses the active provider's API-key value (which may hold
+// multiple comma/whitespace-separated keys for Groq's multi-key rotation) and
+// updates the in-memory key ring when it changes. For self-hosted providers
+// with no key configured, the ring holds a single anonymousKeySentinel entry
+// so the rate-limit / scheduling machinery still has something to operate on.
+// Safe to call from any goroutine.
 func (t *Transcriber) refreshKeys() {
-	raw := t.Controller.Options.TranscriptionApiKey
+	_, _, raw, provider := t.Controller.Options.ActiveTranscriptionConfig()
+
 	splitter := func(r rune) bool {
 		return r == ',' || r == '\n' || r == '\r' || r == ' ' || r == '\t' || r == ';'
 	}
 	parts := strings.FieldsFunc(raw, splitter)
+	cleaned := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			cleaned = append(cleaned, p)
+		}
+	}
+
+	// Self-hosted with no key → use the sentinel so the scheduler still has a
+	// usable slot. Hosted providers (Groq, OpenAI) with no key end up with an
+	// empty ring, which Enabled() treats as not configured.
+	if len(cleaned) == 0 && IsSelfHostedTranscriptionProvider(provider) {
+		cleaned = []string{anonymousKeySentinel}
+	}
 
 	t.keysMu.Lock()
 	defer t.keysMu.Unlock()
 
-	hash := strings.Join(parts, "|")
+	hash := provider + "|" + strings.Join(cleaned, "|")
 	if hash == t.keysHash {
 		return
 	}
 
 	t.keysHash = hash
-	t.keys = make([]*transcriptionKey, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			t.keys = append(t.keys, &transcriptionKey{value: p})
-		}
+	t.keys = make([]*transcriptionKey, 0, len(cleaned))
+	for _, p := range cleaned {
+		t.keys = append(t.keys, &transcriptionKey{value: p})
 	}
 	if t.nextKeyIdx >= len(t.keys) {
 		t.nextKeyIdx = 0
@@ -218,6 +239,11 @@ func (t *Transcriber) Enabled() bool {
 	if !opts.TranscriptionEnabled {
 		return false
 	}
+	baseUrl, _, _, provider := opts.ActiveTranscriptionConfig()
+	// Self-hosted has no default URL — without one we can't make any request.
+	if IsSelfHostedTranscriptionProvider(provider) && strings.TrimSpace(baseUrl) == "" {
+		return false
+	}
 	t.refreshKeys()
 	t.keysMu.Lock()
 	n := len(t.keys)
@@ -264,14 +290,14 @@ func (t *Transcriber) Transcribe(call *Call) (string, error) {
 		return "", errors.New("no audio")
 	}
 
-	baseUrl := strings.TrimRight(strings.TrimSpace(opts.TranscriptionBaseUrl), "/")
+	rawUrl, rawModel, _, provider := opts.ActiveTranscriptionConfig()
+	baseUrl := strings.TrimRight(strings.TrimSpace(rawUrl), "/")
 	if baseUrl == "" {
-		baseUrl = "https://api.groq.com/openai/v1"
+		return "", fmt.Errorf("transcription provider %q has no base URL configured", provider)
 	}
-
-	model := strings.TrimSpace(opts.TranscriptionModel)
+	model := strings.TrimSpace(rawModel)
 	if model == "" {
-		model = "whisper-large-v3-turbo"
+		return "", fmt.Errorf("transcription provider %q has no model configured", provider)
 	}
 
 	// Build the multipart body once; reuse the bytes for every retry so we
@@ -391,7 +417,9 @@ func (t *Transcriber) callTranscriptionAPI(baseUrl, apiKey, contentType string, 
 	if err != nil {
 		return "", err, false
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	if apiKey != "" && apiKey != anonymousKeySentinel {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	req.Header.Set("Content-Type", contentType)
 
 	client := &http.Client{Timeout: transcriptionHTTPTimeout}
@@ -411,7 +439,11 @@ func (t *Transcriber) callTranscriptionAPI(baseUrl, apiKey, contentType string, 
 	if resp.StatusCode == 429 {
 		backoff := parseUpstreamBackoff(resp, respBody)
 		t.pauseKey(apiKey, time.Now().Add(backoff))
-		t.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcription 429 on key …%s, paused %s; trying next key", keyTail(apiKey), backoff))
+		keyLabel := "…" + keyTail(apiKey)
+		if apiKey == anonymousKeySentinel {
+			keyLabel = "(anonymous)"
+		}
+		t.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcription 429 on key %s, paused %s; trying next key", keyLabel, backoff))
 		return "", fmt.Errorf("transcription api 429 rate-limited on key; paused %s", backoff), true
 	}
 

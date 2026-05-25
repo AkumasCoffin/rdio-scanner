@@ -8,6 +8,34 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.11.0-beta.1
+
+Multi-provider transcription support. The existing Groq integration is now one of four selectable backends; OpenAI and self-hosted Whisper / Faster-Whisper join the lineup. All four speak the same OpenAI-compatible `POST /audio/transcriptions` protocol, so the existing key-rotation / 429-backoff / rate-limit machinery is shared — only the URL, model, and auth requirement differ per provider.
+
+### Server
+
+- **`TranscriptionProvider` setting** (string enum) selects which backend to use. Values: `groq` (default — existing behaviour preserved), `openai`, `whisper-selfhosted`, `faster-whisper-selfhosted`. Missing or unknown values fall back to Groq.
+- **Per-provider configuration is stored independently.** Each provider has its own `…BaseUrl`, `…ApiKey`, `…Model` fields, so switching providers via the admin UI does not lose previously-entered credentials. The existing `transcriptionBaseUrl` / `transcriptionApiKey` / `transcriptionModel` rows are repurposed as Groq's slots, so any pre-upgrade Groq config is automatically the active provider's config after upgrade.
+- **`Options.ActiveTranscriptionConfig()`** resolves the (URL, model, key, provider) tuple at request time, filling in provider-specific defaults when the corresponding field is empty:
+  - Groq: `https://api.groq.com/openai/v1` + `whisper-large-v3-turbo`
+  - OpenAI: `https://api.openai.com/v1` + `whisper-1`
+  - Whisper self-hosted: no URL default (required from user) + `whisper-1`
+  - Faster-Whisper self-hosted: no URL default (required from user) + `Systran/faster-whisper-large-v3`
+- **API key is optional for self-hosted providers.** When the active provider is self-hosted and the configured key is empty, the `Authorization: Bearer` header is omitted from outgoing requests and the rate-limit machinery uses a single `(anonymous)` slot. Hosted providers (Groq, OpenAI) still require a non-empty key.
+- **`Enabled()` is provider-aware.** Hosted providers need a key; self-hosted providers need a Base URL (since there's no default). `TranscriptionEnabled` still gates everything globally.
+- **Multi-key rotation stays Groq-only.** The existing comma/whitespace/newline-split key ring continues to apply to the Groq slot. Other providers use a single-key field for v1.
+
+### Webapp
+
+- Admin → Options → Call Transcription gains a provider dropdown. Switching providers shows a different per-provider block (Base URL, API Key, Model) below the dropdown; the inactive providers' fields stay in the form state (and on the server) so credentials persist across switches.
+- Shared settings (Language, Prompt, Max/min) appear once below the per-provider block.
+
+### Backwards compat
+
+- Existing installs default to `groq` provider and keep using their existing `TranscriptionBaseUrl` / `TranscriptionApiKey` / `TranscriptionModel` values — zero behavioural change.
+- Edge case: if a user had repurposed the existing Groq fields to point at OpenAI (via custom URL), after upgrade those values still live in the Groq slot. To get the cleaner OpenAI experience, switch the provider dropdown to "OpenAI" and (re-)enter credentials in the OpenAI fields.
+
+
 ## Version 6.10.3
 
 Cross-instance transcript forwarding. Server-only feature; the webapp and Android client ride the version bump. Fully backwards compatible with the original [chuot/rdio-scanner](https://github.com/chuot/rdio-scanner) repo — wire format unchanged, downstreams running stock or older builds behave identically (they just don't receive forwarded transcripts, and they don't need to). Iterated through nine prerelease betas in production against a live two-server setup before this release.

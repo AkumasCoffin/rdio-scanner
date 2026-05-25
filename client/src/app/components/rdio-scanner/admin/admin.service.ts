@@ -151,6 +151,15 @@ export interface Options {
     transcriptionBaseUrl?: string;
     transcriptionApiKey?: string;
     transcriptionModel?: string;
+    transcriptionOpenAIBaseUrl?: string;
+    transcriptionOpenAIApiKey?: string;
+    transcriptionOpenAIModel?: string;
+    transcriptionWhisperBaseUrl?: string;
+    transcriptionWhisperApiKey?: string;
+    transcriptionWhisperModel?: string;
+    transcriptionFasterWhisperBaseUrl?: string;
+    transcriptionFasterWhisperApiKey?: string;
+    transcriptionFasterWhisperModel?: string;
     transcriptionLanguage?: string;
     transcriptionPrompt?: string;
     transcriptionMaxPerMinute?: number;
@@ -653,6 +662,15 @@ export class RdioScannerAdminService implements OnDestroy {
             transcriptionBaseUrl: [options?.transcriptionBaseUrl ?? 'https://api.groq.com/openai/v1'],
             transcriptionApiKey: [options?.transcriptionApiKey ?? ''],
             transcriptionModel: [options?.transcriptionModel ?? 'whisper-large-v3-turbo'],
+            transcriptionOpenAIBaseUrl: [options?.transcriptionOpenAIBaseUrl ?? 'https://api.openai.com/v1'],
+            transcriptionOpenAIApiKey: [options?.transcriptionOpenAIApiKey ?? ''],
+            transcriptionOpenAIModel: [options?.transcriptionOpenAIModel ?? 'whisper-1'],
+            transcriptionWhisperBaseUrl: [options?.transcriptionWhisperBaseUrl ?? ''],
+            transcriptionWhisperApiKey: [options?.transcriptionWhisperApiKey ?? ''],
+            transcriptionWhisperModel: [options?.transcriptionWhisperModel ?? 'whisper-1'],
+            transcriptionFasterWhisperBaseUrl: [options?.transcriptionFasterWhisperBaseUrl ?? ''],
+            transcriptionFasterWhisperApiKey: [options?.transcriptionFasterWhisperApiKey ?? ''],
+            transcriptionFasterWhisperModel: [options?.transcriptionFasterWhisperModel ?? 'Systran/faster-whisper-large-v3'],
             transcriptionLanguage: [options?.transcriptionLanguage ?? ''],
             transcriptionPrompt: [options?.transcriptionPrompt ?? ''],
             transcriptionMaxPerMinute: [options?.transcriptionMaxPerMinute ?? 0, Validators.min(0)],

@@ -208,54 +208,163 @@
     <div class="row">
         <p>
             <span class="mat-body">Transcription Provider</span><br>
-            <span class="mat-caption">Label for the provider (informational).</span>
+            <span class="mat-caption">Which transcription backend to use. Each provider's URL / API key /
+                model are stored independently, so you can switch back and forth without re-entering
+                credentials.</span>
         </p>
         <mat-form-field floatLabel="never">
             <mat-select formControlName="transcriptionProvider" placeholder="Provider">
                 <mat-option value="groq">Groq</mat-option>
                 <mat-option value="openai">OpenAI</mat-option>
-                <mat-option value="custom">Custom (OpenAI-compatible)</mat-option>
+                <mat-option value="whisper-selfhosted">Whisper (self-hosted)</mat-option>
+                <mat-option value="faster-whisper-selfhosted">Faster-Whisper (self-hosted)</mat-option>
             </mat-select>
         </mat-form-field>
     </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Transcription Base URL</span><br>
-            <span class="mat-caption">Base URL of the OpenAI-compatible API (no trailing slash). Groq:
-                https://api.groq.com/openai/v1 &mdash; OpenAI: https://api.openai.com/v1.</span>
-        </p>
-        <mat-form-field floatLabel="never">
-            <input type="text" matInput formControlName="transcriptionBaseUrl"
-                placeholder="https://api.groq.com/openai/v1">
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Transcription API Key(s)</span><br>
-            <span class="mat-caption">One or more secret keys sent as <code>Authorization: Bearer &lt;key&gt;</code>.
-                Paste multiple keys separated by commas, semicolons, or newlines — the server round-robins
-                across them and temporarily benches any key that returns a 429 until its upstream backoff
-                expires.</span>
-        </p>
-        <mat-form-field floatLabel="never">
-            <textarea matInput formControlName="transcriptionApiKey" placeholder="gsk_xxxx, gsk_yyyy, …"
-                autocomplete="off" rows="3"></textarea>
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Transcription Model</span><br>
-            <span class="mat-caption">Whisper model identifier. Groq supports <code>whisper-large-v3</code> and
-                <code>whisper-large-v3-turbo</code>.</span>
-        </p>
-        <mat-form-field floatLabel="never">
-            <mat-select formControlName="transcriptionModel" placeholder="Model">
-                <mat-option value="whisper-large-v3-turbo">whisper-large-v3-turbo</mat-option>
-                <mat-option value="whisper-large-v3">whisper-large-v3</mat-option>
-                <mat-option value="whisper-1">whisper-1 (OpenAI)</mat-option>
-            </mat-select>
-        </mat-form-field>
-    </div>
+
+    <!-- Groq config -->
+    <ng-container *ngIf="form?.get('transcriptionProvider')?.value === 'groq'">
+        <div class="row">
+            <p>
+                <span class="mat-body">Groq — Base URL</span><br>
+                <span class="mat-caption">OpenAI-compatible endpoint base (no trailing slash).</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <input type="text" matInput formControlName="transcriptionBaseUrl"
+                    placeholder="https://api.groq.com/openai/v1">
+            </mat-form-field>
+        </div>
+        <div class="row">
+            <p>
+                <span class="mat-body">Groq — API Key(s)</span><br>
+                <span class="mat-caption">One or more secret keys sent as <code>Authorization: Bearer &lt;key&gt;</code>.
+                    Multiple keys separated by commas, semicolons, or newlines round-robin and back off
+                    independently on 429.</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <textarea matInput formControlName="transcriptionApiKey" placeholder="gsk_xxxx, gsk_yyyy, …"
+                    autocomplete="off" rows="3"></textarea>
+            </mat-form-field>
+        </div>
+        <div class="row">
+            <p>
+                <span class="mat-body">Groq — Model</span><br>
+                <span class="mat-caption">Groq supports <code>whisper-large-v3</code> and
+                    <code>whisper-large-v3-turbo</code>.</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <mat-select formControlName="transcriptionModel" placeholder="Model">
+                    <mat-option value="whisper-large-v3-turbo">whisper-large-v3-turbo</mat-option>
+                    <mat-option value="whisper-large-v3">whisper-large-v3</mat-option>
+                </mat-select>
+            </mat-form-field>
+        </div>
+    </ng-container>
+
+    <!-- OpenAI config -->
+    <ng-container *ngIf="form?.get('transcriptionProvider')?.value === 'openai'">
+        <div class="row">
+            <p>
+                <span class="mat-body">OpenAI — Base URL</span><br>
+                <span class="mat-caption">Defaults to <code>https://api.openai.com/v1</code>.</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <input type="text" matInput formControlName="transcriptionOpenAIBaseUrl"
+                    placeholder="https://api.openai.com/v1">
+            </mat-form-field>
+        </div>
+        <div class="row">
+            <p>
+                <span class="mat-body">OpenAI — API Key</span><br>
+                <span class="mat-caption">Secret API key (<code>sk-…</code>). Sent as
+                    <code>Authorization: Bearer</code>.</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <textarea matInput formControlName="transcriptionOpenAIApiKey" placeholder="sk-…"
+                    autocomplete="off" rows="3"></textarea>
+            </mat-form-field>
+        </div>
+        <div class="row">
+            <p>
+                <span class="mat-body">OpenAI — Model</span><br>
+                <span class="mat-caption">OpenAI's Whisper model name (currently <code>whisper-1</code>).</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <input type="text" matInput formControlName="transcriptionOpenAIModel" placeholder="whisper-1">
+            </mat-form-field>
+        </div>
+    </ng-container>
+
+    <!-- Whisper self-hosted config -->
+    <ng-container *ngIf="form?.get('transcriptionProvider')?.value === 'whisper-selfhosted'">
+        <div class="row">
+            <p>
+                <span class="mat-body">Whisper (self-hosted) — Base URL</span><br>
+                <span class="mat-caption">URL of your local Whisper HTTP server (e.g. whisper.cpp server,
+                    openai-whisper-server). Must expose an OpenAI-compatible
+                    <code>/audio/transcriptions</code> endpoint. Required — no default.</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <input type="text" matInput formControlName="transcriptionWhisperBaseUrl"
+                    placeholder="http://localhost:8080/v1">
+            </mat-form-field>
+        </div>
+        <div class="row">
+            <p>
+                <span class="mat-body">Whisper (self-hosted) — API Key</span><br>
+                <span class="mat-caption">Optional. Leave blank if your server doesn't require auth.</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <textarea matInput formControlName="transcriptionWhisperApiKey" placeholder="(optional)"
+                    autocomplete="off" rows="3"></textarea>
+            </mat-form-field>
+        </div>
+        <div class="row">
+            <p>
+                <span class="mat-body">Whisper (self-hosted) — Model</span><br>
+                <span class="mat-caption">Whatever model identifier your server expects.</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <input type="text" matInput formControlName="transcriptionWhisperModel" placeholder="whisper-1">
+            </mat-form-field>
+        </div>
+    </ng-container>
+
+    <!-- Faster-Whisper self-hosted config -->
+    <ng-container *ngIf="form?.get('transcriptionProvider')?.value === 'faster-whisper-selfhosted'">
+        <div class="row">
+            <p>
+                <span class="mat-body">Faster-Whisper (self-hosted) — Base URL</span><br>
+                <span class="mat-caption">URL of your faster-whisper-server. Must expose an OpenAI-compatible
+                    <code>/audio/transcriptions</code> endpoint. Required — no default.</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <input type="text" matInput formControlName="transcriptionFasterWhisperBaseUrl"
+                    placeholder="http://localhost:8000/v1">
+            </mat-form-field>
+        </div>
+        <div class="row">
+            <p>
+                <span class="mat-body">Faster-Whisper (self-hosted) — API Key</span><br>
+                <span class="mat-caption">Optional. Leave blank if your server doesn't require auth.</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <textarea matInput formControlName="transcriptionFasterWhisperApiKey" placeholder="(optional)"
+                    autocomplete="off" rows="3"></textarea>
+            </mat-form-field>
+        </div>
+        <div class="row">
+            <p>
+                <span class="mat-body">Faster-Whisper (self-hosted) — Model</span><br>
+                <span class="mat-caption">Whatever model identifier your server expects (commonly
+                    <code>Systran/faster-whisper-large-v3</code>).</span>
+            </p>
+            <mat-form-field floatLabel="never">
+                <input type="text" matInput formControlName="transcriptionFasterWhisperModel"
+                    placeholder="Systran/faster-whisper-large-v3">
+            </mat-form-field>
+        </div>
+    </ng-container>
     <div class="row">
         <p>
             <span class="mat-body">Transcription Language</span><br>
