@@ -4,121 +4,45 @@
 
 _(nothing yet — bullets land here as work is merged to master)_
 
+---
+
 ## Released
 
-## Version 6.10.3-beta.9
+## Version 6.10.3
 
-Audit pass — four correctness fixes after a code review of the transcript-forwarding feature. No protocol changes; behaviour-only improvements for chain forwarding, race-window closure, mutex hygiene, and log noise reduction.
-
-### Server
-
-- **Chain forwarding (A → B → C).** When this server receives a transcript from upstream (either via the synchronous `CallTranscriptHandler` apply path or from the pending-transcripts cache hit in `IngestCall`), it now also fires `Downstreams.SendTranscript` so the transcript propagates to *its own* downstreams. Previously only locally-Whisper'd transcripts were forwarded, which broke multi-hop setups where a middle server isn't transcribing itself.
-- **Race-window close in `CallTranscriptHandler`.** After `Store`-ing a deferred transcript, immediately re-runs `GetIdByKey`; if the matching call arrived between the first lookup and the Store, `Take` and apply directly so the cache entry doesn't expire unused. Eliminates a rare microsecond-wide window that could otherwise leave a call permanently untranscribed.
-- **Locked read of `Downstream.transcriptSupport`.** New `Downstream.supportsTranscript()` helper that acquires `transcriptMu` for the read. Eliminates the data race in `Downstreams.SendTranscript` that `-race` would flag (the value was always monotonic enough at the hardware level for it not to matter in practice, but it's clean now).
-- **One-shot log on transcript-support transitions.** `probeTranscriptSupport` now logs once when the cached support state for a downstream changes (Unknown→No, Unknown→Yes, Yes→No, No→Yes). Re-probes that confirm the existing state stay silent, so the log doesn't get spammed with "downstream X doesn't support transcript-forward" on every call when the downstream is on the original repo. Messages:
-  - `downstream URL does not support transcript-forward — transcripts will not be pushed to it`
-  - `downstream URL supports transcript-forward — transcripts will be pushed`
-
-## Version 6.10.3-beta.8
-
-Sender-side correctness: `transcriptPending=1` is now only set on outgoing call-uploads when this server is **actually** going to attempt transcription. Previously the hint was set purely from configuration (`system.Transcribe && talkgroup.Transcribe && Transcriber.Enabled()`), which meant downstreams were told a transcript was coming for calls that `TranscribeCallAsync` was going to silently skip — leaving those calls untranscribed on the downstream after the receiver's 5-minute pending-transcripts cache TTL expired.
+Cross-instance transcript forwarding. Server-only feature; the webapp and Android client ride the version bump. Fully backwards compatible with the original [chuot/rdio-scanner](https://github.com/chuot/rdio-scanner) repo — wire format unchanged, downstreams running stock or older builds behave identically (they just don't receive forwarded transcripts, and they don't need to). Iterated through nine prerelease betas in production against a live two-server setup before this release.
 
 ### Server
 
-- **`IngestCall` now applies the same audio-size predicates `TranscribeCallAsync` uses** before setting `call.transcriptWillForward`:
-  - Hard floor: `len(call.Audio) >= 45` (matches the `<= 44 = no real audio` check in `Transcribe()`)
-  - Configurable: `len(call.Audio) >= TranscriptionMinAudioBytes` (matches the early-bail check in `TranscribeCallAsync`)
-- If either predicate fails, `transcriptWillForward` is **not** set, so:
-  - No `transcriptPending=1` form field in the multipart upload
-  - The downstream transcribes the call locally as normal (no false expectation of an incoming push)
-- Runtime skips (all Groq keys paused on a 429 backoff, or all keys at the per-key per-minute cap) can't be predicted at ingest time — those still rely on the receiver's pending-transcripts cache TTL to clean up gracefully if the push never arrives.
-- Receiver-side behaviour and protocol are unchanged.
+- **Push completed transcripts to downstream instances.** When this server finishes transcribing a call, the transcript is automatically forwarded to any configured downstream that supports the new feature. Two new HTTP endpoints:
+  - `GET /api/capabilities` — advertises `{"features":["transcript-forward"]}`. Used by upstreams to detect support; legacy servers return 404 and are silently skipped.
+  - `POST /api/call-transcript` — receives `{key, system, talkgroup, dateTime, transcript}`, validates the API key with the same `Apikeys.HasAccess` check used by `/api/call-upload`, looks up the matching call by a ±500 ms `(system, talkgroup, dateTime)` window, persists the transcript via `UpdateTranscript`, and broadcasts to live WebSocket listeners via the existing `EmitTranscript` path.
+- **Per-downstream capability cache.** Each `Downstream` probes its target's `/api/capabilities` and caches the result with a 1-hour TTL. Lets a server upgraded mid-session start receiving pushes within an hour without a restart. State transitions log once (Unknown→No, Unknown→Yes, Yes→No, No→Yes) so the log isn't spammed for legacy downstreams.
+- **Suppress double-transcription across the forwarding hop.** When the upstream is going to transcribe, the call-upload includes a `transcriptPending=1` form field. The downstream parses it and skips its own `TranscribeCallAsync` for that call — only the upstream runs Whisper; the result is pushed via `/api/call-transcript`. The field is only set when transcription is *actually* going to be attempted (system+talkgroup opted in, key configured, audio passes the same `<= 44` byte and `TranscriptionMinAudioBytes` predicates Whisper would use), so downstreams aren't told to wait for transcripts that will never come.
+- **Order-independent receive via in-memory pending-transcripts cache.** On servers where Whisper finishes before the call upload completes, the transcript push (small JSON) often beats the call upload (large multipart) on the wire. The receiver now holds early-arriving pushes in an in-memory map keyed by `(system, talkgroup, dateTime)` with a 5-minute TTL and a 1000-entry cap (lazy prune on every Store, oldest dropped if still over cap). `IngestCall` checks the cache after `WriteCall` and applies any held transcript immediately. A race-window close in `CallTranscriptHandler` re-checks the DB after Store to catch the microsecond gap where a call arrived between the first lookup and the Store.
+- **Chain forwarding (A → B → C).** When a server receives a transcript from upstream (synchronously, or from the pending cache), it now also forwards it to its own downstreams. Multi-hop setups where a middle server isn't transcribing locally propagate transcripts correctly.
+- **Delayer now only delays listeners, not downstreams.** `Controller.EmitCall` split into `EmitCallToDownstreams` + `EmitCallToClients`. The Delayer fires only the client path; `IngestCall` fires the downstream forward synchronously before handing the call to the Delayer. Forwarded calls reach downstreams at near-real-time regardless of local listener-delay config. Original `EmitCall` is kept as a thin wrapper for compatibility.
 
-## Version 6.10.3-beta.7
+### Logs
 
-Behavioural change to the Delayer: now only delays **listeners** (live WebSocket clients), not **downstreams** (forwarded servers). Fully backwards compatible — no protocol or wire-format change, no field changes, downstreams running the original [chuot/rdio-scanner](https://github.com/chuot/rdio-scanner) repo behave identically (they just receive calls a bit sooner).
+Full lifecycle of a forwarded call is visible:
 
-### Server
+- `transcript push received: [Richard] system=X talkgroup=Y dateTime=Z` — handler received a request
+- `transcript push auth failed: ... key=…aBcD` — bad API key (last four chars shown so you can identify the misconfigured upstream)
+- `transcript deferred (holding for incoming call): [Richard] ...` — push arrived before the call; held in cache
+- `transcript applied from pending: [Richard] ... id=N (X chars)` — held transcript applied when the call landed
+- `transcript applied (race-window close): [Richard] ... id=N (X chars)` — race-close caught the call appearing during Store
+- `transcript received: [Richard] ... id=N (X chars)` — synchronous apply (call already in DB)
+- `call from upstream with pending transcript: ... id=N (awaiting /api/call-transcript push)` — call arrived tagged `transcriptPending=1`
+- `local transcription skipped: ... id=N (deferred to upstream)` — local Whisper bypassed for this call
+- `downstream URL does not support transcript-forward` / `... supports transcript-forward` — fires once per state transition
 
-- **`Controller.EmitCall` split into two methods:**
-  - `EmitCallToDownstreams(call)` — fires `Downstreams.Send` only.
-  - `EmitCallToClients(call)` — fires `Clients.EmitCall` only.
-  - The original `EmitCall` is preserved as a thin wrapper that calls both (legacy callers unaffected).
-- **`Delayer.Delay` now calls `EmitCallToClients` instead of `EmitCall`** in all four invocations (immediate-zero-delay, past-timestamp restore, timer-fire callback, and `Start()` catch-up after restart). Listener UX is unchanged — the configured delay still applies to what live listeners see.
-- **`IngestCall` now fires `EmitCallToDownstreams(call)` synchronously** right after `transcriptWillForward` is set and before `Delayer.Delay(call)`. Downstreams receive calls at near-real-time regardless of local delay config.
-- Companion benefit for transcript-forward setups: the call-upload no longer has the Delayer's hold layered on top of network upload time, so the multipart upload usually beats the transcript push to the receiver — the pending-transcripts cache from beta.6 is still in place as a safety net but rarely gets used in practice.
+### Backwards compatibility
 
-## Version 6.10.3-beta.6
-
-Fixes the race that caused every forwarded transcript push to fail with `transcript push no matching call`. The upstream's tiny JSON transcript-push was overtaking its own large multipart call-upload on the wire, so `CallTranscriptHandler` ran a DB lookup before the call had been stored, returned 404, and the transcript was lost forever.
-
-### Server
-
-- **New `PendingTranscripts` in-memory cache** (`server/pending_transcripts.go`). When a transcript push arrives for a call that isn't in the DB yet, the transcript is stashed in this cache keyed by `(system, talkgroup, dateTime)` with a 5-minute TTL and a 1000-entry cap (expired entries pruned on every write; oldest dropped if still over the cap). The handler now returns 200 "deferred" instead of 404.
-- **`IngestCall` consults the cache** after `WriteCall` succeeds. If a transcript was waiting for this call, it's applied via `UpdateTranscript` and broadcast to live clients via `EmitTranscript`, all in the same code path as a locally-generated transcript.
-- **New log line:**
-  - `transcript deferred (holding for incoming call): [ident] system=X talkgroup=Y dateTime=Z` — replaces the old `transcript push no matching call` log when the lookup misses.
-  - `transcript applied from pending: [ident] system=X talkgroup=Y id=Z (N chars)` — fires from `IngestCall` when the held transcript is finally applied.
-- Receiver-only change — the upstream's behaviour and code are unchanged. Order-independent: call and transcript can arrive in any order with any latency between them and the result is correct.
-
-## Version 6.10.3-beta.5
-
-Receive-side log polish — adds the API-key identifier to the transcript-push log lines, matching the `[ident]` format used by the existing `newcall` log entries.
-
-### Server
-
-- **API key identifier** (the `Ident` field configured per key on the Admin → API keys page) now appears in each transcript-push log line, so operators can attribute incoming transcripts to a specific upstream:
-  - `transcript push received: [Richard] system=X talkgroup=Y dateTime=Z`
-  - `transcript push no matching call: [Richard] system=X talkgroup=Y dateTime=Z (...)`
-  - `transcript received: [Richard] system=X talkgroup=Y id=Z (N chars)`
-- Auth-failed entries can't show the ident (the key didn't validate), so they show the trailing four chars of the submitted key instead: `transcript push auth failed: system=X talkgroup=Y dateTime=Z key=…aBcD`. Lets operators correlate a failing upstream with the wrong key it's sending.
-- Receiver-only change — upstream behaviour is unchanged.
-
-## Version 6.10.3-beta.4
-
-Receive-side diagnostic logging only — pure observability bump, no behaviour change.
-
-### Server
-
-- **Log every `POST /api/call-transcript` request as it arrives**, regardless of outcome. Previously only successful updates were logged, which meant requests that hit auth failures or call-lookup misses were silent — operators couldn't tell whether the upstream was even reaching them. Three new log lines:
-  - `transcript push received: system=X talkgroup=Y dateTime=Z` (Info) — fires on every well-formed request, before auth.
-  - `transcript push auth failed: system=X talkgroup=Y dateTime=Z` (Warn) — the API key didn't validate, or didn't have access to that system/talkgroup.
-  - `transcript push no matching call: system=X talkgroup=Y dateTime=Z (already pruned, datetime mismatch, or call never arrived)` (Info) — the request was accepted but `GetIdByKey` returned no row.
-- Existing `transcript received: ...` log on full success remains unchanged.
-- **Only the receiver needs to upgrade** for these logs to appear — the upstream's behaviour is unchanged.
-
-## Version 6.10.3-beta.3
-
-Follow-up to beta.2 — adds diagnostic logging for the transcript-forward path so operators can confirm the suppression is working.
-
-### Server
-
-- **Two new log lines on the receiving downstream:**
-  - On call ingest with `transcriptPending=1`: `call from upstream with pending transcript: system=X talkgroup=Y id=Z (awaiting /api/call-transcript push)`
-  - At the transcription branch: `local transcription skipped: system=X talkgroup=Y id=Z (deferred to upstream)`
-- Combined with the existing `transcript received: ...` log line in beta.1, the full lifecycle of a forwarded transcript is visible in the admin log viewer.
-- **Both ends must run beta.2+** for the receiving side to see these logs — beta.1 and the original repo don't emit the `transcriptPending` form field, so the receiver just transcribes locally as before.
-
-## Version 6.10.3-beta.2
-
-Follow-up to beta.1.
-
-### Server
-
-- **Suppress double-transcription across the forwarding hop.** When this instance has transcription enabled and forwards a call to a downstream, the call-upload now carries `transcriptPending=1`. The downstream parses this field and skips its own `TranscribeCallAsync` for that call — the upstream will push the completed transcript via `/api/call-transcript` once Whisper finishes, instead of both sides transcribing the same audio. If the upstream has no transcription key configured, the field is never sent and downstreams transcribe normally; no behavioural change for existing deployments.
-
-## Version 6.10.3-beta.1
-
-Pre-release for testing. Server only; Android and webapp ride the version bump.
-
-### Server
-
-- **Downstream transcript forwarding.** After a call is transcribed locally, the server now pushes the transcript to any configured downstream that supports the new `transcript-forward` feature. The sending instance probes each downstream's `/api/capabilities` endpoint once per hour; legacy instances (original repo) return 404 and are silently skipped — no behavioural change for existing setups.
-- **New endpoints (receiving side):**
-  - `GET /api/capabilities` — advertises `{"features":["transcript-forward"]}` so upstream instances can detect support.
-  - `POST /api/call-transcript` — receives `{key, system, talkgroup, dateTime, transcript}`, looks up the matching local call record by a ±500 ms datetime window, stores the transcript, and broadcasts it to live WebSocket clients via the existing `EmitTranscript` path.
-- Transcript pushes are gated on the same API-key access-control check used by `/api/call-upload`, so a downstream only accepts transcripts for systems/talkgroups the key is scoped to.
-- Fully backwards compatible: no changes to `/api/call-upload` or any existing endpoint.
+- `/api/call-upload` and every existing endpoint are untouched
+- Original repo downstreams: capability probe returns 404 → marked unsupported → silently skipped, no log spam after the first transition
+- Original repo upstreams: never set `transcriptPending=1` → receivers transcribe locally as before
+- All-original-repo deployments: zero behavioural change
 
 ## Version 6.10.2
 
