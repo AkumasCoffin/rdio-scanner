@@ -100,6 +100,22 @@ func (options *Options) FromMap(m map[string]any) *Options {
 			*dest = v
 		}
 	}
+	// setUrl behaves like setStr but defensively strips any trailing
+	// "/audio/transcriptions" the user may have accidentally pasted into a
+	// transcription base-URL field. The server appends that path itself at
+	// request time, so storing it in the saved value would produce a
+	// duplicate path on every request.
+	setUrl := func(key string, dest *string) {
+		if v, ok := m[key].(string); ok {
+			s := strings.TrimSpace(v)
+			s = strings.TrimRight(s, "/")
+			if strings.HasSuffix(strings.ToLower(s), "/audio/transcriptions") {
+				s = s[:len(s)-len("/audio/transcriptions")]
+				s = strings.TrimRight(s, "/")
+			}
+			*dest = s
+		}
+	}
 	setUint := func(key string, dest *uint) {
 		if v, ok := m[key].(float64); ok {
 			*dest = uint(v)
@@ -140,13 +156,13 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	setBool("time12hFormat", &options.Time12hFormat)
 	setBool("transcriptionEnabled", &options.TranscriptionEnabled)
 	setStr("transcriptionProvider", &options.TranscriptionProvider)
-	setStr("transcriptionBaseUrl", &options.TranscriptionBaseUrl)
+	setUrl("transcriptionBaseUrl", &options.TranscriptionBaseUrl)
 	setStr("transcriptionApiKey", &options.TranscriptionApiKey)
 	setStr("transcriptionModel", &options.TranscriptionModel)
-	setStr("transcriptionOpenAIBaseUrl", &options.TranscriptionOpenAIBaseUrl)
+	setUrl("transcriptionOpenAIBaseUrl", &options.TranscriptionOpenAIBaseUrl)
 	setStr("transcriptionOpenAIApiKey", &options.TranscriptionOpenAIApiKey)
 	setStr("transcriptionOpenAIModel", &options.TranscriptionOpenAIModel)
-	setStr("transcriptionWhisperBaseUrl", &options.TranscriptionWhisperBaseUrl)
+	setUrl("transcriptionWhisperBaseUrl", &options.TranscriptionWhisperBaseUrl)
 	setStr("transcriptionWhisperApiKey", &options.TranscriptionWhisperApiKey)
 	setStr("transcriptionWhisperModel", &options.TranscriptionWhisperModel)
 	setStr("transcriptionLanguage", &options.TranscriptionLanguage)

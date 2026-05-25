@@ -26,4 +26,13 @@ import { FormGroup } from '@angular/forms';
 })
 export class RdioScannerAdminOptionsComponent {
     @Input() form: FormGroup | undefined;
+
+    // Reading the provider via a getter (instead of inlining
+    // form?.get('transcriptionProvider')?.value in every binding) ensures the
+    // template re-evaluates predictably on each change-detection cycle when
+    // the toggle group's FormControl is updated.
+    get provider(): string {
+        const v = this.form?.get('transcriptionProvider')?.value;
+        return typeof v === 'string' && v.length > 0 ? v : 'groq';
+    }
 }

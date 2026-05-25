@@ -8,6 +8,22 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.11.0-beta.3
+
+UX iteration on the provider switching from beta.2.
+
+### Webapp
+
+- **Provider selector is now a `mat-button-toggle-group`** (segmented buttons) instead of a dropdown — selected provider is visible at a glance and a single click switches without an extra dropdown-open step.
+- **Per-provider config blocks now use `[ngSwitch]`** (rather than three independent `*ngIf`s) with the active provider read via a component-level getter — fixes the bug where switching providers wouldn't actually swap the visible fields. Saved per-provider data is shown immediately on switch.
+- **Model fields are free-text inputs** for all three providers. The mat-select with two hard-coded Groq options is gone — operators can enter whatever model identifier their provider accepts. Hints removed since the right value depends on the user's provider/version anyway.
+- **Prompt cap is now provider-aware in the UI hint**: shows "X / 896" with the red-at-overflow style only when Groq is active; other providers show just "X" and a note that no length cap is enforced.
+
+### Server
+
+- **`Options.FromMap` now defensively strips `/audio/transcriptions` and trailing slashes** from all transcription base-URL fields before saving. Pasting the full request URL into the admin form no longer produces a doubled `/audio/transcriptions/audio/transcriptions` path at request time.
+- **Prompt truncation is now provider-conditional.** The 896-character hard cap only applies when the active provider is Groq (it's Groq's API limit). OpenAI and self-hosted providers receive the prompt verbatim, no truncation. Documented in the new comment block and surfaced in the UI hint.
+
 ## Version 6.11.0-beta.2
 
 Simplification of the provider dropdown from beta.1. Faster-Whisper is no longer its own option — since whisper.cpp, openai-whisper-server, and faster-whisper-server all expose the same OpenAI-compatible HTTP protocol and only differ in their accepted model identifiers, they collapse cleanly into a single "Whisper (self-hosted)" option where the user supplies their server's preferred model name.

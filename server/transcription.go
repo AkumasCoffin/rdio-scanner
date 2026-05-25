@@ -387,13 +387,19 @@ func (t *Transcriber) buildTranscriptionBody(call *Call, model string) ([]byte, 
 	if prompt == "" {
 		prompt = strings.TrimSpace(opts.TranscriptionPrompt)
 	}
-	if origLen := len(prompt); origLen > transcriptionPromptMaxChars {
-		start := origLen - transcriptionPromptMaxChars
-		for start < origLen && !isPromptSpace(prompt[start]) {
-			start++
+	// Only Groq enforces a hard 896-character prompt cap (anything longer
+	// returns HTTP 400). OpenAI documents a 224-token guideline but doesn't
+	// reject longer prompts. Self-hosted servers have no such limit.
+	_, _, _, provider := opts.ActiveTranscriptionConfig()
+	if provider == TranscriptionProviderGroq {
+		if origLen := len(prompt); origLen > transcriptionPromptMaxChars {
+			start := origLen - transcriptionPromptMaxChars
+			for start < origLen && !isPromptSpace(prompt[start]) {
+				start++
+			}
+			prompt = strings.TrimSpace(prompt[start:])
+			t.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcription prompt truncated to %d chars (was %d) for Groq", len(prompt), origLen))
 		}
-		prompt = strings.TrimSpace(prompt[start:])
-		t.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcription prompt truncated to %d chars (was %d)", len(prompt), origLen))
 	}
 	if prompt != "" {
 		if err = writer.WriteField("prompt", prompt); err != nil {
