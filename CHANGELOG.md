@@ -8,6 +8,46 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.11.0-beta.7
+
+Closes the last transcript-reliability gap: when an upstream forwards a call with `transcriptPending=1` but its own Whisper runtime-fails (rate-limited, network error, all keys paused) and never delivers the transcript, this server now falls back to transcribing the call locally after 2 minutes.
+
+### Server
+
+- **New `FallbackTranscripts` struct** (`server/fallback_transcripts.go`) — a thin wrapper around `map[uint]*time.Timer` with `Schedule(id, fn)` and `Cancel(id) bool`. Wired onto `Controller.FallbackTranscripts`.
+- **`IngestCall` schedules a fallback** when all of the following are true:
+  - The call arrived with `transcriptPending=1` (upstream claimed it would transcribe)
+  - No transcript was applied from the server-side `PendingTranscripts` cache (so we don't already have one)
+  - Local transcription is configured on this server (`Transcriber.Enabled()` and audio passes the same size predicate the regular transcribe path uses)
+  
+  Timer fires after `fallbackTranscriptTTL` (2 minutes). When it fires, the call is refetched from the DB (audio is stored, in-memory blob is GC'd by then), and if no transcript was applied in the interim, `TranscribeCallAsync` runs as a normal local transcription. The result flows through the existing pipeline — `EmitTranscript` to WS clients, chain-forward to downstreams, etc.
+
+- **`CallTranscriptHandler` cancels the fallback** when the upstream's transcript finally lands (both the synchronous apply path and the race-window-close path). Avoids the wasted local Whisper call.
+
+- **`IngestCall` cache-hit path also cancels** defensively (the schedule check wouldn't have fired anyway, but cancel-by-id is idempotent).
+
+### New log lines
+
+- `fallback transcription scheduled: id=X (will run local Whisper in 2m0s if upstream transcript hasn't arrived)` — at schedule time
+- `fallback transcription cancelled: id=X (transcript arrived from upstream)` — when upstream's transcript lands within the window
+- `fallback transcription firing: id=X system=Y talkgroup=Z (upstream transcript never arrived, running local Whisper)` — when timer fires
+- `fallback transcription: cannot refetch call id=X: <err>` — DB error trying to refetch (rare)
+
+### TTL is hardcoded
+
+`fallbackTranscriptTTL = 2 * time.Minute` is a constant for now. Most upstream transcripts arrive within 30s, so 2 min is comfortably past "should have shown up by now" without making the user wait noticeably longer than necessary. If you want to tune this per-deployment, I can wire it into the admin Options as `TranscriptionFallbackSeconds` in a follow-up.
+
+### Listener-side UX
+
+Combined with the `applyLateTranscript` change from beta.6, the worst-case experience for a failed-upstream transcript is:
+
+1. Call plays at +15 s (wait-for-transcript timeout — `TRANSCRIPT_WAIT_MAX_MS`)
+2. Around +2:00 the fallback fires
+3. Local Whisper finishes (a few more seconds)
+4. Transcript appears retroactively on the already-played call in the LCD/livefeed/history
+
+No more permanently-untranscribed calls because the upstream silently failed.
+
 ## Version 6.11.0-beta.6
 
 UX tweak to the wait-for-transcript hold based on real-world self-hosted Whisper latencies.

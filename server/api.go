@@ -261,6 +261,11 @@ func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
 				if uerr := api.Controller.Calls.UpdateTranscript(id2, held, db); uerr == nil {
 					api.Controller.Clients.EmitTranscript(id2, req.System, req.Talkgroup, held, api.Controller.Accesses.IsRestricted())
 					api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript applied (race-window close): [%v] system=%v talkgroup=%v id=%v (%d chars)", heldIdent, req.System, req.Talkgroup, id2, len(held)))
+					// Cancel any fallback-transcription timer for this call;
+					// the upstream's transcript just landed.
+					if api.Controller.FallbackTranscripts.Cancel(id2) {
+						api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("fallback transcription cancelled: id=%v (transcript arrived from upstream)", id2))
+					}
 					// Chain-forward the transcript downstream so multi-hop
 					// setups (A->B->C) propagate correctly. Goroutine so we
 					// don't block the response to the upstream on our own
@@ -282,6 +287,11 @@ func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
 
 	api.Controller.Clients.EmitTranscript(id, req.System, req.Talkgroup, req.Transcript, api.Controller.Accesses.IsRestricted())
 	api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript received: [%v] system=%v talkgroup=%v id=%v (%d chars)", apikey.Ident, req.System, req.Talkgroup, id, len(req.Transcript)))
+	// Cancel any fallback-transcription timer for this call; the upstream's
+	// transcript just landed, so the deferred local Whisper isn't needed.
+	if api.Controller.FallbackTranscripts.Cancel(id) {
+		api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("fallback transcription cancelled: id=%v (transcript arrived from upstream)", id))
+	}
 	// Chain-forward the transcript so multi-hop setups (A->B->C) propagate.
 	// Goroutine so we don't block the response to the upstream on our own
 	// per-downstream HTTP calls.
