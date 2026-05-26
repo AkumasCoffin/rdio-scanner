@@ -8,6 +8,12 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.11.0-beta.8
+
+Bump the wait-for-transcript hold from 15 s → 20 s. Self-hosted Whisper on average hardware regularly takes 10–15 s for typical radio call audio; 20 s gives the legitimate transcript enough headroom to land before the timeout fires while still being short enough that a stuck call doesn't sit too long without playing.
+
+`TRANSCRIPT_WAIT_MAX_MS = 20000` in `rdio-scanner.service.ts`. Calls that arrive late (after 20 s) still get their transcript spliced into the already-played call via `applyLateTranscript`, so no transcript is ever lost — just appears retroactively.
+
 ## Version 6.11.0-beta.7
 
 Closes the last transcript-reliability gap: when an upstream forwards a call with `transcriptPending=1` but its own Whisper runtime-fails (rate-limited, network error, all keys paused) and never delivers the transcript, this server now falls back to transcribing the call locally after 2 minutes.

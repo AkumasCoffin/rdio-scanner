@@ -140,10 +140,10 @@ export class RdioScannerService implements OnDestroy {
         fetchTimer?: ReturnType<typeof setTimeout>;
         timeoutTimer?: ReturnType<typeof setTimeout>;
     }> = [];
-    // Wait at most 15s for a held call's transcript before releasing the call
+    // Wait at most 20s for a held call's transcript before releasing the call
     // anyway. If the transcript eventually shows up via a server WS push, it
     // still gets applied to the call in-place — see applyLateTranscript().
-    private static readonly TRANSCRIPT_WAIT_MAX_MS = 15000;
+    private static readonly TRANSCRIPT_WAIT_MAX_MS = 20000;
     private static readonly TRANSCRIPT_WAIT_POLL_MS = 2000;
 
     private audioContext: AudioContext | undefined;
