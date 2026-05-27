@@ -8,6 +8,20 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.11.0-beta.10
+
+UX polish on the per-provider model fields in Admin → Options.
+
+### Webapp
+
+- Each provider's model field gains a **filterable autocomplete dropdown** powered by `MatAutocompleteModule`. The fields stay plain-text inputs — users can still type anything their backend accepts — but a list of common preset model identifiers drops down below the field for quick selection.
+- Preset lists per provider:
+  - **Groq:** `whisper-large-v3-turbo`, `whisper-large-v3`.
+  - **Whisper (OpenAI):** `whisper-1`.
+  - **Whisper (self-hosted):** `whisper-1`, the four `whisper-*` size variants (large-v3-turbo, large-v3, large-v2, medium, small, base, tiny), and the parallel `Systran/faster-whisper-*` set for faster-whisper-server users.
+- Typing into the field filters the dropdown by case-insensitive substring match — useful for the longer self-hosted list.
+- Added `MatAutocompleteModule` to the shared material module.
+
 ## Version 6.11.0-beta.9
 
 Breaks an infinite transcript-forwarding loop in cyclic downstream topologies (server A is B's downstream **and** B is A's downstream — bidirectional setup). Previously the same transcript would bounce between the two servers endlessly, generating thousands of `transcript push received` / `downstream.transcript: ... success` log lines per minute and pegging the network.

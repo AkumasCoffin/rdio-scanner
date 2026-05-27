@@ -35,4 +35,56 @@ export class RdioScannerAdminOptionsComponent {
         const v = this.form?.get('transcriptionProvider')?.value;
         return typeof v === 'string' && v.length > 0 ? v : 'groq';
     }
+
+    // Model presets surfaced as autocomplete suggestions below each
+    // provider's model field. The fields are still plain text inputs — these
+    // are hints, not constraints. Users can type anything their backend
+    // accepts.
+    readonly groqModelPresets: ReadonlyArray<string> = [
+        'whisper-large-v3-turbo',
+        'whisper-large-v3',
+    ];
+    readonly openaiModelPresets: ReadonlyArray<string> = [
+        'whisper-1',
+    ];
+    // Self-hosted covers whisper.cpp, openai-whisper-server, faster-whisper-
+    // server, and any other OpenAI-compatible Whisper backend. Different
+    // implementations expect different model identifiers, so the list is
+    // intentionally broad.
+    readonly whisperModelPresets: ReadonlyArray<string> = [
+        'whisper-1',
+        'whisper-large-v3-turbo',
+        'whisper-large-v3',
+        'whisper-large-v2',
+        'whisper-medium',
+        'whisper-small',
+        'whisper-base',
+        'whisper-tiny',
+        'Systran/faster-whisper-large-v3-turbo',
+        'Systran/faster-whisper-large-v3',
+        'Systran/faster-whisper-medium',
+        'Systran/faster-whisper-small',
+    ];
+
+    // filterPresets narrows a preset list to entries containing the current
+    // form value (case-insensitive). Empty/no-value returns the full list
+    // so the dropdown shows everything when the user first focuses the
+    // field. Recomputed on each change-detection tick — the lists are
+    // tiny so the perf is fine.
+    private filterPresets(presets: ReadonlyArray<string>, controlName: string): string[] {
+        const raw = this.form?.get(controlName)?.value;
+        const q = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+        if (!q) return [...presets];
+        return presets.filter((m) => m.toLowerCase().includes(q));
+    }
+
+    filteredGroqModels(): string[] {
+        return this.filterPresets(this.groqModelPresets, 'transcriptionModel');
+    }
+    filteredOpenAIModels(): string[] {
+        return this.filterPresets(this.openaiModelPresets, 'transcriptionOpenAIModel');
+    }
+    filteredWhisperModels(): string[] {
+        return this.filterPresets(this.whisperModelPresets, 'transcriptionWhisperModel');
+    }
 }

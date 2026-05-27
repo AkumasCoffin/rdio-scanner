@@ -255,7 +255,11 @@
                 </p>
                 <mat-form-field floatLabel="never">
                     <input type="text" matInput formControlName="transcriptionModel"
-                        placeholder="whisper-large-v3-turbo">
+                        placeholder="whisper-large-v3-turbo"
+                        [matAutocomplete]="groqModelAuto">
+                    <mat-autocomplete #groqModelAuto="matAutocomplete">
+                        <mat-option *ngFor="let m of filteredGroqModels()" [value]="m">{{ m }}</mat-option>
+                    </mat-autocomplete>
                 </mat-form-field>
             </div>
         </ng-container>
@@ -292,7 +296,11 @@
                 </p>
                 <mat-form-field floatLabel="never">
                     <input type="text" matInput formControlName="transcriptionOpenAIModel"
-                        placeholder="whisper-1">
+                        placeholder="whisper-1"
+                        [matAutocomplete]="openaiModelAuto">
+                    <mat-autocomplete #openaiModelAuto="matAutocomplete">
+                        <mat-option *ngFor="let m of filteredOpenAIModels()" [value]="m">{{ m }}</mat-option>
+                    </mat-autocomplete>
                 </mat-form-field>
             </div>
         </ng-container>
@@ -330,7 +338,11 @@
                 </p>
                 <mat-form-field floatLabel="never">
                     <input type="text" matInput formControlName="transcriptionWhisperModel"
-                        placeholder="whisper-1">
+                        placeholder="whisper-1"
+                        [matAutocomplete]="whisperModelAuto">
+                    <mat-autocomplete #whisperModelAuto="matAutocomplete">
+                        <mat-option *ngFor="let m of filteredWhisperModels()" [value]="m">{{ m }}</mat-option>
+                    </mat-autocomplete>
                 </mat-form-field>
             </div>
         </ng-container>
