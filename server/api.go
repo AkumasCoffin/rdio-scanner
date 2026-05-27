@@ -258,7 +258,8 @@ func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
 		// the cache TTL. Re-check and apply directly if the call landed.
 		if id2, err := api.Controller.Calls.GetIdByKey(req.System, req.Talkgroup, dt, db); err == nil && id2 != 0 {
 			if held, heldIdent, ok := api.Controller.PendingTranscripts.Take(req.System, req.Talkgroup, dt); ok {
-				if uerr := api.Controller.Calls.UpdateTranscript(id2, held, db); uerr == nil {
+				applied, uerr := api.Controller.Calls.UpdateTranscriptIfEmpty(id2, held, db)
+				if uerr == nil && applied {
 					api.Controller.Clients.EmitTranscript(id2, req.System, req.Talkgroup, held, api.Controller.Accesses.IsRestricted())
 					api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript applied (race-window close): [%v] system=%v talkgroup=%v id=%v (%d chars)", heldIdent, req.System, req.Talkgroup, id2, len(held)))
 					// Cancel any fallback-transcription timer for this call;
@@ -280,8 +281,25 @@ func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := api.Controller.Calls.UpdateTranscript(id, req.Transcript, db); err != nil {
+	applied, err := api.Controller.Calls.UpdateTranscriptIfEmpty(id, req.Transcript, db)
+	if err != nil {
 		api.exitWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if !applied {
+		// Duplicate push: the call already has a transcript on it, mirroring
+		// the call-side CheckDuplicate semantics where a record-already-
+		// exists short-circuits any further work. Skip EmitTranscript (it'd
+		// just re-render the same row for listeners) and crucially skip the
+		// chain-forward — that's what would create an infinite loop in
+		// cyclic downstream topologies (A <-> B mutual downstreams). Still
+		// cancel any pending fallback timer because the upstream did make a
+		// real delivery attempt.
+		api.Controller.FallbackTranscripts.Cancel(id)
+		api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript push duplicate: [%v] system=%v talkgroup=%v id=%v (call already has a transcript, rejected)", apikey.Ident, req.System, req.Talkgroup, id))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Transcript already applied (no-op).\n"))
 		return
 	}
 

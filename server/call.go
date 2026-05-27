@@ -296,6 +296,34 @@ func (calls *Calls) UpdateTranscript(id uint, transcript string, db *Database) e
 	return err
 }
 
+// UpdateTranscriptIfEmpty mirrors the call-side CheckDuplicate semantics for
+// transcript pushes. If the call already has any transcript on it, treat the
+// push as a duplicate: don't write, don't broadcast, don't chain-forward.
+// Mirrors what CheckDuplicate does for calls — once we have a record for a
+// (system, talkgroup, dateTime), subsequent uploads are ignored regardless
+// of payload differences. Same goes for transcripts: first one wins.
+//
+// applied=false also means "skip the broadcast / chain-forward you would
+// have done if the apply landed", which is what breaks chain-forwarding
+// loops in cyclic downstream topologies (A is B's downstream AND B is A's
+// downstream — without this check the same transcript bounces forever).
+func (calls *Calls) UpdateTranscriptIfEmpty(id uint, transcript string, db *Database) (bool, error) {
+	var existing sql.NullString
+	if err := db.QueryRow("select `transcript` from `rdioScannerCalls` where `id` = ?", id).Scan(&existing); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	if existing.Valid && existing.String != "" {
+		return false, nil
+	}
+	if _, err := db.Exec("update `rdioScannerCalls` set `transcript` = ? where `id` = ?", transcript, id); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // GetIdByKey looks up the DB id of a call by (system, talkgroup, dateTime).
 // Uses a ±500 ms window around dateTime — same approach as CheckDuplicate —
 // so minor timezone/format differences between DB drivers don't cause misses.

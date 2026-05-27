@@ -8,6 +8,38 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.11.0-beta.9
+
+Breaks an infinite transcript-forwarding loop in cyclic downstream topologies (server A is B's downstream **and** B is A's downstream — bidirectional setup). Previously the same transcript would bounce between the two servers endlessly, generating thousands of `transcript push received` / `downstream.transcript: ... success` log lines per minute and pegging the network.
+
+### The fix
+
+Mirrors what `CheckDuplicate` does for calls: "if a record already exists, treat the new arrival as a duplicate and reject." For transcripts: **if the call already has any transcript on it, treat the new push as a duplicate** — skip the broadcast and the chain-forward.
+
+### Server
+
+- **New `Calls.UpdateTranscriptIfEmpty(id, transcript, db) (applied bool, err error)`** in `call.go`. Reads the existing transcript first; only writes (and returns `applied=true`) when the existing transcript is empty/null. Returns `applied=false` when the call already has a transcript, mirroring how `CheckDuplicate` short-circuits on existing call records.
+- **`CallTranscriptHandler` uses `UpdateTranscriptIfEmpty`** on both apply paths (synchronous and race-window-close). When the call already has a transcript, the handler:
+  - Skips `EmitTranscript` (no point re-rendering the same call row)
+  - Skips the chain-forward to downstreams (this is what breaks the loop)
+  - Still cancels any pending fallback-transcription timer (the upstream did try to deliver)
+  - Returns HTTP 200 with "Transcript already applied (no-op)" — the upstream's send is acknowledged successfully
+- **New log line** matching the call-side `duplicate call rejected` wording:
+  `transcript push duplicate: [ident] system=X talkgroup=Y id=Z (call already has a transcript, rejected)`
+
+### What stays the same
+
+- **First-arrived wins** for any given call's transcript — exactly like calls. If upstream A and upstream B both transcribe the same call independently, whichever push lands first sticks. Second push is rejected.
+- **Local transcription** (`TranscribeCallAsync`) still uses plain `UpdateTranscript` — by definition it just produced this transcript, so the call had none before.
+- **`IngestCall` cache-hit** path still uses plain `UpdateTranscript` — the call was just `WriteCall`'d with no transcript, applying from cache is the first write.
+- **Admin retranscribe** button still uses plain `UpdateTranscript` — user explicitly clicked, they want to override.
+- **A → B chain forwarding** still works: B has empty transcript, applies, forwards onward.
+- **A → B → C linear chain** still works: each hop has empty transcript on first arrival.
+
+### What this prevents
+
+- The loop you saw with `Richad`'s server: hundreds of duplicate log lines per second, every transcript pushed back and forth across the network endlessly. Now the second arrival is dedup'd at the receiver and the chain-forward stops.
+
 ## Version 6.11.0-beta.8
 
 Bump the wait-for-transcript hold from 15 s → 20 s. Self-hosted Whisper on average hardware regularly takes 10–15 s for typical radio call audio; 20 s gives the legitimate transcript enough headroom to land before the timeout fires while still being short enough that a stuck call doesn't sit too long without playing.
