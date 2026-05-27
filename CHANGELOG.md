@@ -8,7 +8,73 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
-## Version 6.11.0-beta.10
+## Version 6.11.0
+
+Multi-provider transcription and cross-instance transcript reliability. The existing Groq integration is now one of three selectable backends; OpenAI and self-hosted Whisper join the lineup. Each provider has independent stored credentials, so switching the active backend in the admin UI doesn't lose previously-entered URLs, keys, or model names. The cross-instance transcript-forwarding path (introduced in 6.10.3) gains a working dedup mechanism, head-of-line release for the wait-for-transcript pre-queue, a server-side fallback timer for upstream-failures, and a number of UX fixes around playback ordering. Iterated through ten prerelease betas in production against a live bidirectional two-server setup before this release.
+
+### Server
+
+- **`TranscriptionProvider` admin setting** picks the active backend. Three values: `groq` (default — existing behaviour preserved), `openai` (OpenAI's hosted Whisper), `whisper-selfhosted` (any self-hosted OpenAI-compatible Whisper server — whisper.cpp, openai-whisper-server, fedirz/faster-whisper-server, LocalAI, etc.).
+- **Per-provider configuration is stored independently** in dedicated Options fields. Switching the active provider preserves the inactive ones' URLs/keys/models. Pre-upgrade Groq config is preserved automatically — the existing `transcriptionBaseUrl` / `transcriptionApiKey` / `transcriptionModel` columns are repurposed as Groq's slots.
+- **`Options.ActiveTranscriptionConfig()`** resolves the (URL, model, key, provider) tuple at request time, filling in provider-specific defaults when the corresponding field is empty.
+- **API key is optional for self-hosted providers.** When the active provider is self-hosted and the configured key is empty, the `Authorization: Bearer` header is omitted from outgoing requests and the rate-limit machinery uses a single `(anonymous)` slot.
+- **Provider-aware `Enabled()` gate.** Hosted providers need a key; self-hosted providers need a Base URL (since there's no default). `TranscriptionEnabled` still gates everything globally.
+- **Multi-key rotation stays Groq-only.** The existing comma/whitespace/newline-split key ring applies to the Groq slot. Other providers use a single-key field for v1.
+- **`Options.FromMap` auto-strips `/audio/transcriptions`** and trailing slashes from any pasted transcription base-URL. Pasting the full request URL into the admin form no longer produces a doubled path.
+- **Prompt truncation is provider-conditional.** The 896-character hard cap only applies when the active provider is Groq (Groq's API rejects longer prompts). OpenAI and self-hosted providers receive the prompt verbatim.
+
+### Cross-instance transcript-forwarding reliability
+
+- **`UpdateTranscriptIfEmpty`** breaks the chain-forwarding loop that previously formed in cyclic downstream topologies (server A is B's downstream **and** B is A's downstream). Mirrors `CheckDuplicate` for calls: if the call already has a transcript, treat the incoming push as a duplicate — skip the broadcast and skip the chain-forward. First-arrived wins.
+- **`PendingTranscripts` cache** holds early-arriving transcript pushes for up to 5 minutes when the matching call hasn't been stored yet. `IngestCall` checks the cache after `WriteCall` and applies any held transcript. A race-window close in `CallTranscriptHandler` re-checks the DB after `Store` for the microsecond gap where a call could land between the first lookup and the cache write.
+- **`FallbackTranscripts` server-side timer** kicks in when an upstream marks a call with `transcriptPending=1` but its own Whisper run silently fails (rate-limit, network error, all keys paused). After 2 minutes without a transcript-forward push, the local server refetches the call from DB and runs Whisper itself. Result reaches listeners through the existing chain — no calls left permanently untranscribed because an upstream silently failed.
+- **`transcriptPending=1` form field on outgoing call-uploads** is now only set when this server is *actually* going to attempt transcription (system + talkgroup `Transcribe` on, transcriber enabled, audio passes the same size predicate `TranscribeCallAsync` uses). Stops downstreams from waiting for transcripts that were never going to be produced.
+
+### Playback ordering
+
+- **Webapp pre-queue (`pendingTranscriptCalls`)** is now an ordered array with head-of-line release via `drainPendingHead()`. Calls behind a not-yet-ready head wait until that head's transcript lands (or its timeout fires), preserving arrival order end-to-end. Replaces the Map-based release-in-transcript-arrival-order implementation that scrambled call playback.
+- **Pre-queue routes all calls** (including those that arrived already-transcribed via upstream-forward + server-side cache hit) when `WaitForTranscript` is enabled. Pre-transcribed calls enter the array marked `ready: true`; the drain still preserves head-of-line ordering.
+- **Wait-for-transcript timeout** bumped to 20 s. Late-arriving transcripts (after the timeout) still get spliced into the already-played call via `applyLateTranscript`, so no transcript is ever lost — just appears retroactively when it missed the window.
+- **Server-side emit dispatchers** for `EmitCallToClients` and `EmitCallToDownstreams` now drain dedicated buffered channels in strict FIFO. Replaces the goroutine-per-emit pattern that had a microsecond reorder window between concurrent calls.
+- **`Delayer.Start()` catchup** sorts the pending map by timestamp before iterating, so restart catchup re-emits elapsed delayed calls chronologically instead of in Go's randomized map-iteration order.
+- **`Delayer` only delays listeners, not downstreams.** Forwarded calls reach downstreams at near-real-time regardless of local listener-delay config. `EmitCall` split into `EmitCallToDownstreams` + `EmitCallToClients`; the Delayer only fires the client path.
+
+### Logs
+
+Full transcript lifecycle is visible:
+
+```
+transcript push received: [Richad] system=X talkgroup=Y dateTime=Z
+transcript deferred (holding for incoming call): [Richad] ...
+newcall: [Richad] ... success
+call from upstream with pending transcript: ... id=N
+transcript applied from pending: [Richad] ... id=N (X chars)
+local transcription skipped: ... id=N (deferred to upstream)
+transcript received: [Richad] ... id=N (X chars)
+transcript push duplicate: [Richad] ... id=N (call already has a transcript, rejected)
+transcript push auth failed: ... key=…aBcD
+fallback transcription scheduled: id=N (will run local Whisper in 2m0s if upstream transcript hasn't arrived)
+fallback transcription firing: id=N (upstream transcript never arrived, running local Whisper)
+fallback transcription cancelled: id=N (transcript arrived from upstream)
+downstream URL does not support transcript-forward
+downstream URL supports transcript-forward
+```
+
+### Webapp UX
+
+- **Provider selector** in Admin → Options → Call Transcription is a segmented `mat-button-toggle-group` with the three provider options across the top. Selected provider is visible at a glance, single click to switch.
+- **Per-provider config block** below the selector uses `[ngSwitch]` on the current provider — shows only the active provider's URL, API key, and model fields. Inactive providers' values stay in the form state (and on the server).
+- **Free-text model inputs** for all three providers, with a filterable **autocomplete preset dropdown** that suggests common model identifiers (`whisper-large-v3-turbo`, `whisper-1`, the `Systran/faster-whisper-*` set, etc.). Substring filter narrows the list as the user types. Powered by `MatAutocompleteModule`.
+- **Provider-aware prompt-counter hint.** Shows "X / 896" with red-overflow styling only when Groq is active; other providers show just "X" and a note that no length cap is enforced.
+- **Shared settings** (Language, Prompt, MaxPerMinute, MinAudioBytes) sit once below the per-provider block.
+
+### Backwards compatibility
+
+- Existing installs default to `groq` and keep their existing transcription configuration — zero behavioural change for single-server deployments not using cross-instance forwarding.
+- Wire format (`/api/call-upload`, `/api/call-transcript`, `/api/capabilities`) is unchanged from 6.10.3.
+- Downstreams running stock chuot/rdio-scanner or older 6.10.x builds continue to interoperate; the capability probe negotiates feature support automatically.
+
+
 
 UX polish on the per-provider model fields in Admin → Options.
 
@@ -21,205 +87,6 @@ UX polish on the per-provider model fields in Admin → Options.
   - **Whisper (self-hosted):** `whisper-1`, the four `whisper-*` size variants (large-v3-turbo, large-v3, large-v2, medium, small, base, tiny), and the parallel `Systran/faster-whisper-*` set for faster-whisper-server users.
 - Typing into the field filters the dropdown by case-insensitive substring match — useful for the longer self-hosted list.
 - Added `MatAutocompleteModule` to the shared material module.
-
-## Version 6.11.0-beta.9
-
-Breaks an infinite transcript-forwarding loop in cyclic downstream topologies (server A is B's downstream **and** B is A's downstream — bidirectional setup). Previously the same transcript would bounce between the two servers endlessly, generating thousands of `transcript push received` / `downstream.transcript: ... success` log lines per minute and pegging the network.
-
-### The fix
-
-Mirrors what `CheckDuplicate` does for calls: "if a record already exists, treat the new arrival as a duplicate and reject." For transcripts: **if the call already has any transcript on it, treat the new push as a duplicate** — skip the broadcast and the chain-forward.
-
-### Server
-
-- **New `Calls.UpdateTranscriptIfEmpty(id, transcript, db) (applied bool, err error)`** in `call.go`. Reads the existing transcript first; only writes (and returns `applied=true`) when the existing transcript is empty/null. Returns `applied=false` when the call already has a transcript, mirroring how `CheckDuplicate` short-circuits on existing call records.
-- **`CallTranscriptHandler` uses `UpdateTranscriptIfEmpty`** on both apply paths (synchronous and race-window-close). When the call already has a transcript, the handler:
-  - Skips `EmitTranscript` (no point re-rendering the same call row)
-  - Skips the chain-forward to downstreams (this is what breaks the loop)
-  - Still cancels any pending fallback-transcription timer (the upstream did try to deliver)
-  - Returns HTTP 200 with "Transcript already applied (no-op)" — the upstream's send is acknowledged successfully
-- **New log line** matching the call-side `duplicate call rejected` wording:
-  `transcript push duplicate: [ident] system=X talkgroup=Y id=Z (call already has a transcript, rejected)`
-
-### What stays the same
-
-- **First-arrived wins** for any given call's transcript — exactly like calls. If upstream A and upstream B both transcribe the same call independently, whichever push lands first sticks. Second push is rejected.
-- **Local transcription** (`TranscribeCallAsync`) still uses plain `UpdateTranscript` — by definition it just produced this transcript, so the call had none before.
-- **`IngestCall` cache-hit** path still uses plain `UpdateTranscript` — the call was just `WriteCall`'d with no transcript, applying from cache is the first write.
-- **Admin retranscribe** button still uses plain `UpdateTranscript` — user explicitly clicked, they want to override.
-- **A → B chain forwarding** still works: B has empty transcript, applies, forwards onward.
-- **A → B → C linear chain** still works: each hop has empty transcript on first arrival.
-
-### What this prevents
-
-- The loop you saw with `Richad`'s server: hundreds of duplicate log lines per second, every transcript pushed back and forth across the network endlessly. Now the second arrival is dedup'd at the receiver and the chain-forward stops.
-
-## Version 6.11.0-beta.8
-
-Bump the wait-for-transcript hold from 15 s → 20 s. Self-hosted Whisper on average hardware regularly takes 10–15 s for typical radio call audio; 20 s gives the legitimate transcript enough headroom to land before the timeout fires while still being short enough that a stuck call doesn't sit too long without playing.
-
-`TRANSCRIPT_WAIT_MAX_MS = 20000` in `rdio-scanner.service.ts`. Calls that arrive late (after 20 s) still get their transcript spliced into the already-played call via `applyLateTranscript`, so no transcript is ever lost — just appears retroactively.
-
-## Version 6.11.0-beta.7
-
-Closes the last transcript-reliability gap: when an upstream forwards a call with `transcriptPending=1` but its own Whisper runtime-fails (rate-limited, network error, all keys paused) and never delivers the transcript, this server now falls back to transcribing the call locally after 2 minutes.
-
-### Server
-
-- **New `FallbackTranscripts` struct** (`server/fallback_transcripts.go`) — a thin wrapper around `map[uint]*time.Timer` with `Schedule(id, fn)` and `Cancel(id) bool`. Wired onto `Controller.FallbackTranscripts`.
-- **`IngestCall` schedules a fallback** when all of the following are true:
-  - The call arrived with `transcriptPending=1` (upstream claimed it would transcribe)
-  - No transcript was applied from the server-side `PendingTranscripts` cache (so we don't already have one)
-  - Local transcription is configured on this server (`Transcriber.Enabled()` and audio passes the same size predicate the regular transcribe path uses)
-  
-  Timer fires after `fallbackTranscriptTTL` (2 minutes). When it fires, the call is refetched from the DB (audio is stored, in-memory blob is GC'd by then), and if no transcript was applied in the interim, `TranscribeCallAsync` runs as a normal local transcription. The result flows through the existing pipeline — `EmitTranscript` to WS clients, chain-forward to downstreams, etc.
-
-- **`CallTranscriptHandler` cancels the fallback** when the upstream's transcript finally lands (both the synchronous apply path and the race-window-close path). Avoids the wasted local Whisper call.
-
-- **`IngestCall` cache-hit path also cancels** defensively (the schedule check wouldn't have fired anyway, but cancel-by-id is idempotent).
-
-### New log lines
-
-- `fallback transcription scheduled: id=X (will run local Whisper in 2m0s if upstream transcript hasn't arrived)` — at schedule time
-- `fallback transcription cancelled: id=X (transcript arrived from upstream)` — when upstream's transcript lands within the window
-- `fallback transcription firing: id=X system=Y talkgroup=Z (upstream transcript never arrived, running local Whisper)` — when timer fires
-- `fallback transcription: cannot refetch call id=X: <err>` — DB error trying to refetch (rare)
-
-### TTL is hardcoded
-
-`fallbackTranscriptTTL = 2 * time.Minute` is a constant for now. Most upstream transcripts arrive within 30s, so 2 min is comfortably past "should have shown up by now" without making the user wait noticeably longer than necessary. If you want to tune this per-deployment, I can wire it into the admin Options as `TranscriptionFallbackSeconds` in a follow-up.
-
-### Listener-side UX
-
-Combined with the `applyLateTranscript` change from beta.6, the worst-case experience for a failed-upstream transcript is:
-
-1. Call plays at +15 s (wait-for-transcript timeout — `TRANSCRIPT_WAIT_MAX_MS`)
-2. Around +2:00 the fallback fires
-3. Local Whisper finishes (a few more seconds)
-4. Transcript appears retroactively on the already-played call in the LCD/livefeed/history
-
-No more permanently-untranscribed calls because the upstream silently failed.
-
-## Version 6.11.0-beta.6
-
-UX tweak to the wait-for-transcript hold based on real-world self-hosted Whisper latencies.
-
-### Webapp
-
-- **Hold timeout reduced from 30 s → 15 s.** Self-hosted Whisper runs can be unpredictable; 30 s held calls back too aggressively. 15 s strikes a better balance — most transcripts complete by then, and a call gets played reasonably promptly when one doesn't.
-- **Late-arriving transcripts now apply in-place.** Previously, if the 15/30-second timeout fired and released a call without a transcript, a transcript that came in afterwards was effectively lost (the resolver had already been cleaned up). New `applyLateTranscript(id, text)` runs on every WS-pushed transcript and splices the text into:
-  - any pending-transcript entry still in the pre-queue (so it has the transcript when released)
-  - the currently-playing call (re-emits so the LCD/livefeed panel re-renders)
-  - any call still sitting in the main playback queue
-  This is on top of the existing `transcriptReady` event so the history rows still get notified.
-
-### Not yet (Q1 from user)
-
-The user asked: "will calls that don't get transcribed by the first server get transcribed by the second server?". Two cases:
-
-- **First server's transcription is disabled / doesn't apply** (system or talkgroup `Transcribe` off, audio too short, etc.) — `transcriptPending=1` is never set on the forwarded call, the second server transcribes locally. **Already works.**
-- **First server tried to transcribe but failed at runtime** (Whisper rate-limited, network error, all keys paused) — `transcriptPending=1` was set, the second server skipped local transcription, and the transcript push never arrived. The call stays untranscribed after the 5-min server-side cache TTL expires. **Not handled yet.** Adding a server-side fallback transcription timer is a follow-up.
-
-## Version 6.11.0-beta.5
-
-Fixes the bug beta.4 was supposed to fix.
-
-**The case beta.4 missed:** in a forwarding setup, an upstream's transcript can arrive at the receiving server **before its call**, and on this server the deferred transcript is applied to the call's `IngestCall` path immediately. By the time the call hits the WebSocket frame heading out to the listener, it already has `call.transcript` populated.
-
-The webapp's `queue()` was checking `!call.transcript` to decide whether to hold the call — so pre-transcribed calls **skipped the pre-queue entirely** and went straight to the main queue, jumping ahead of earlier calls still parked waiting on a local Whisper run. Exactly what was observed: a Richard call that arrived 30+ seconds *after* five Ambulance calls played first because Richard's transcript was already attached on arrival, while the Ambulance calls were still parked in the pre-queue.
-
-### Fix
-
-In `queue()`, when `waitForTranscript` is on, **all** non-priority calls are routed through `holdPendingTranscript` regardless of whether they arrived with a transcript. The pre-queue is the single ordering point.
-
-`holdPendingTranscript` now handles two cases:
-- Call arrived with a transcript: entry goes in marked `ready: true`, no fetch/timeout timers. `drainPendingHead` releases it the moment all earlier entries are also ready.
-- Call arrived without a transcript: existing behaviour — entry goes in `ready: false` with poll + timeout timers, flipped to ready when the transcript lands or the timeout fires.
-
-Net effect: arrival-order playback is now actually enforced when wait-for-transcript is enabled, regardless of whether transcripts came pre-attached or have to be fetched.
-
-## Version 6.11.0-beta.4
-
-Call-ordering audit fixes. Plays calls strictly in arrival order even when transcript-forwarding latency varies or when multiple emit paths fire concurrently on the server.
-
-### Webapp — pre-queue head-of-line release
-
-**The bug:** when `WaitForTranscript` was on, the `pendingTranscriptCalls` Map released held calls in transcript-arrival order, not call-arrival order. A short audio's transcript would finish first and that call would skip ahead of an earlier longer call still waiting on Whisper.
-
-**The fix:** `pendingTranscriptCalls` is now an ordered array. Each entry has a `ready` flag flipped by either the transcript landing or the timeout firing. The new `drainPendingHead()` pops consecutive head-of-line ready entries off the array — entries behind a not-yet-ready head wait until the head is released, so arrival order is preserved end-to-end. `flushPendingTranscripts()` and the talkgroup-deactivated cleanup both walk the array in order too.
-
-### Server — serialized emit dispatchers
-
-**The race:** `EmitCallToClients` and `EmitCallToDownstreams` previously spawned a goroutine per call (`go Clients.EmitCall(...)` / `go Downstreams.Send(...)`). Two concurrent goroutines competing for the same per-client `Send` channel had no FIFO guarantee — Go's scheduler could pick either one first. Microsecond window in practice but real.
-
-**The fix:** New `clientEmitQueue` and `downstreamEmitQueue` buffered channels (8192 slots each) on `Controller`. Each has a dedicated dispatcher goroutine started in `Start()` (before `Delayer.Start()` so its catchup emits drain immediately rather than buffer with no consumer). All `EmitCallToClients` / `EmitCallToDownstreams` calls push to the appropriate channel; dispatchers drain in strict FIFO. Separate channels because the downstream path is HTTP-slow and shouldn't hold up local listener broadcasts.
-
-### Server — Delayer restart catchup ordering
-
-`Delayer.Start()` previously iterated the loaded `pending` map directly via `for k, v := range`, which Go intentionally randomizes. After a server restart, elapsed delayed calls were re-emitted in random order. Now sorted by scheduled timestamp ascending so the catchup pass is chronological.
-
-### Not in this beta
-
-Android `_calls.tryEmit` is also wrapped in `scope.launch { ... }` (`RdioClient.kt:384`), which has the same coroutine-launch reorder risk as the server-side goroutine-per-call. Microsecond window, never observed in practice. Will follow up as its own beta after this one is verified.
-
-## Version 6.11.0-beta.3
-
-UX iteration on the provider switching from beta.2.
-
-### Webapp
-
-- **Provider selector is now a `mat-button-toggle-group`** (segmented buttons) instead of a dropdown — selected provider is visible at a glance and a single click switches without an extra dropdown-open step.
-- **Per-provider config blocks now use `[ngSwitch]`** (rather than three independent `*ngIf`s) with the active provider read via a component-level getter — fixes the bug where switching providers wouldn't actually swap the visible fields. Saved per-provider data is shown immediately on switch.
-- **Model fields are free-text inputs** for all three providers. The mat-select with two hard-coded Groq options is gone — operators can enter whatever model identifier their provider accepts. Hints removed since the right value depends on the user's provider/version anyway.
-- **Prompt cap is now provider-aware in the UI hint**: shows "X / 896" with the red-at-overflow style only when Groq is active; other providers show just "X" and a note that no length cap is enforced.
-
-### Server
-
-- **`Options.FromMap` now defensively strips `/audio/transcriptions` and trailing slashes** from all transcription base-URL fields before saving. Pasting the full request URL into the admin form no longer produces a doubled `/audio/transcriptions/audio/transcriptions` path at request time.
-- **Prompt truncation is now provider-conditional.** The 896-character hard cap only applies when the active provider is Groq (it's Groq's API limit). OpenAI and self-hosted providers receive the prompt verbatim, no truncation. Documented in the new comment block and surfaced in the UI hint.
-
-## Version 6.11.0-beta.2
-
-Simplification of the provider dropdown from beta.1. Faster-Whisper is no longer its own option — since whisper.cpp, openai-whisper-server, and faster-whisper-server all expose the same OpenAI-compatible HTTP protocol and only differ in their accepted model identifiers, they collapse cleanly into a single "Whisper (self-hosted)" option where the user supplies their server's preferred model name.
-
-### Server
-
-- Dropped `faster-whisper-selfhosted` from the `TranscriptionProvider` enum. Three values now: `groq`, `openai`, `whisper-selfhosted`.
-- Removed the `TranscriptionFasterWhisperBaseUrl` / `TranscriptionFasterWhisperApiKey` / `TranscriptionFasterWhisperModel` fields.
-- Anyone testing beta.1 with the Faster-Whisper option needs to move their values into the Whisper (self-hosted) fields after upgrading.
-
-### Webapp
-
-- Provider dropdown now reads "Groq", "Whisper (OpenAI)", "Whisper (self-hosted)" — the OpenAI label clarifies it's specifically the hosted Whisper API.
-- The Whisper (self-hosted) field hint mentions `whisper-1`, `whisper-large-v3`, and `Systran/faster-whisper-large-v3` as common model values.
-
-## Version 6.11.0-beta.1
-
-Multi-provider transcription support. The existing Groq integration is now one of four selectable backends; OpenAI and self-hosted Whisper / Faster-Whisper join the lineup. All four speak the same OpenAI-compatible `POST /audio/transcriptions` protocol, so the existing key-rotation / 429-backoff / rate-limit machinery is shared — only the URL, model, and auth requirement differ per provider.
-
-### Server
-
-- **`TranscriptionProvider` setting** (string enum) selects which backend to use. Values: `groq` (default — existing behaviour preserved), `openai`, `whisper-selfhosted`, `faster-whisper-selfhosted`. Missing or unknown values fall back to Groq.
-- **Per-provider configuration is stored independently.** Each provider has its own `…BaseUrl`, `…ApiKey`, `…Model` fields, so switching providers via the admin UI does not lose previously-entered credentials. The existing `transcriptionBaseUrl` / `transcriptionApiKey` / `transcriptionModel` rows are repurposed as Groq's slots, so any pre-upgrade Groq config is automatically the active provider's config after upgrade.
-- **`Options.ActiveTranscriptionConfig()`** resolves the (URL, model, key, provider) tuple at request time, filling in provider-specific defaults when the corresponding field is empty:
-  - Groq: `https://api.groq.com/openai/v1` + `whisper-large-v3-turbo`
-  - OpenAI: `https://api.openai.com/v1` + `whisper-1`
-  - Whisper self-hosted: no URL default (required from user) + `whisper-1`
-  - Faster-Whisper self-hosted: no URL default (required from user) + `Systran/faster-whisper-large-v3`
-- **API key is optional for self-hosted providers.** When the active provider is self-hosted and the configured key is empty, the `Authorization: Bearer` header is omitted from outgoing requests and the rate-limit machinery uses a single `(anonymous)` slot. Hosted providers (Groq, OpenAI) still require a non-empty key.
-- **`Enabled()` is provider-aware.** Hosted providers need a key; self-hosted providers need a Base URL (since there's no default). `TranscriptionEnabled` still gates everything globally.
-- **Multi-key rotation stays Groq-only.** The existing comma/whitespace/newline-split key ring continues to apply to the Groq slot. Other providers use a single-key field for v1.
-
-### Webapp
-
-- Admin → Options → Call Transcription gains a provider dropdown. Switching providers shows a different per-provider block (Base URL, API Key, Model) below the dropdown; the inactive providers' fields stay in the form state (and on the server) so credentials persist across switches.
-- Shared settings (Language, Prompt, Max/min) appear once below the per-provider block.
-
-### Backwards compat
-
-- Existing installs default to `groq` provider and keep using their existing `TranscriptionBaseUrl` / `TranscriptionApiKey` / `TranscriptionModel` values — zero behavioural change.
-- Edge case: if a user had repurposed the existing Groq fields to point at OpenAI (via custom URL), after upgrade those values still live in the Groq slot. To get the cleaner OpenAI experience, switch the provider dropdown to "OpenAI" and (re-)enter credentials in the OpenAI fields.
-
 
 ## Version 6.10.3
 
