@@ -93,6 +93,11 @@ func (logs *Logs) Prune(db *Database, pruneDays uint) error {
 	return err
 }
 
+// logCountCap bounds the admin logs count(*) so the query stays fast on very
+// large or bloated tables. When the real row count exceeds this, the paginator
+// reports the cap; recent logs still page correctly and filters narrow further.
+const logCountCap = 100000
+
 // logCategoryPatterns maps an admin-facing log category to the set of SQL
 // LIKE patterns whose union defines that category. Patterns are matched
 // against the message column; a category matches if ANY of its patterns do.
@@ -217,7 +222,10 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 		offset = v
 	}
 
-	query = fmt.Sprintf("select `dateTime` from `rdioScannerLogs` where %v order by `dateTime` asc", where)
+	// LIMIT 1 on the min/max-date probes is an explicit hint so the planner
+	// uses a cheap ordered index scan (one live row) instead of materialising
+	// and sorting the whole result — important on a large/bloated table.
+	query = fmt.Sprintf("select `dateTime` from `rdioScannerLogs` where %v order by `dateTime` asc limit 1", where)
 	if err = db.QueryRow(query, args...).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
@@ -226,7 +234,7 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 		logResults.DateStart = t
 	}
 
-	query = fmt.Sprintf("select `dateTime` from `rdioScannerLogs` where %v order by `dateTime` desc", where)
+	query = fmt.Sprintf("select `dateTime` from `rdioScannerLogs` where %v order by `dateTime` desc limit 1", where)
 	if err = db.QueryRow(query, args...).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
@@ -235,9 +243,35 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 		logResults.DateStop = t
 	}
 
-	query = fmt.Sprintf("select count(*) from `rdioScannerLogs` where %v", where)
-	if err = db.QueryRow(query, args...).Scan(&logResults.Count); err != nil && err != sql.ErrNoRows {
-		return nil, formatError(fmt.Errorf("%v, %v", err, query))
+	// Count. An exact `count(*)` over the whole table is a full scan that, on a
+	// busy/bloated Postgres logs table (constant inserts + hourly bulk prune
+	// leaves many dead tuples), runs long enough to trip the reverse-proxy
+	// timeout (the 502/524 on /api/admin/logs).
+	//
+	// `where == "true"` means no filter was applied (the unfiltered initial
+	// page load — the case that was timing out). On Postgres we take the
+	// planner's instant row estimate there instead of scanning. For filtered
+	// queries (which narrow the set) and other databases, count inside a
+	// LIMITed subquery so the work is capped at logCountCap rows.
+	logResults.Count = 0
+	if where == "true" && db.Config.DbType == DbTypePostgres {
+		var est sql.NullFloat64
+		query = "select reltuples from pg_class where relname = 'rdioScannerLogs'"
+		if err = db.QueryRow(query).Scan(&est); err != nil && err != sql.ErrNoRows {
+			return nil, formatError(fmt.Errorf("%v, %v", err, query))
+		}
+		if est.Valid && est.Float64 > 0 {
+			logResults.Count = uint(est.Float64)
+		}
+	}
+
+	// Fallback / filtered path (also covers Postgres before its first ANALYZE,
+	// where reltuples is -1/0 and the estimate above is left at zero).
+	if logResults.Count == 0 {
+		query = fmt.Sprintf("select count(*) from (select 1 from `rdioScannerLogs` where %v limit %v) as sub", where, logCountCap)
+		if err = db.QueryRow(query, args...).Scan(&logResults.Count); err != nil && err != sql.ErrNoRows {
+			return nil, formatError(fmt.Errorf("%v, %v", err, query))
+		}
 	}
 
 	query = fmt.Sprintf("select `_id`, `dateTime`, `level`, `message` from `rdioScannerLogs` where %v order by `dateTime` %v limit %v offset %v", where, order, limit, offset)
