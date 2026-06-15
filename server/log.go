@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"sync"
 	"time"
 )
@@ -92,6 +93,25 @@ func (logs *Logs) Prune(db *Database, pruneDays uint) error {
 	return err
 }
 
+// logCategoryPatterns maps an admin-facing log category to the set of SQL
+// LIKE patterns whose union defines that category. Patterns are matched
+// against the message column; a category matches if ANY of its patterns do.
+// Keep these in sync with the LogEvent message strings they target.
+var logCategoryPatterns = map[string][]string{
+	// Listeners joining / leaving the live feed.
+	"connections": {"new listener%", "listener disconnected%"},
+	// Access denials and login attempts (listener access codes + admin login).
+	"access": {"invalid access code%", "locked access%", "expired access%", "too many concurrent%", "invalid login%", "too many login%"},
+	// Transcription lifecycle: transcribed/received/applied/deferred/skipped/failed.
+	"transcription": {"transcrib%", "transcript%"},
+	// Share-link / call-fetch requests (CAL websocket command).
+	"sharelink": {"CAL request%"},
+	// Configuration and admin account changes.
+	"config": {"configuration%", "admin password%", "admin.%"},
+	// Server lifecycle and background jobs.
+	"lifecycle": {"server started%", "database pruning%", "listeners count%", "delayer%", "dirwatch%", "scheduler%"},
+}
+
 func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsSearchResults, error) {
 	const (
 		ascOrder  = "asc"
@@ -99,6 +119,7 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 	)
 
 	var (
+		args     []any
 		dateTime any
 		err      error
 		id       sql.NullFloat64
@@ -110,8 +131,12 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 		where    string = "true"
 	)
 
-	logs.mutex.Lock()
-	defer logs.mutex.Unlock()
+	// NOTE: Search intentionally does NOT take logs.mutex. It is read-only,
+	// and the mutex is held by LogEvent for the duration of every log write.
+	// When the server is busy writing logs (e.g. a burst of share-link CAL
+	// requests), taking the mutex here starved the admin query until it hit
+	// the gateway timeout (HTTP 524). The DB connection pool already provides
+	// the concurrency safety the read needs.
 
 	formatError := func(err error) error {
 		return fmt.Errorf("logs.search: %v", err)
@@ -124,7 +149,28 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 
 	switch v := searchOptions.Level.(type) {
 	case string:
-		where += fmt.Sprintf(" and `level` = '%v'", v)
+		where += " and `level` = ?"
+		args = append(args, v)
+	}
+
+	switch v := searchOptions.Category.(type) {
+	case string:
+		if patterns, ok := logCategoryPatterns[v]; ok && len(patterns) > 0 {
+			likes := make([]string, 0, len(patterns))
+			for _, p := range patterns {
+				likes = append(likes, "`message` like ?")
+				args = append(args, p)
+			}
+			where += " and (" + strings.Join(likes, " or ") + ")"
+		}
+	}
+
+	switch v := searchOptions.Search.(type) {
+	case string:
+		if s := strings.TrimSpace(v); s != "" {
+			where += " and `message` like ?"
+			args = append(args, "%"+s+"%")
+		}
 	}
 
 	switch v := searchOptions.Sort.(type) {
@@ -155,7 +201,8 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 			stop = start.Add(time.Hour*24 - time.Millisecond - time.Hour*time.Duration(v.Hour())).Add(time.Minute * time.Duration(-v.Minute()))
 		}
 
-		where += fmt.Sprintf(" and (`dateTime` between '%v' and '%v')", start.Format(df), stop.Format(df))
+		where += " and (`dateTime` between ? and ?)"
+		args = append(args, start.Format(df), stop.Format(df))
 	}
 
 	switch v := searchOptions.Limit.(type) {
@@ -171,7 +218,7 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 	}
 
 	query = fmt.Sprintf("select `dateTime` from `rdioScannerLogs` where %v order by `dateTime` asc", where)
-	if err = db.QueryRow(query).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
+	if err = db.QueryRow(query, args...).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
 
@@ -180,7 +227,7 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 	}
 
 	query = fmt.Sprintf("select `dateTime` from `rdioScannerLogs` where %v order by `dateTime` desc", where)
-	if err = db.QueryRow(query).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
+	if err = db.QueryRow(query, args...).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
 
@@ -189,12 +236,12 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 	}
 
 	query = fmt.Sprintf("select count(*) from `rdioScannerLogs` where %v", where)
-	if err = db.QueryRow(query).Scan(&logResults.Count); err != nil && err != sql.ErrNoRows {
+	if err = db.QueryRow(query, args...).Scan(&logResults.Count); err != nil && err != sql.ErrNoRows {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
 
 	query = fmt.Sprintf("select `_id`, `dateTime`, `level`, `message` from `rdioScannerLogs` where %v order by `dateTime` %v limit %v offset %v", where, order, limit, offset)
-	if rows, err = db.Query(query); err != nil {
+	if rows, err = db.Query(query, args...); err != nil {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
 	defer rows.Close()
@@ -235,11 +282,13 @@ func (logs *Logs) setDatabase(d *Database) {
 }
 
 type LogsSearchOptions struct {
-	Date   any `json:"date,omitempty"`
-	Level  any `json:"level,omitempty"`
-	Limit  any `json:"limit,omitempty"`
-	Offset any `json:"offset,omitempty"`
-	Sort   any `json:"sort,omitempty"`
+	Category any `json:"category,omitempty"`
+	Date     any `json:"date,omitempty"`
+	Level    any `json:"level,omitempty"`
+	Limit    any `json:"limit,omitempty"`
+	Offset   any `json:"offset,omitempty"`
+	Search   any `json:"search,omitempty"`
+	Sort     any `json:"sort,omitempty"`
 }
 
 func NewLogSearchOptions() *LogsSearchOptions {
@@ -247,6 +296,16 @@ func NewLogSearchOptions() *LogsSearchOptions {
 }
 
 func (searchOptions *LogsSearchOptions) FromMap(m map[string]any) *LogsSearchOptions {
+	switch v := m["category"].(type) {
+	case string:
+		searchOptions.Category = v
+	}
+
+	switch v := m["search"].(type) {
+	case string:
+		searchOptions.Search = v
+	}
+
 	switch v := m["date"].(type) {
 	case string:
 		if t, err := time.Parse(time.RFC3339, v); err == nil {

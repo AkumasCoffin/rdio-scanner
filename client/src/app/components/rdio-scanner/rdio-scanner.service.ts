@@ -1429,6 +1429,10 @@ export class RdioScannerService implements OnDestroy {
     }
 
     private getCall(id: number, flags?: WebsocketCallFlag): void {
+        // Diagnostic for share-link debugging. Pair this with the matching
+        // [rdio] CAL response log to spot dropped requests (no response →
+        // server-side silent drop, see ProcessMessageCommandCall).
+        console.log(`[rdio] CAL request id=${id} flag=${flags}`);
         this.sendtoWebsocket(WebsocketCommand.Call, `${id}`, flags);
     }
 
@@ -1540,9 +1544,16 @@ export class RdioScannerService implements OnDestroy {
         if (Array.isArray(message)) {
             switch (message[0]) {
                 case WebsocketCommand.Call:
-                    if (message[1] !== null) {
+                    if (message[1] === null) {
+                        console.warn('[rdio] CAL response: payload was null (server rejected or dropped the request)');
+                    } else if (message[1] !== null) {
                         const call: RdioScannerCall = message[1];
                         const flag: string = message[2];
+                        const hasAudio = !!(call.audio && (call.audio as { data?: unknown }).data);
+                        console.log(`[rdio] CAL response id=${call.id} flag=${flag} hasAudio=${hasAudio} system=${call.system} talkgroup=${call.talkgroup} playbackPending=${this.playbackPending}`);
+                        if (!hasAudio) {
+                            console.warn(`[rdio] CAL response id=${call.id} arrived without audio — share-link playback will silently bail. Likely cause: server returned a zombie empty Call (pre-fix) or call was purged.`);
+                        }
 
                         if (flag === WebsocketCallFlag.Download) {
                             this.download(message[1]);

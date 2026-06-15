@@ -16,6 +16,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -633,12 +634,26 @@ func (controller *Controller) ProcessMessageCommandCall(client *Client, message 
 	}
 
 	if call, err = controller.Calls.GetCall(id, controller.Database); err != nil {
+		if err == sql.ErrNoRows {
+			// Share-link to a call that's been purged (retention) or never
+			// existed. Logged so operators can confirm "the link doesn't
+			// work" is a missing-call situation rather than a delivery bug.
+			controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("CAL request: call id=%v not found (ip=%s ident=%s flag=%s)", id, client.GetRemoteAddr(), client.Access.Ident, message.Flag))
+			return nil
+		}
 		return err
 	}
 
-	if !controller.Accesses.IsRestricted() || client.Access.HasAccess(call) {
-		client.Send <- &Message{Command: MessageCommandCall, Payload: call, Flag: message.Flag}
+	if controller.Accesses.IsRestricted() && !client.Access.HasAccess(call) {
+		// Restricted server: the requester's access code doesn't cover this
+		// call's system/talkgroup. Previously silent — logged so a shared
+		// link landing on a viewer who can't actually see the call shows up
+		// in the server log instead of producing a blank UI.
+		controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("CAL request: call id=%v denied (ip=%s ident=%s system=%v talkgroup=%v flag=%s)", id, client.GetRemoteAddr(), client.Access.Ident, call.System, call.Talkgroup, message.Flag))
+		return nil
 	}
+
+	client.Send <- &Message{Command: MessageCommandCall, Payload: call, Flag: message.Flag}
 
 	return nil
 }

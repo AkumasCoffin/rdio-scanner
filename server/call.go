@@ -223,7 +223,16 @@ func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 
 	query := fmt.Sprintf("select `audio`, `audioName`, `audioType`, `dateTime`, `frequencies`, `frequency`, `patches`, `source`, `sources`, `system`, `talkgroup`, `transcript` from `rdioScannerCalls` where `id` = %v", id)
 	err := db.QueryRow(query).Scan(&call.Audio, &audioName, &audioType, &dateTime, &frequencies, &frequency, &patches, &source, &sources, &call.System, &call.Talkgroup, &transcript)
-	if err != nil && err != sql.ErrNoRows {
+	if err == sql.ErrNoRows {
+		// Surface "not found" instead of returning a zombie empty Call.
+		// Callers (CAL websocket handler, public API, admin retranscribe,
+		// delayer refetch) all check err first, so the explicit signal lets
+		// the websocket path log+drop the request and the public API return
+		// a real 404 — previously the empty Call leaked downstream with
+		// Audio=nil and the client silently bailed.
+		return nil, sql.ErrNoRows
+	}
+	if err != nil {
 		return nil, fmt.Errorf("getcall: %v, %v", err, query)
 	}
 

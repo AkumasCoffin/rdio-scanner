@@ -121,10 +121,12 @@ export interface LogsQuery {
 }
 
 export interface LogsQueryOptions {
+    category?: string;
     date?: Date;
     level?: 'error' | 'info' | 'warn';
     limit: number;
     offset: number;
+    search?: string;
     sort: number;
 }
 

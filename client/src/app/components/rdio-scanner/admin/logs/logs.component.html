@@ -69,10 +69,33 @@
             Level
         </mat-label>
         <mat-select formControlName="level" (selectionChange)="formHandler()">
+            <mat-option [value]="null">All levels</mat-option>
             <mat-option value="info">Informative</mat-option>
             <mat-option value="warn">Warning</mat-option>
             <mat-option value="error">Error</mat-option>
         </mat-select>
+    </mat-form-field>
+    <mat-form-field>
+        <mat-label>
+            Category
+        </mat-label>
+        <mat-select formControlName="category" (selectionChange)="formHandler()">
+            <mat-option [value]="null">All categories</mat-option>
+            <mat-option *ngFor="let category of categories" [value]="category.value">
+                {{ category.label }}
+            </mat-option>
+        </mat-select>
+    </mat-form-field>
+    <mat-form-field>
+        <mat-label>
+            Search message
+        </mat-label>
+        <input matInput type="text" formControlName="search" placeholder="Filter by message text"
+            (keyup.enter)="formHandler()">
+        <button *ngIf="form.value.search" matSuffix mat-icon-button type="button" aria-label="Clear"
+            (click)="form.controls['search'].setValue(null)">
+            <mat-icon>close</mat-icon>
+        </button>
     </mat-form-field>
     <div class="reset">
         <button type="button" mat-raised-button [disabled]="logsQueryPending" (click)="reload()">

@@ -17,10 +17,11 @@
  * ****************************************************************************
  */
 
-import { Component, ViewChild } from '@angular/core';
+import { Component, OnDestroy, ViewChild } from '@angular/core';
 import { FormBuilder } from '@angular/forms';
 import { MatPaginator } from '@angular/material/paginator';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, Subscription } from 'rxjs';
+import { debounceTime } from 'rxjs/operators';
 import { Log, LogsQuery, LogsQueryOptions, RdioScannerAdminService } from '../admin.service';
 
 @Component({
@@ -28,12 +29,26 @@ import { Log, LogsQuery, LogsQueryOptions, RdioScannerAdminService } from '../ad
     styleUrls: ['./logs.component.scss'],
     templateUrl: './logs.component.html',
 })
-export class RdioScannerAdminLogsComponent {
+export class RdioScannerAdminLogsComponent implements OnDestroy {
     form = this.ngFormBuilder.group({
+        category: [null],
         date: [null],
         level: [null],
+        search: [null],
         sort: [-1],
     });
+
+    // Friendly log categories surfaced in the filter dropdown. The key is sent
+    // to the server, which maps it to a set of message LIKE patterns (see
+    // logCategoryPatterns in server/log.go). Keep the two lists in sync.
+    readonly categories = [
+        { value: 'connections', label: 'Listener connections' },
+        { value: 'access', label: 'Access & login' },
+        { value: 'transcription', label: 'Transcription' },
+        { value: 'sharelink', label: 'Share-link requests' },
+        { value: 'config', label: 'Configuration' },
+        { value: 'lifecycle', label: 'Server lifecycle' },
+    ];
 
     logs = new BehaviorSubject(new Array<Log | null>(10));
 
@@ -45,9 +60,26 @@ export class RdioScannerAdminLogsComponent {
 
     private offset = 0;
 
+    private searchSubscription: Subscription;
+
     @ViewChild(MatPaginator) private paginator: MatPaginator | undefined;
 
-    constructor(private adminService: RdioScannerAdminService, private ngFormBuilder: FormBuilder) { }
+    constructor(private adminService: RdioScannerAdminService, private ngFormBuilder: FormBuilder) {
+        // Debounce free-text message search so we don't fire a query on every
+        // keystroke. Other controls trigger formHandler() directly from the
+        // template since they change one value at a time.
+        this.searchSubscription = this.form.controls['search'].valueChanges
+            .pipe(debounceTime(400))
+            .subscribe(() => {
+                if (!this.logsQueryPending) {
+                    this.formHandler();
+                }
+            });
+    }
+
+    ngOnDestroy(): void {
+        this.searchSubscription.unsubscribe();
+    }
 
     formHandler(): void {
         this.paginator?.firstPage();
@@ -56,11 +88,15 @@ export class RdioScannerAdminLogsComponent {
     }
 
     reset(): void {
+        // emitEvent: false so clearing the search field doesn't also trigger
+        // the debounced valueChanges handler on top of the formHandler below.
         this.form.reset({
+            category: null,
             date: null,
             level: null,
+            search: null,
             sort: -1,
-        });
+        }, { emitEvent: false });
 
         this.formHandler();
     }
@@ -105,17 +141,27 @@ export class RdioScannerAdminLogsComponent {
             options.level = this.form.value.level;
         }
 
+        if (typeof this.form.value.category === 'string') {
+            options.category = this.form.value.category;
+        }
+
+        if (typeof this.form.value.search === 'string' && this.form.value.search.trim() !== '') {
+            options.search = this.form.value.search.trim();
+        }
+
         if (typeof this.form.value.date === 'string') {
             options.date = new Date(Date.parse(this.form.value.date));
         }
 
         this.logsQueryPending = true;
 
-        this.form.disable();
+        // emitEvent: false so toggling the disabled state during the request
+        // doesn't fire the search valueChanges subscription (which would loop).
+        this.form.disable({ emitEvent: false });
 
         this.logsQuery = await this.adminService.getLogs(options);
 
-        this.form.enable();
+        this.form.enable({ emitEvent: false });
 
         this.logsQueryPending = false;
 
