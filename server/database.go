@@ -280,6 +280,9 @@ func (db *Database) migrate() error {
 	if err == nil {
 		err = db.migration20260519130000(verbose)
 	}
+	if err == nil {
+		err = db.migration20260615120000(verbose)
+	}
 
 	return err
 }
@@ -1021,6 +1024,63 @@ func (db *Database) migration20260519110000(verbose bool) error {
 		}
 	}
 	return db.migrateWithSchema("20260519110000-create-delayed-table", queries, verbose)
+}
+
+// migration20260615120000 adds indexes that make the admin logs page filters
+// fast. The original (dateTime, level) index orders well but doesn't help when
+// filtering by a sparse level or by message text:
+//   - (level, dateTime) lets a level filter seek straight to the level and walk
+//     dateTime in order — fast filter + ORDER BY + LIMIT, and fast counts.
+//   - On Postgres, a GIN trigram index on message makes the category
+//     (LIKE 'prefix%') and free-text (LIKE '%substr%') message filters
+//     index-backed instead of a sequential scan.
+//
+// Tolerant like the trigram/BRIN migrations: index failures are logged and the
+// migration is still recorded so we don't retry every boot.
+func (db *Database) migration20260615120000(verbose bool) error {
+	const name = "20260615120000-logs-filter-indexes"
+
+	var count int
+	checkQuery := db.formatQuery(fmt.Sprintf("select count(*) from `rdioScannerMeta` where `name` = '%s'", name))
+	if err := db.Sql.QueryRow(checkQuery).Scan(&count); err != nil {
+		return fmt.Errorf("%s check: %v", name, err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	if verbose {
+		log.Printf("running database migration %s", name)
+	}
+
+	// (level, dateTime) composite — all database types.
+	var levelIdx string
+	if db.Config.DbType == DbTypePostgres {
+		levelIdx = `create index if not exists "rdio_scanner_logs_level_date_time" on "rdioScannerLogs" ("level", "dateTime")`
+	} else {
+		levelIdx = "create index if not exists `rdio_scanner_logs_level_date_time` on `rdioScannerLogs` (`level`, `dateTime`)"
+	}
+	if _, err := db.Sql.Exec(levelIdx); err != nil {
+		log.Printf("%s: could not create (level, dateTime) index: %v", name, err)
+	} else if verbose {
+		log.Printf("%s: (level, dateTime) index ensured", name)
+	}
+
+	// Postgres GIN trigram on message for category/free-text log filters.
+	if db.Config.DbType == DbTypePostgres {
+		if _, err := db.Sql.Exec("create extension if not exists pg_trgm"); err != nil {
+			log.Printf("%s: could not install pg_trgm extension, log message search will fall back to seq scan: %v", name, err)
+		} else if _, err := db.Sql.Exec(`create index if not exists "rdio_scanner_logs_message_trgm" on "rdioScannerLogs" using gin ("message" gin_trgm_ops)`); err != nil {
+			log.Printf("%s: could not create message trigram index: %v", name, err)
+		} else if verbose {
+			log.Printf("%s: message trigram index ensured", name)
+		}
+	}
+
+	if _, err := db.Sql.Exec(db.formatQuery(fmt.Sprintf("insert into `rdioScannerMeta` (`name`) values ('%s')", name))); err != nil {
+		return fmt.Errorf("%s record: %v", name, err)
+	}
+	return nil
 }
 
 func (db *Database) prepareMigration() (bool, error) {
