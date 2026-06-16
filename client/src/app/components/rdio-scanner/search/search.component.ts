@@ -616,6 +616,36 @@ export class RdioScannerSearchComponent implements OnDestroy, OnInit {
         }
     }
 
+    async copyTranscript(transcript: string | undefined, event?: Event): Promise<void> {
+        event?.stopPropagation();
+        const text = (transcript ?? '').trim();
+        if (!text) return;
+
+        // Same clipboard-with-fallback approach as shareCall: the async
+        // clipboard API needs a secure context, so fall back to a hidden
+        // textarea + execCommand on plain-http/older browsers.
+        let copied = false;
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                copied = true;
+            } else {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                copied = document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+        } catch {
+            copied = false;
+        }
+
+        this.matSnackBar.open(copied ? 'Transcript copied to clipboard' : 'Unable to copy transcript', '', { duration: 2000 });
+    }
+
     stop(): void {
         if (this.livefeedPlayback) {
             this.rdioScannerService.stopPlaybackMode();

@@ -70,6 +70,10 @@
         <div class="live-transcript-label">
             <mat-icon class="live-icon">graphic_eq</mat-icon>
             <span>TRANSCRIPT</span>
+            <button *ngIf="displayCall?.transcript" type="button" class="copy-transcript-btn"
+                title="Copy transcript" (click)="copyTranscript(displayCall?.transcript, $event)">
+                <mat-icon>content_copy</mat-icon>
+            </button>
         </div>
         <div class="live-transcript-text" *ngIf="displayCall?.transcript">{{ displayCall?.transcript }}</div>
         <div class="live-transcript-text placeholder" *ngIf="!displayCall?.transcript">—</div>

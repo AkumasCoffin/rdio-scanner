@@ -216,6 +216,31 @@
         line-height: 14px;
         animation: live-pulse 1.4s ease-in-out infinite;
       }
+
+      /* Push the copy button to the far right of the label row. Styled to
+         match the LCD aesthetic — borderless, inherits the label color. */
+      .copy-transcript-btn {
+        align-items: center;
+        background: transparent;
+        border: 0;
+        color: inherit;
+        cursor: pointer;
+        display: inline-flex;
+        justify-content: center;
+        margin: -4px -4px -4px auto;
+        opacity: 0.7;
+        padding: 4px;
+        transition: opacity 0.15s ease;
+
+        &:hover { opacity: 1; }
+
+        mat-icon {
+          font-size: 14px;
+          width: 14px;
+          height: 14px;
+          line-height: 14px;
+        }
+      }
     }
 
     .live-transcript-text {

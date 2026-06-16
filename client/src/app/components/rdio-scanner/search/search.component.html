@@ -128,6 +128,11 @@
                             <mat-icon>share</mat-icon>
                         </button>
 
+                        <button *ngIf="row.transcript" mat-icon-button class="copy-transcript-btn"
+                            title="Copy transcript" (click)="copyTranscript(row.transcript, $event)">
+                            <mat-icon>content_copy</mat-icon>
+                        </button>
+
                         <button *ngIf="isAdminAuthenticated() && showRetranscribeButton" mat-icon-button
                             class="transcribe-btn"
                             [disabled]="isTranscribing(row?.id)"
