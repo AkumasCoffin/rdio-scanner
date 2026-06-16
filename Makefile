@@ -17,7 +17,7 @@
 
 app := rdio-scanner
 date := 2026/06/15
-ver := 6.11.1-beta.3
+ver := 6.11.1-beta.4
 
 client := $(wildcard client/*.json client/*.ts)
 server := $(wildcard server/*.go)
