@@ -222,24 +222,23 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 		offset = v
 	}
 
-	// LIMIT 1 on the min/max-date probes is an explicit hint so the planner
-	// uses a cheap ordered index scan (one live row) instead of materialising
-	// and sorting the whole result — important on a large/bloated table.
-	query = fmt.Sprintf("select `dateTime` from `rdioScannerLogs` where %v order by `dateTime` asc limit 1", where)
-	if err = db.QueryRow(query, args...).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
+	// Date-picker bounds reflect the WHOLE log table, not the current filter —
+	// you want to be able to jump to any date in the history regardless of the
+	// active level/category/search. Computing them unfiltered also keeps them
+	// cheap: a single min/max the index answers instantly, instead of two
+	// filtered ordered scans that crawl on a large table (a filtered probe for
+	// a sparse category was a big contributor to the /api/admin/logs hangs).
+	var dtMin, dtMax any
+	query = "select min(`dateTime`), max(`dateTime`) from `rdioScannerLogs`"
+	if err = db.QueryRow(query).Scan(&dtMin, &dtMax); err != nil && err != sql.ErrNoRows {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
 
-	if t, err := db.ParseDateTime(dateTime); err == nil {
+	if t, err := db.ParseDateTime(dtMin); err == nil {
 		logResults.DateStart = t
 	}
 
-	query = fmt.Sprintf("select `dateTime` from `rdioScannerLogs` where %v order by `dateTime` desc limit 1", where)
-	if err = db.QueryRow(query, args...).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
-		return nil, formatError(fmt.Errorf("%v, %v", err, query))
-	}
-
-	if t, err := db.ParseDateTime(dateTime); err == nil {
+	if t, err := db.ParseDateTime(dtMax); err == nil {
 		logResults.DateStop = t
 	}
 
