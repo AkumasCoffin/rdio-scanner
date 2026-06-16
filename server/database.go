@@ -1086,19 +1086,16 @@ func (db *Database) migration20260615120000(verbose bool) error {
 	return nil
 }
 
-// migration20260617120000 makes the admin logs CATEGORY filter fast on
-// Postgres. Categories filter with prefix patterns (message LIKE 'prefix%').
-// A default-collation B-tree (or even the GIN trigram index from the previous
-// migration, if pg_trgm couldn't be installed) doesn't reliably accelerate
-// prefix LIKE; a `text_pattern_ops` B-tree does, and needs no extension. We
-// also ANALYZE the table so the planner picks up the new index and the stats
-// for the (level, dateTime) / trigram indexes added earlier — without fresh
-// stats the planner kept choosing sequential scans, which is what made
-// category fetches hang (1+ min, then a gateway 502).
+// migration20260617120000 runs ANALYZE on rdioScannerLogs (Postgres) so the
+// planner has fresh stats for the indexes added in earlier migrations
+// (rdio_scanner_logs_level_date_time and the message trigram). Without current
+// stats the planner mis-costed the logs filters and fell back to slow scans.
+// This is mainly for instances upgrading with existing data; a fresh install's
+// table is empty, so ANALYZE is a no-op there.
 //
-// Tolerant: failures are logged and the migration is still recorded.
+// Tolerant: failure is logged and the migration is still recorded.
 func (db *Database) migration20260617120000(verbose bool) error {
-	const name = "20260617120000-logs-message-pattern-idx"
+	const name = "20260617120000-logs-analyze"
 
 	var count int
 	checkQuery := db.formatQuery(fmt.Sprintf("select count(*) from `rdioScannerMeta` where `name` = '%s'", name))
@@ -1114,12 +1111,6 @@ func (db *Database) migration20260617120000(verbose bool) error {
 	}
 
 	if db.Config.DbType == DbTypePostgres {
-		if _, err := db.Sql.Exec(`create index if not exists "rdio_scanner_logs_message_pattern" on "rdioScannerLogs" ("message" text_pattern_ops)`); err != nil {
-			log.Printf("%s: could not create message text_pattern_ops index: %v", name, err)
-		} else if verbose {
-			log.Printf("%s: message text_pattern_ops index ensured", name)
-		}
-
 		if _, err := db.Sql.Exec(`analyze "rdioScannerLogs"`); err != nil {
 			log.Printf("%s: could not analyze rdioScannerLogs: %v", name, err)
 		}
