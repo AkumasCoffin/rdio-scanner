@@ -474,7 +474,29 @@ func (t *Transcriber) callTranscriptionAPI(baseUrl, apiKey, contentType string, 
 		return "", errors.New(parsed.Error.Message), false
 	}
 
-	return strings.TrimSpace(parsed.Text), nil, false
+	return sanitizeTranscript(parsed.Text), nil, false
+}
+
+// transcriptSpecialToken matches Whisper special/decoder tokens such as
+// <|jv|> (language), <|0.00|> (timestamp), <|nospeech|>, <|startoftranscript|>.
+// Each is a single <|...|> segment with no embedded '|'.
+var transcriptSpecialToken = regexp.MustCompile(`<\|[^|]*\|>`)
+
+// transcriptWhitespace collapses any run of whitespace to a single space.
+var transcriptWhitespace = regexp.MustCompile(`\s+`)
+
+// sanitizeTranscript strips Whisper special/decoder tokens that some
+// self-hosted Whisper backends leak into the returned text, then collapses the
+// leftover whitespace. Groq/OpenAI strip these upstream, but self-hosted
+// endpoints often don't — and on near-silent audio Whisper emits runs of
+// language tokens (<|jv|><|id|>…) that otherwise get stored, shown, and
+// forwarded downstream as garbage transcripts. A transcript that is nothing
+// but special tokens collapses to "" here, which callers treat as "no usable
+// transcript" rather than persisting noise.
+func sanitizeTranscript(s string) string {
+	s = transcriptSpecialToken.ReplaceAllString(s, " ")
+	s = transcriptWhitespace.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
 }
 
 // keyTail returns the trailing 4 characters of an API key for safe log
@@ -509,6 +531,14 @@ func (t *Transcriber) TranscribeCallAsync(id uint, call *Call) {
 			} else {
 				t.Controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("transcription failed for call %v: %v", id, err))
 			}
+			return
+		}
+
+		// Empty after sanitizing = the model returned only special tokens /
+		// silence (no real speech). Don't persist, emit, or forward an empty
+		// transcript — leave the call untranscribed instead of showing noise.
+		if text == "" {
+			t.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcription produced no usable text for call %v (silence/noise)", id))
 			return
 		}
 

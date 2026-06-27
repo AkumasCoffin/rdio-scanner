@@ -236,6 +236,20 @@ func (api *Api) CallTranscriptHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sanitize defensively: an upstream on a self-hosted Whisper backend may
+	// push raw special tokens (<|jv|>…). Strip them here too so this instance
+	// never stores or chain-forwards garbage even if the upstream didn't clean
+	// it. If nothing usable remains, accept-and-ignore so the call stays
+	// untranscribed (and local fallback can still run) rather than being marked
+	// done with noise.
+	req.Transcript = sanitizeTranscript(req.Transcript)
+	if req.Transcript == "" {
+		api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript push ignored (no usable text after sanitize): [%v] system=%v talkgroup=%v dateTime=%v", apikey.Ident, req.System, req.Talkgroup, req.DateTime))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Transcript ignored (no usable text).\n"))
+		return
+	}
+
 	api.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript push received: [%v] system=%v talkgroup=%v dateTime=%v", apikey.Ident, req.System, req.Talkgroup, req.DateTime))
 
 	db := api.Controller.Database
