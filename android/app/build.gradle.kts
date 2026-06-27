@@ -30,8 +30,8 @@ android {
         applicationId = "solutions.saubeo.rdioscanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 57
-        versionName = "6.11.1"
+        versionCode = 58
+        versionName = "6.11.2-beta.1"
         vectorDrawables.useSupportLibrary = true
     }
 
