@@ -6,3 +6,6 @@
 /build
 /dist
 /scripts/migrate-*.sh
+/server/server.exe
+/server/rdio-scanner
+/server/rdio-scanner.exe
