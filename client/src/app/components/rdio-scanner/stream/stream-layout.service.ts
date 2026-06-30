@@ -29,6 +29,7 @@ import {
     STREAM_LAYOUT_STORAGE_KEY,
     defaultHistoryCols,
     defaultStreamLayout,
+    streamIsFrame,
     streamItemTypeDef,
 } from './stream-layout';
 
@@ -95,7 +96,7 @@ export class StreamLayoutService implements OnDestroy {
             y: Math.max(0, Math.round(y)),
             w: def.w,
             h: def.h,
-            color: type === 'frame' ? STREAM_DEFAULT_BORDER_COLOR : STREAM_DEFAULT_TEXT_COLOR,
+            color: streamIsFrame(type) ? STREAM_DEFAULT_BORDER_COLOR : STREAM_DEFAULT_TEXT_COLOR,
             fontSize: def.fontSize,
             fontFamily: '',
             bold: true,
@@ -129,7 +130,7 @@ export class StreamLayoutService implements OnDestroy {
             middleWidth: 2,
             middleColor: '#888888',
             middleUseLed: false,
-            linkMode: false,
+            linkMode: type === 'frameLink',
             linkDivider: false,
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
@@ -266,7 +267,7 @@ export class StreamLayoutService implements OnDestroy {
         if (!def) {
             return null;
         }
-        const isFrame = def.type === 'frame';
+        const isFrame = streamIsFrame(def.type);
         return {
             id: typeof r.id === 'string' && r.id ? r.id : this.genId(),
             type: def.type,

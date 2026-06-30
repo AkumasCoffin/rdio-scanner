@@ -33,6 +33,7 @@ import {
     STREAM_FONTS,
     STREAM_FONTS_HREF,
     STREAM_ITEM_TYPES,
+    streamIsFrame,
     streamItemLabel,
     streamItemMinH,
     streamItemMinW,
@@ -228,6 +229,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return streamItemLabel(type);
     }
 
+    // Both border-box types ('frame' and the pre-linked 'frameLink').
+    isFrame(type: string): boolean {
+        return streamIsFrame(type);
+    }
+
     // The title/label text for a type ('' when the type has no title option).
     titleOf(type: string): string {
         return streamItemTitle(type);
@@ -248,7 +254,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // — except custom text and frames, which are user-added decoration with no
     // inherent data, so they're never flagged as missing.
     isMissing(type: string): boolean {
-        return this.countOf(type) === 0 && type !== 'text' && type !== 'frame';
+        return this.countOf(type) === 0 && type !== 'text' && !streamIsFrame(type);
     }
 
     // Hex equivalents of the main LCD's named LED colors.
@@ -307,7 +313,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // Builds the inset box-shadow for a frame's middle + inner bands (the outer
     // band is the CSS border). Each enabled band is stacked inward.
     frameShadow(item: StreamItem): string | null {
-        if (item.type !== 'frame' || this.isLinkGrouped(item)) {
+        if (!streamIsFrame(item.type) || this.isLinkGrouped(item)) {
             return null;
         }
         const parts: string[] = [];
@@ -327,9 +333,9 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // part of a multi-frame link group draws no CSS border at all — the merged
     // SVG outline (linkOutlines) renders its border instead.
     frameBorderStyle(item: StreamItem): { [key: string]: number } {
-        const w = item.type === 'frame' ? item.borderWidth : 0;
-        const r = item.type === 'frame' ? item.cornerRadius : 0;
-        const draw = item.type === 'frame' && !this.isLinkGrouped(item);
+        const w = streamIsFrame(item.type) ? item.borderWidth : 0;
+        const r = streamIsFrame(item.type) ? item.cornerRadius : 0;
+        const draw = streamIsFrame(item.type) && !this.isLinkGrouped(item);
         const bw = draw ? w : 0;
         const br = draw ? r : 0;
         return {
@@ -364,7 +370,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     private isLinkGrouped(item: StreamItem): boolean {
-        if (item.type !== 'frame' || !item.linkMode) {
+        if (!streamIsFrame(item.type) || !item.linkMode) {
             return false;
         }
         this.recomputeLinks();
@@ -379,7 +385,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     private recomputeLinks(): void {
-        const frames = this.layout.items.filter((i) => i.type === 'frame' && i.linkMode);
+        const frames = this.layout.items.filter((i) => streamIsFrame(i.type) && i.linkMode);
         const sig = frames
             .map((f) => `${f.id}:${f.x},${f.y},${f.w},${f.h},${f.borderWidth},${f.cornerRadius},${f.color},${f.useLedColor ? 1 : 0},${f.linkDivider ? 1 : 0}`)
             .join('|') + '#' + (this.ledColor() ?? '');
@@ -1370,7 +1376,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         // prefer center-to-center alignment over edge alignment by discounting
         // its match distance.
         const dragged = this.layout.items.find((i) => i.id === id);
-        const preferCenter = !!dragged && dragged.type !== 'frame';
+        const preferCenter = !!dragged && !streamIsFrame(dragged.type);
         const centerBonus = 5;
         const movingIds = new Set(this.moveTargets.map((t) => t.id));
 
@@ -1574,7 +1580,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
                 const top = Math.max(0, Math.min(1, est / dur)) * maxV;
                 writes.push(() => { content.scrollTop = top; });
 
-            } else if (type !== 'history' && type !== 'frame' && type !== 'text') {
+            } else if (type !== 'history' && !streamIsFrame(type) && type !== 'text') {
                 // Single-line value: marquee horizontally when it overflows.
                 const maxH = content.scrollWidth - content.clientWidth;
                 if (!auto || maxH <= 1) {
