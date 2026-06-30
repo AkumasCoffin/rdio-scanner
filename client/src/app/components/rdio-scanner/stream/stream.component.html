@@ -28,7 +28,8 @@
         (contextmenu)="onItemContext(item, $event)">
 
         <div class="item-content" [style.text-align]="item.align">
-            <ng-container *ngIf="item.type === 'history'; else notHistory">
+            <!-- History table -->
+            <ng-container *ngIf="item.type === 'history' && dataVisible(item)">
                 <table class="hist-table"
                     [class.row-lines]="item.histRowLines" [class.col-lines]="item.histColLines"
                     [style.--hist-line]="item.histLineColor" [style.--hist-lw]="item.histLineWidth + 'px'">
@@ -55,40 +56,42 @@
                     </tbody>
                 </table>
             </ng-container>
-            <ng-template #notHistory>
-            <ng-container *ngIf="item.type === 'transcript'; else titledContent">
+
+            <!-- Transcript -->
+            <ng-container *ngIf="item.type === 'transcript' && dataVisible(item)">
                 <div class="transcript-label">TRANSCRIPT</div>
-                <div class="transcript-text" *ngIf="displayCall?.transcript">{{ displayCall?.transcript }}</div>
-                <div class="transcript-text placeholder" *ngIf="!displayCall?.transcript">—</div>
+                <div class="transcript-text" *ngIf="displayCall?.transcript && !waitingForCall">{{ displayCall?.transcript }}</div>
+                <div class="transcript-text placeholder" *ngIf="!displayCall?.transcript || waitingForCall">—</div>
             </ng-container>
-            <ng-template #titledContent>
+
+            <!-- Title + value -->
+            <ng-container *ngIf="item.type !== 'history' && item.type !== 'transcript'">
                 <span class="item-title"
-                    *ngIf="item.titleEnabled && titleOf(item.type) && hasContent(item)"
+                    *ngIf="item.titleEnabled && titleOf(item.type) && hasContent(item) && titleVisible(item)"
                     [style.color]="titleColorOf(item)"
                     [style.font-size.px]="item.titleFontSize"
                     [style.font-family]="item.titleFontFamily || null"
                     [style.font-weight]="item.titleBold ? 700 : 400">{{ titleOf(item.type) }}: </span>
-                <span class="item-value" [ngSwitch]="item.type">
+                <span class="item-value" *ngIf="dataVisible(item)" [ngSwitch]="item.type">
                     <span *ngSwitchCase="'text'">{{ item.text }}</span>
                     <span *ngSwitchCase="'clock'">{{ clock | date:timeFormat }}</span>
-                    <span *ngSwitchCase="'callProgress'">{{ callProgress | date:timeFormat }}</span>
+                    <span *ngSwitchCase="'callProgress'">{{ waitingForCall ? '' : (callProgress | date:timeFormat) }}</span>
                     <span *ngSwitchCase="'listeners'">{{ listeners }}</span>
                     <span *ngSwitchCase="'queue'">{{ callQueue }}</span>
                     <span *ngSwitchCase="'delay'">{{ queueDelayLabel || '0:00' }}<span *ngIf="delayRemovedLabel"
                             class="delay-removed"> {{ delayRemovedLabel }}</span></span>
-                    <span *ngSwitchCase="'system'">{{ callSystem }}</span>
-                    <span *ngSwitchCase="'tag'">{{ callTag }}</span>
-                    <span *ngSwitchCase="'talkgroup'">{{ callTalkgroup }}</span>
-                    <span *ngSwitchCase="'callDate'">{{ callDate | date:'MM/dd' }}</span>
-                    <span *ngSwitchCase="'talkgroupName'">{{ callTalkgroupName }}</span>
-                    <span *ngSwitchCase="'tgid'">{{ callTalkgroupId || 0 }}</span>
-                    <span *ngSwitchCase="'uid'"><ng-container *ngIf="callUnit">{{ callUnit }}</ng-container></span>
-                    <span *ngSwitchCase="'tempAvoid'"><ng-container *ngIf="tempAvoid">&#x23f2;&#xFE0E; {{ tempAvoid }}M</ng-container></span>
-                    <span *ngSwitchCase="'avoid'" class="flag-text"><ng-container *ngIf="avoided">AVOID</ng-container></span>
-                    <span *ngSwitchCase="'patch'" class="flag-text"><ng-container *ngIf="patched">PATCH</ng-container></span>
+                    <span *ngSwitchCase="'system'">{{ waitingForCall ? '' : callSystem }}</span>
+                    <span *ngSwitchCase="'tag'">{{ waitingForCall ? '' : callTag }}</span>
+                    <span *ngSwitchCase="'talkgroup'">{{ waitingForCall ? '' : callTalkgroup }}</span>
+                    <span *ngSwitchCase="'callDate'">{{ waitingForCall ? '' : (callDate | date:'MM/dd') }}</span>
+                    <span *ngSwitchCase="'talkgroupName'">{{ waitingForCall ? '' : callTalkgroupName }}</span>
+                    <span *ngSwitchCase="'tgid'">{{ waitingForCall ? '' : (callTalkgroupId || 0) }}</span>
+                    <span *ngSwitchCase="'uid'"><ng-container *ngIf="callUnit && !waitingForCall">{{ callUnit }}</ng-container></span>
+                    <span *ngSwitchCase="'tempAvoid'"><ng-container *ngIf="tempAvoid && !waitingForCall">&#x23f2;&#xFE0E; {{ tempAvoid }}M</ng-container></span>
+                    <span *ngSwitchCase="'avoid'" class="flag-text"><ng-container *ngIf="avoided && !waitingForCall">AVOID</ng-container></span>
+                    <span *ngSwitchCase="'patch'" class="flag-text"><ng-container *ngIf="patched && !waitingForCall">PATCH</ng-container></span>
                 </span>
-            </ng-template>
-            </ng-template>
+            </ng-container>
         </div>
 
         <!-- Resize handle (edit mode) -->
@@ -291,6 +294,19 @@
                 <input type="checkbox" [checked]="ctxItem.autoScroll"
                     (change)="setCtxItemAutoScroll($any($event.target).checked)">
             </label>
+
+            <div class="ctx-sep"></div>
+            <div class="ctx-head">Visibility</div>
+            <label class="ctx-row">
+                <span>Hide while call playing</span>
+                <input type="checkbox" [checked]="ctxItem.hideOnCall"
+                    (change)="setHideOnCall($any($event.target).checked)">
+            </label>
+            <label class="ctx-row">
+                <span>Hide while idle (no call)</span>
+                <input type="checkbox" [checked]="ctxItem.hideOnIdle"
+                    (change)="setHideOnIdle($any($event.target).checked)">
+            </label>
             <ng-container *ngIf="titleOf(ctxItem.type)">
                 <div class="ctx-sep"></div>
                 <div class="ctx-head">Title</div>
@@ -325,6 +341,16 @@
                         <span>Title bold</span>
                         <input type="checkbox" [checked]="ctxItem.titleBold"
                             (change)="setCtxItemTitleBold($any($event.target).checked)">
+                    </label>
+                    <label class="ctx-row">
+                        <span>Hide title while call playing</span>
+                        <input type="checkbox" [checked]="ctxItem.titleHideOnCall"
+                            (change)="setTitleHideOnCall($any($event.target).checked)">
+                    </label>
+                    <label class="ctx-row">
+                        <span>Hide title while idle</span>
+                        <input type="checkbox" [checked]="ctxItem.titleHideOnIdle"
+                            (change)="setTitleHideOnIdle($any($event.target).checked)">
                     </label>
                 </ng-container>
             </ng-container>

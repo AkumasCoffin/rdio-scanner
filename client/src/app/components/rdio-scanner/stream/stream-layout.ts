@@ -39,6 +39,13 @@ export interface StreamItem {
     bold: boolean;
     // Free text for the 'text' (custom text box) type; unused otherwise.
     text: string;
+    // Visibility by call state — independently for the data value and the title.
+    // hideOnCall hides while a call is playing; hideOnIdle hides while nothing
+    // is playing (idle). Both off = always shown.
+    hideOnCall: boolean;
+    hideOnIdle: boolean;
+    titleHideOnCall: boolean;
+    titleHideOnIdle: boolean;
     // Optional title/label shown before the value (e.g. "System: ...") with its
     // own fully-independent styling. Unsupported for flags, frames, custom text.
     titleEnabled: boolean;
@@ -235,6 +242,7 @@ export function defaultStreamLayout(): StreamLayout {
         ({
             id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR,
             fontSize: 18, fontFamily: '', bold: true, text: '',
+            hideOnCall: false, hideOnIdle: false, titleHideOnCall: false, titleHideOnIdle: false,
             titleEnabled: false, titleColor: STREAM_DEFAULT_TITLE_COLOR, titleBold: true,
             titleUseLed: false, titleFontSize: 18, titleFontFamily: '',
             useLedColor: false, align: 'left', autoScroll: true, historyCols: [],
@@ -251,6 +259,10 @@ export function defaultStreamLayout(): StreamLayout {
             fontFamily: '',
             bold: true,
             text: '',
+            hideOnCall: false,
+            hideOnIdle: false,
+            titleHideOnCall: false,
+            titleHideOnIdle: false,
             titleEnabled: streamItemTypeDef(type)?.titleOn ?? false,
             titleColor: STREAM_DEFAULT_TITLE_COLOR,
             titleBold: true,

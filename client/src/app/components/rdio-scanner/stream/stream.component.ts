@@ -312,9 +312,49 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return parts.length ? parts.join(', ') : null;
     }
 
+    // True when nothing is playing and the queue is empty — the stream is idle
+    // and should show "Waiting for call" rather than holding the last call.
+    get waitingForCall(): boolean {
+        return !this.call && this.callQueue === 0;
+    }
+
+    private static readonly CALL_FIELDS = new Set([
+        'system', 'tag', 'talkgroup', 'callDate', 'callProgress',
+        'talkgroupName', 'tgid', 'uid', 'avoid', 'patch', 'tempAvoid',
+    ]);
+
+    isCallField(type: string): boolean {
+        return RdioScannerStreamComponent.CALL_FIELDS.has(type);
+    }
+
+    // Whether the data value should be shown given the call/idle hide toggles.
+    dataVisible(item: StreamItem): boolean {
+        if (item.hideOnCall && !this.waitingForCall) {
+            return false;
+        }
+        if (item.hideOnIdle && this.waitingForCall) {
+            return false;
+        }
+        return true;
+    }
+
+    // Whether the title should be shown given its own call/idle hide toggles.
+    titleVisible(item: StreamItem): boolean {
+        if (item.titleHideOnCall && !this.waitingForCall) {
+            return false;
+        }
+        if (item.titleHideOnIdle && this.waitingForCall) {
+            return false;
+        }
+        return true;
+    }
+
     // Whether a conditionally-empty element currently has a value to show — so
     // its title isn't shown standing alone when there's nothing after it.
     hasContent(item: StreamItem): boolean {
+        if (this.waitingForCall && this.isCallField(item.type)) {
+            return false;
+        }
         switch (item.type) {
             case 'uid':
                 return !!this.callUnit;
@@ -604,6 +644,22 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setAlign(align: 'left' | 'center' | 'right'): void {
         this.applyToTargets({ align });
+    }
+
+    setHideOnCall(hideOnCall: boolean): void {
+        this.applyToTargets({ hideOnCall });
+    }
+
+    setHideOnIdle(hideOnIdle: boolean): void {
+        this.applyToTargets({ hideOnIdle });
+    }
+
+    setTitleHideOnCall(titleHideOnCall: boolean): void {
+        this.applyToTargets({ titleHideOnCall });
+    }
+
+    setTitleHideOnIdle(titleHideOnIdle: boolean): void {
+        this.applyToTargets({ titleHideOnIdle });
     }
 
     setCtxItemLed(useLedColor: boolean): void {
