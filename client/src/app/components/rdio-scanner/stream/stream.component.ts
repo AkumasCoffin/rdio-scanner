@@ -252,10 +252,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         yellow: '#eab308',
     };
 
-    // The LCD color of the currently/last playing call (from its talkgroup or
-    // system LED), or null when there's nothing to colour by.
+    // The LCD color of the CURRENTLY playing call (from its talkgroup or system
+    // LED), or null when nothing is playing — so "match LCD color" elements fall
+    // back to their set color between calls rather than holding the last color.
     private ledColor(): string | null {
-        const call = this.displayCall;
+        const call = this.call;
         const led = (call?.talkgroupData?.led as string) || (call?.systemData?.led as string) || '';
         return RdioScannerStreamComponent.LED_HEX[led] ?? null;
     }
