@@ -740,6 +740,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         x: number, y: number, w: number, h: number, id: string,
     ): { x: number; y: number; guideX: number | null; guideY: number | null } {
         const threshold = 7;
+        // Only align to elements that are actually near the dragged one in the
+        // perpendicular axis (overlapping elements like frames have 0 gap and
+        // always qualify), so it doesn't snap to things across the screen.
+        const near = 130;
         const movingIds = new Set(this.moveTargets.map((t) => t.id));
 
         let bestDX = threshold + 1;
@@ -756,26 +760,36 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             if (o.id === id || movingIds.has(o.id)) {
                 continue;
             }
-            const oV = [o.x, o.x + o.w / 2, o.x + o.w];
-            const oH = [o.y, o.y + o.h / 2, o.y + o.h];
+            // Vertical / horizontal separation (0 when the boxes overlap).
+            const vSep = Math.max(0, o.y - (y + h), y - (o.y + o.h));
+            const hSep = Math.max(0, o.x - (x + w), x - (o.x + o.w));
 
-            for (const m of myV) {
-                for (const v of oV) {
-                    const d = Math.abs(m - v);
-                    if (d < bestDX) {
-                        bestDX = d;
-                        snapX = x + (v - m);
-                        guideX = v;
+            // Align vertical edges only when the two are vertically close.
+            if (vSep <= near) {
+                const oV = [o.x, o.x + o.w / 2, o.x + o.w];
+                for (const m of myV) {
+                    for (const v of oV) {
+                        const d = Math.abs(m - v);
+                        if (d < bestDX) {
+                            bestDX = d;
+                            snapX = x + (v - m);
+                            guideX = v;
+                        }
                     }
                 }
             }
-            for (const m of myH) {
-                for (const v of oH) {
-                    const d = Math.abs(m - v);
-                    if (d < bestDY) {
-                        bestDY = d;
-                        snapY = y + (v - m);
-                        guideY = v;
+
+            // Align horizontal edges only when horizontally close.
+            if (hSep <= near) {
+                const oH = [o.y, o.y + o.h / 2, o.y + o.h];
+                for (const m of myH) {
+                    for (const v of oH) {
+                        const d = Math.abs(m - v);
+                        if (d < bestDY) {
+                            bestDY = d;
+                            snapY = y + (v - m);
+                            guideY = v;
+                        }
                     }
                 }
             }
