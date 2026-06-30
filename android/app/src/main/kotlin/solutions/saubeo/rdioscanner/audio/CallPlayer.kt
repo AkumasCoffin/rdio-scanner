@@ -1,6 +1,7 @@
 package solutions.saubeo.rdioscanner.audio
 
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
 import androidx.media3.common.AudioAttributes
@@ -15,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,6 +35,8 @@ data class QueuedCall(
     val talkgroupName: String? = null,
     /** Oscillator preset to play before this call's audio. Null = no alert. */
     val alertBeeps: List<OscillatorBeep>? = null,
+    /** Decoded audio length in ms; feeds the queue-delay readout. 0 = unknown. */
+    val durationMs: Long = 0L,
 )
 
 /**
@@ -58,6 +62,62 @@ class CallPlayer(private val context: Context) {
     val history: StateFlow<List<QueuedCall>> = _history.asStateFlow()
 
     private val mediaIdToQueued = HashMap<String, QueuedCall>()
+
+    /**
+     * How far behind live the listener is, in ms: the combined length of every
+     * queued call plus whatever's left of the call playing now. Recomputed once
+     * a second (and on every queue change) so it ticks down ~1s at a time.
+     */
+    private val _delayMs = MutableStateFlow(0L)
+    val delayMs: StateFlow<Long> = _delayMs.asStateFlow()
+
+    /**
+     * Amount of delay (ms) the most recent auto-jump(s) shed, for the LCD's
+     * "-m:ss" flash. Accumulates while the flash is up, then clears.
+     */
+    private val _jumpFlashMs = MutableStateFlow(0L)
+    val jumpFlashMs: StateFlow<Long> = _jumpFlashMs.asStateFlow()
+
+    // Auto-jump config, pushed in from settings / hold state (see
+    // RdioApplication wiring). When enabled (and not suspended by a hold) the
+    // oldest queued calls are dropped once the delay crosses the threshold.
+    private var autoJumpEnabled = false
+    private var autoJumpThresholdMin = DEFAULT_AUTO_JUMP_MIN
+    private var holdActive = false
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var flashJob: Job? = null
+
+    init {
+        // Drive the per-second countdown + auto-jump re-evaluation.
+        scope.launch {
+            while (true) {
+                if (player.mediaItemCount > 0) {
+                    refreshDelay()
+                } else if (_delayMs.value != 0L) {
+                    _delayMs.value = 0L
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    fun setAutoJump(enabled: Boolean) {
+        autoJumpEnabled = enabled
+        refreshDelay()
+    }
+
+    fun setAutoJumpThresholdMin(minutes: Int) {
+        autoJumpThresholdMin = minutes.coerceIn(MIN_AUTO_JUMP_MIN, MAX_AUTO_JUMP_MIN)
+        refreshDelay()
+    }
+
+    fun setHoldActive(active: Boolean) {
+        holdActive = active
+        // On release, re-evaluate immediately so a backlog built up during the
+        // hold catches up right away rather than waiting for the next call.
+        if (!active) refreshDelay()
+    }
 
     private val alertPlayer = AlertPlayer()
     private val alertScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -145,7 +205,10 @@ class CallPlayer(private val context: Context) {
         val file = File(cacheDir, "${UUID.randomUUID()}.$ext")
         file.writeBytes(call.audio)
         val mediaId = file.nameWithoutExtension
-        mediaIdToQueued[mediaId] = QueuedCall(call, file, systemLabel, talkgroupLabel, talkgroupName, alertBeeps)
+        mediaIdToQueued[mediaId] = QueuedCall(
+            call, file, systemLabel, talkgroupLabel, talkgroupName, alertBeeps,
+            durationMs = probeDurationMs(file),
+        )
 
         val item = MediaItem.Builder()
             .setMediaId(mediaId)
@@ -167,6 +230,7 @@ class CallPlayer(private val context: Context) {
         player.playWhenReady = true
         if (!player.isPlaying) player.play()
         updatePlayingAndQueue()
+        refreshDelay()
     }
 
     fun playPause() {
@@ -211,6 +275,7 @@ class CallPlayer(private val context: Context) {
         val mediaId = file.nameWithoutExtension
         mediaIdToQueued[mediaId] = QueuedCall(
             call, file, systemLabel, talkgroupLabel, talkgroupName, alertBeeps,
+            durationMs = probeDurationMs(file),
         )
 
         val item = MediaItem.Builder()
@@ -230,6 +295,7 @@ class CallPlayer(private val context: Context) {
         player.playWhenReady = true
         player.play()
         updatePlayingAndQueue()
+        refreshDelay()
     }
 
     fun skip() {
@@ -253,6 +319,9 @@ class CallPlayer(private val context: Context) {
         player.clearMediaItems()
         player.stop()
         _queue.value = emptyList()
+        _delayMs.value = 0L
+        flashJob?.cancel()
+        _jumpFlashMs.value = 0L
         mediaIdToQueued.values.forEach { it.file.delete() }
         mediaIdToQueued.clear()
     }
@@ -271,6 +340,7 @@ class CallPlayer(private val context: Context) {
     fun release() {
         alertJob?.cancel()
         alertScope.cancel()
+        scope.cancel()
         player.removeListener(playerListener)
         player.release()
         cacheDir.listFiles()?.forEach { it.delete() }
@@ -338,9 +408,107 @@ class CallPlayer(private val context: Context) {
         _queue.value = upcoming
     }
 
+    /** Re-run auto-jump (if eligible) then publish the current delay. */
+    private fun refreshDelay() {
+        maybeAutoJumpAhead()
+        _delayMs.value = computeDelayMs()
+    }
+
+    /**
+     * Combined length of everything queued plus whatever's left of the call
+     * playing now. The current call uses the live player position when known so
+     * the figure counts down second-by-second; queued calls use their probed
+     * durations.
+     */
+    private fun computeDelayMs(): Long {
+        val count = player.mediaItemCount
+        if (count == 0) return 0L
+        val currentIndex = player.currentMediaItemIndex.coerceIn(0, count - 1)
+
+        var total = 0L
+
+        val curId = player.getMediaItemAt(currentIndex).mediaId
+        val dur = player.duration
+        val pos = player.currentPosition
+        total += if (dur != C.TIME_UNSET && dur > 0L) {
+            (dur - pos).coerceAtLeast(0L)
+        } else {
+            mediaIdToQueued[curId]?.durationMs ?: 0L
+        }
+
+        for (i in (currentIndex + 1) until count) {
+            val id = player.getMediaItemAt(i).mediaId
+            total += mediaIdToQueued[id]?.durationMs ?: 0L
+        }
+
+        return total
+    }
+
+    /**
+     * Drops the oldest queued calls (those right after the current item) until
+     * the delay is back under the threshold — keeping a buffer rather than
+     * skipping straight to live. Suspended while a hold is active. The
+     * currently-playing call is never touched. Emits the shed amount for the
+     * LCD flash.
+     */
+    private fun maybeAutoJumpAhead() {
+        if (!autoJumpEnabled || holdActive) return
+
+        val thresholdMs = autoJumpThresholdMin
+            .coerceIn(MIN_AUTO_JUMP_MIN, MAX_AUTO_JUMP_MIN) * 60_000L
+
+        var removed = 0L
+        while (computeDelayMs() > thresholdMs) {
+            val count = player.mediaItemCount
+            if (count == 0) break
+            val currentIndex = player.currentMediaItemIndex.coerceIn(0, count - 1)
+            val dropIndex = currentIndex + 1
+            if (dropIndex >= count) break // nothing upcoming left to drop
+
+            val id = player.getMediaItemAt(dropIndex).mediaId
+            val q = mediaIdToQueued.remove(id)
+            removed += q?.durationMs ?: 0L
+            q?.file?.delete()
+            player.removeMediaItem(dropIndex)
+        }
+
+        if (removed > 0L) {
+            updatePlayingAndQueue()
+            accumulateJumpFlash(removed)
+        }
+    }
+
+    private fun accumulateJumpFlash(ms: Long) {
+        _jumpFlashMs.value = _jumpFlashMs.value + ms
+        flashJob?.cancel()
+        flashJob = scope.launch {
+            delay(JUMP_FLASH_MS)
+            _jumpFlashMs.value = 0L
+        }
+    }
+
+    private fun probeDurationMs(file: File): Long {
+        return try {
+            val mmr = MediaMetadataRetriever()
+            try {
+                mmr.setDataSource(file.absolutePath)
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull() ?: 0L
+            } finally {
+                mmr.release()
+            }
+        } catch (t: Throwable) {
+            0L
+        }
+    }
+
     companion object {
         const val HISTORY_LIMIT = 100
         private const val TAG = "CallPlayer"
+        const val DEFAULT_AUTO_JUMP_MIN = 5
+        const val MIN_AUTO_JUMP_MIN = 1
+        const val MAX_AUTO_JUMP_MIN = 10
+        private const val JUMP_FLASH_MS = 4000L
     }
 
     /**

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,15 +20,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -62,6 +67,7 @@ import solutions.saubeo.rdioscanner.ui.theme.ledColor
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun LivefeedScreen(
@@ -81,6 +87,10 @@ fun LivefeedScreen(
     val livefeedEnabled by vm.livefeedEnabled.collectAsStateWithLifecycle()
     val avoided by vm.avoided.collectAsStateWithLifecycle()
     val transcripts by vm.transcripts.collectAsStateWithLifecycle()
+    val delayMs by vm.delayMs.collectAsStateWithLifecycle()
+    val jumpFlashMs by vm.jumpFlashMs.collectAsStateWithLifecycle()
+    val autoJump by vm.autoJump.collectAsStateWithLifecycle()
+    val autoJumpThreshold by vm.autoJumpThreshold.collectAsStateWithLifecycle()
 
     val branding = config?.branding?.takeIf { it.isNotBlank() } ?: "Rdio Scanner"
     val showListeners = config?.showListenersCount == true
@@ -152,6 +162,8 @@ fun LivefeedScreen(
                 listeners = listeners,
                 showListeners = showListeners,
                 queueSize = queue.size,
+                delayMs = delayMs,
+                jumpFlashMs = jumpFlashMs,
                 playing = playing,
                 config = config,
                 system = currentSys,
@@ -177,6 +189,9 @@ fun LivefeedScreen(
             hasPlaying = playing != null,
             hasCallContext = hasCallContext,
             anyAvoided = avoided.isNotEmpty(),
+            autoJump = autoJump,
+            autoJumpSuspended = autoJump && held != HoldState.None,
+            autoJumpThreshold = autoJumpThreshold,
             onLiveFeed = vm::toggleLivefeed,
             onHoldSys = vm::holdSystem,
             onHoldTg = vm::holdTalkgroup,
@@ -187,6 +202,8 @@ fun LivefeedScreen(
             onSelectTg = onOpenSelector,
             onSearch = onOpenSearch,
             onClearAvoids = vm::clearAvoids,
+            onAutoJump = vm::toggleAutoJump,
+            onAutoJumpThreshold = vm::setAutoJumpThreshold,
         )
     }
 }
@@ -200,6 +217,8 @@ private fun DisplayRows(
     listeners: Int,
     showListeners: Boolean,
     queueSize: Int,
+    delayMs: Long,
+    jumpFlashMs: Long,
     playing: QueuedCall?,
     config: ConfigDto?,
     system: SystemDto?,
@@ -215,8 +234,32 @@ private fun DisplayRows(
         }
     }
 
-    LcdRow(left = timeFmt.format(Date(now)), right = rightTop.ifBlank { null })
-    LcdRow(left = "", right = "Q: $queueSize")
+    LcdRow(left = timeFmt.format(Date(now)), right = "Queue: $queueSize")
+    val delayText = formatDelayMs(delayMs)
+    if (delayText.isNotEmpty()) {
+        val removedText = formatDelayMs(jumpFlashMs)
+        Row(
+            Modifier.fillMaxWidth().height(16.dp),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LcdText(
+                text = "Delay: $delayText",
+                size = 12f,
+                weight = FontWeight.SemiBold,
+                color = RdioPalette.Accent,
+            )
+            if (removedText.isNotEmpty()) {
+                Spacer(Modifier.width(6.dp))
+                LcdText(
+                    text = "-$removedText",
+                    size = 12f,
+                    weight = FontWeight.Bold,
+                    color = RdioPalette.Red,
+                )
+            }
+        }
+    }
     LcdSpacerSmall()
     LcdRow(
         left = system?.label ?: "—",
@@ -533,6 +576,9 @@ private fun ControlGrid(
     hasPlaying: Boolean,
     hasCallContext: Boolean,
     anyAvoided: Boolean,
+    autoJump: Boolean,
+    autoJumpSuspended: Boolean,
+    autoJumpThreshold: Int,
     onLiveFeed: () -> Unit,
     onHoldSys: () -> Unit,
     onHoldTg: () -> Unit,
@@ -543,6 +589,8 @@ private fun ControlGrid(
     onSelectTg: () -> Unit,
     onSearch: () -> Unit,
     onClearAvoids: () -> Unit,
+    onAutoJump: () -> Unit,
+    onAutoJumpThreshold: (Int) -> Unit,
 ) {
     val row: @Composable (List<@Composable (Modifier) -> Unit>) -> Unit = { buttons ->
         Row(
@@ -632,6 +680,53 @@ private fun ControlGrid(
             },
             { m -> RdioButton(label = "SELECT\nTG", onClick = onSelectTg, modifier = m) },
         ))
+        // Auto-jump toggle + threshold slider. Off = red, suspended-by-hold =
+        // yellow, active = green. The slider dims when auto-jump is off.
+        val autoJumpState = when {
+            !autoJump -> RdioButtonState.Off
+            autoJumpSuspended -> RdioButtonState.Partial
+            else -> RdioButtonState.On
+        }
+        var sliderPos by remember(autoJumpThreshold) {
+            mutableFloatStateOf(autoJumpThreshold.toFloat())
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RdioButton(
+                label = "AUTO\nJUMP",
+                onClick = onAutoJump,
+                modifier = Modifier.weight(1f),
+                state = autoJumpState,
+                tone = if (autoJump) RdioClickTone.Deactivate else RdioClickTone.Activate,
+            )
+            Column(
+                modifier = Modifier
+                    .weight(2f)
+                    .alpha(if (autoJump) 1f else 0.4f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                LcdText(
+                    text = "JUMP AT  ${sliderPos.roundToInt()} MIN",
+                    size = 11f,
+                    muted = true,
+                    weight = FontWeight.SemiBold,
+                )
+                Slider(
+                    value = sliderPos,
+                    onValueChange = { sliderPos = it },
+                    onValueChangeFinished = { onAutoJumpThreshold(sliderPos.roundToInt()) },
+                    valueRange = 1f..10f,
+                    steps = 8,
+                    colors = SliderDefaults.colors(
+                        thumbColor = RdioPalette.Accent,
+                        activeTrackColor = RdioPalette.Accent,
+                    ),
+                )
+            }
+        }
         if (anyAvoided) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 RdioButton(
@@ -642,6 +737,20 @@ private fun ControlGrid(
                 Spacer(Modifier.weight(2f))
             }
         }
+    }
+}
+
+/** Formats a delay in ms as M:SS (or H:MM:SS past an hour). Empty when <= 0. */
+private fun formatDelayMs(ms: Long): String {
+    val total = (ms / 1000).toInt()
+    if (total <= 0) return ""
+    val hours = total / 3600
+    val minutes = (total % 3600) / 60
+    val seconds = total % 60
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%d:%02d".format(minutes, seconds)
     }
 }
 

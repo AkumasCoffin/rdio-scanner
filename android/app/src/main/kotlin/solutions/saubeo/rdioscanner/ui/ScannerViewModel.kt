@@ -44,6 +44,16 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     val isPlaying = player.isPlaying
     val history = player.history
 
+    /** How far behind live (ms): queued calls + remaining of the current call. */
+    val delayMs: StateFlow<Long> = player.delayMs
+    /** Delay shed by the latest auto-jump(s), for the LCD "-m:ss" flash. */
+    val jumpFlashMs: StateFlow<Long> = player.jumpFlashMs
+
+    val autoJump: StateFlow<Boolean> =
+        rdioApp.settings.autoJump.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val autoJumpThreshold: StateFlow<Int> =
+        rdioApp.settings.autoJumpThreshold.stateIn(viewModelScope, SharingStarted.Eagerly, 5)
+
     val searchResults: StateFlow<SearchResults?> = repo.searchResults
     val searching: StateFlow<Boolean> = repo.searching
     val downloads: SharedFlow<DownloadEvent> = downloader.events
@@ -285,6 +295,14 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun skip() = player.skip()
+
+    fun toggleAutoJump() {
+        viewModelScope.launch { rdioApp.settings.setAutoJump(!autoJump.value) }
+    }
+
+    fun setAutoJumpThreshold(minutes: Int) {
+        viewModelScope.launch { rdioApp.settings.setAutoJumpThreshold(minutes) }
+    }
 
     /** Webapp behavior: play `this.call || this.callPrevious`. */
     fun replayLast() {

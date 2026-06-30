@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -65,6 +66,8 @@ class SettingsStore(private val context: Context) {
     // from the platform), so we suppress ourselves after asking once — like
     // POST_NOTIFICATIONS, the user can re-grant later via system Settings.
     private val keyBatteryOptAsked = booleanPreferencesKey("battery_opt_asked")
+    private val keyAutoJump = booleanPreferencesKey("auto_jump")
+    private val keyAutoJumpThreshold = intPreferencesKey("auto_jump_threshold")
 
     val serverUrl: Flow<String> = context.dataStore.data.map { it[keyServerUrl].orEmpty() }
     val accessCode: Flow<String> = context.dataStore.data.map { it[keyAccessCode].orEmpty() }
@@ -95,6 +98,25 @@ class SettingsStore(private val context: Context) {
 
     val lastProfileId: Flow<String?> = context.dataStore.data.map {
         it[keyLastProfileId]?.ifBlank { null }
+    }
+
+    /** Auto-jump: drop the oldest queued calls once the delay crosses the
+     *  threshold so the listener catches back up toward live. */
+    val autoJump: Flow<Boolean> = context.dataStore.data.map { it[keyAutoJump] == true }
+
+    /** Auto-jump buffer length in minutes (clamped 1..10, default 5). */
+    val autoJumpThreshold: Flow<Int> = context.dataStore.data.map {
+        (it[keyAutoJumpThreshold] ?: DEFAULT_AUTO_JUMP_MIN).coerceIn(MIN_AUTO_JUMP_MIN, MAX_AUTO_JUMP_MIN)
+    }
+
+    suspend fun setAutoJump(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[keyAutoJump] = enabled }
+    }
+
+    suspend fun setAutoJumpThreshold(minutes: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[keyAutoJumpThreshold] = minutes.coerceIn(MIN_AUTO_JUMP_MIN, MAX_AUTO_JUMP_MIN)
+        }
     }
 
     suspend fun batteryOptAsked(): Boolean =
@@ -177,6 +199,10 @@ class SettingsStore(private val context: Context) {
     }
 
     companion object {
+        const val DEFAULT_AUTO_JUMP_MIN = 5
+        const val MIN_AUTO_JUMP_MIN = 1
+        const val MAX_AUTO_JUMP_MIN = 10
+
         val json = Json {
             ignoreUnknownKeys = true
             encodeDefaults = true
