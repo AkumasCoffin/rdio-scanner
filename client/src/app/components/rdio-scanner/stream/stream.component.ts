@@ -365,7 +365,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // geometry or styling changes, and recomputed only when needed (sig check).
     private shapeSig = '';
     private shapeDirty = false;
-    private shapePaths: { d: string; color: string }[] = [];
+    private shapeRenders: { outline: string; clipId: string; bands: { color: string; width: number }[] }[] = [];
 
     ngAfterViewChecked(): void {
         this.recomputeShapes();
@@ -411,94 +411,45 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         }
         this.shapeSig = sig;
         this.shapeDirty = true;
-        this.shapePaths = [];
+        this.shapeRenders = [];
         for (const s of shapes) {
             // Respect the element's hide-while-call / hide-while-idle toggles.
             if (!this.dataVisible(s)) {
                 continue;
             }
-            for (const band of this.shapeBands(s)) {
-                this.shapePaths.push(band);
+            const render = this.shapeRender(s);
+            if (render) {
+                this.shapeRenders.push(render);
             }
         }
     }
 
-    // The concentric bands of a shapable border, each a filled ring between two
-    // concentric rounded outlines (even-odd), from the outer edge inward. Filled
-    // rings can't leave gaps at the corners the way stacked strokes do.
-    private shapeBands(item: StreamItem): { d: string; color: string }[] {
+    // A shapable border is drawn as the rounded outline stroked once per band,
+    // each stroke centred on the outline but clipped to the shape's interior so
+    // only its inside half shows. Widest (outer colour) first, narrower bands
+    // painted over it — giving outer/middle/inner bands aligned to the outline.
+    // No polygon offsetting, so corners (including reflex bumps) can't spike.
+    private shapeRender(item: StreamItem): { outline: string; clipId: string; bands: { color: string; width: number }[] } | null {
         const abs = this.absShapePoints(item);
-        const R = item.cornerRadius;
+        const outline = this.roundedPath(abs, this.cornerRadii(abs, item.cornerRadius));
+        if (!outline) {
+            return null;
+        }
         const wo = item.borderWidth;
         const wm = item.middleFill ? item.middleWidth : 0;
         const wi = item.centerFill ? item.innerWidth : 0;
-        // One radius schedule from the outer outline; each boundary at inset `o`
-        // uses radius (corner - o) so all bands share a corner centre and keep a
-        // uniform thickness through the corners.
-        const baseR = this.cornerRadii(abs, R);
-        const boundary = (o: number): string =>
-            this.roundedPath(this.offsetPolygon(abs, o), baseR.map((r) => Math.max(0, r - o)));
-        const bands: { d: string; color: string }[] = [];
-        const ring = (o1: number, o2: number, color: string): void => {
-            if (o2 - o1 <= 0) {
-                return;
-            }
-            const outer = boundary(o1), inner = boundary(o2);
-            if (outer && inner) {
-                bands.push({ d: `${outer} ${inner}`, color });
-            }
-        };
-        ring(0, wo, this.itemColor(item));
-        ring(wo, wo + wm, this.middleColorOf(item));
-        ring(wo + wm, wo + wm + wi, this.innerColor(item));
-        return bands;
-    }
-
-    // Offset a closed polygon inward (toward its interior) by `d` px: shift each
-    // edge along its inward normal and intersect consecutive edges for the new
-    // corners. Orientation-independent.
-    private offsetPolygon(pts: { x: number; y: number }[], d: number): { x: number; y: number }[] {
-        const n = pts.length;
-        if (n < 3 || d === 0) {
-            return pts.map((p) => ({ ...p }));
+        const total = wo + wm + wi;
+        const bands: { color: string; width: number }[] = [];
+        if (total > 0) {
+            bands.push({ color: this.itemColor(item), width: 2 * total });
         }
-        let area2 = 0;
-        for (let i = 0; i < n; i++) {
-            const a = pts[i], b = pts[(i + 1) % n];
-            area2 += a.x * b.y - b.x * a.y;
+        if (wm > 0) {
+            bands.push({ color: this.middleColorOf(item), width: 2 * (wm + wi) });
         }
-        const orient = area2 >= 0 ? 1 : -1;
-        const lines = pts.map((a, i) => {
-            const b = pts[(i + 1) % n];
-            const dx = b.x - a.x, dy = b.y - a.y;
-            const len = Math.hypot(dx, dy) || 1;
-            const ux = dx / len, uy = dy / len;
-            return { px: a.x - uy * orient * d, py: a.y + ux * orient * d, ux, uy };
-        });
-        const out: { x: number; y: number }[] = [];
-        const limit = Math.abs(d) * 2.5; // miter cap so sharp/reflex corners don't spike
-        for (let i = 0; i < n; i++) {
-            const a = lines[(i - 1 + n) % n], b = lines[i];
-            const denom = a.ux * b.uy - a.uy * b.ux;
-            let p: { x: number; y: number };
-            if (Math.abs(denom) < 1e-6) {
-                p = { x: b.px, y: b.py };
-            } else {
-                const t = ((b.px - a.px) * b.uy - (b.py - a.py) * b.ux) / denom;
-                p = { x: a.px + a.ux * t, y: a.py + a.uy * t };
-            }
-            // Keep the offset corner from shooting far past the original vertex
-            // at sharp/reflex corners (which made the bands spike at tight bends).
-            const v = pts[i];
-            const mdx = p.x - v.x, mdy = p.y - v.y;
-            const mlen = Math.hypot(mdx, mdy);
-            if (mlen > limit && mlen > 1e-6) {
-                const k = limit / mlen;
-                p = { x: v.x + mdx * k, y: v.y + mdy * k };
-            }
-            out.push(p);
+        if (wi > 0) {
+            bands.push({ color: this.innerColor(item), width: 2 * wi });
         }
-        return out;
+        return bands.length ? { outline, clipId: `shape-clip-${item.id}`, bands } : null;
     }
 
     // Rebuild the #linkLayer SVG children directly (correct SVG namespace).
@@ -511,14 +462,30 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         while (svg.firstChild) {
             svg.removeChild(svg.firstChild);
         }
-        svg.style.display = this.shapePaths.length ? '' : 'none';
-        for (const p of this.shapePaths) {
-            const path = this.document.createElementNS(NS, 'path');
-            path.setAttribute('d', p.d);
-            path.setAttribute('fill', p.color);
-            path.setAttribute('fill-rule', 'evenodd');
-            path.setAttribute('stroke', 'none');
-            svg.appendChild(path);
+        svg.style.display = this.shapeRenders.length ? '' : 'none';
+        if (!this.shapeRenders.length) {
+            return;
+        }
+        const defs = this.document.createElementNS(NS, 'defs');
+        svg.appendChild(defs);
+        for (const r of this.shapeRenders) {
+            const clip = this.document.createElementNS(NS, 'clipPath');
+            clip.setAttribute('id', r.clipId);
+            clip.setAttribute('clipPathUnits', 'userSpaceOnUse');
+            const clipPath = this.document.createElementNS(NS, 'path');
+            clipPath.setAttribute('d', r.outline);
+            clip.appendChild(clipPath);
+            defs.appendChild(clip);
+            for (const band of r.bands) {
+                const path = this.document.createElementNS(NS, 'path');
+                path.setAttribute('d', r.outline);
+                path.setAttribute('fill', 'none');
+                path.setAttribute('stroke', band.color);
+                path.setAttribute('stroke-width', String(band.width));
+                path.setAttribute('stroke-linejoin', 'round');
+                path.setAttribute('clip-path', `url(#${r.clipId})`);
+                svg.appendChild(path);
+            }
         }
     }
 
