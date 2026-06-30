@@ -467,6 +467,25 @@
                 background: rgba(239, 68, 68, 0.2);
             }
         }
+
+        &:disabled {
+            opacity: 0.4;
+            cursor: default;
+
+            &:hover {
+                background: transparent;
+            }
+        }
+    }
+
+    .ctx-copy {
+        display: flex;
+        gap: 4px;
+
+        .ctx-btn {
+            width: auto;
+            flex: 1;
+        }
     }
 
     .ctx-sep {

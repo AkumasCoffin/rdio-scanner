@@ -20,7 +20,6 @@
         [style.width.px]="item.w" [style.height.px]="item.h"
         [style.color]="itemColor(item)" [style.borderColor]="itemColor(item)"
         [ngStyle]="item.type === 'frame' ? frameBorderStyle(item) : null"
-        [style.border-radius.px]="item.type === 'frame' ? item.cornerRadius : null"
         [style.box-shadow]="frameShadow(item)"
         [style.font-size.px]="item.fontSize" [style.font-family]="item.fontFamily || null"
         [style.font-weight]="item.bold ? 700 : 400"
@@ -376,6 +375,16 @@
                     </label>
                 </ng-container>
             </ng-container>
+            <div class="ctx-sep"></div>
+            <div class="ctx-copy">
+                <button class="ctx-btn" (click)="copyItemStyle()">
+                    <mat-icon>content_copy</mat-icon> Copy settings
+                </button>
+                <button class="ctx-btn" (click)="pasteItemStyle()" [disabled]="!copiedStyle"
+                    [title]="copiedStyle ? ('Paste settings copied from ' + itemLabel(copiedStyleType)) : 'Copy settings from an element first'">
+                    <mat-icon>content_paste</mat-icon> Paste{{ selectedCount > 1 ? ' to ' + selectedCount : '' }}
+                </button>
+            </div>
             <button class="ctx-btn danger" (click)="removeCtxItem()">
                 <mat-icon>delete</mat-icon> Remove
             </button>

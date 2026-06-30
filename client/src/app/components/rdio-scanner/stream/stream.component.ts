@@ -71,6 +71,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // In-app confirm dialog (instead of window.confirm).
     confirm: { message: string; action: () => void } | null = null;
 
+    // Clipboard for "Copy settings"/"Paste settings": styling fields lifted off
+    // one element, ready to apply to others (geometry/identity/content excluded).
+    copiedStyle: Partial<StreamItem> | null = null;
+    copiedStyleType = '';
+
     @ViewChild('importFile') private importFile: ElementRef<HTMLInputElement> | undefined;
     @ViewChild('ctxMenu') private ctxMenuRef: ElementRef<HTMLElement> | undefined;
     @ViewChild('streamRoot') private streamRootRef: ElementRef<HTMLElement> | undefined;
@@ -317,37 +322,54 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return parts.length ? parts.join(', ') : null;
     }
 
-    // Per-side outer border widths. For a frame with link mode on we collapse
-    // the edge it shares with another link-mode frame: suppress this frame's
-    // top/left border when a linked neighbour sits directly above/to-the-left
-    // (the neighbour's bottom/right border draws the shared grid line once).
+    // Per-side border widths + per-corner radii for a frame. With link mode on
+    // we collapse the edge shared with another link-mode frame (suppress this
+    // frame's top/left border when a linked neighbour sits directly above/to-
+    // the-left, so the neighbour's bottom/right border draws the shared grid
+    // line once) and square off any corner that touches a neighbour, leaving
+    // only the grid's outer perimeter rounded.
     frameBorderStyle(item: StreamItem): { [key: string]: number } {
         const w = item.type === 'frame' ? item.borderWidth : 0;
+        const r = item.type === 'frame' ? item.cornerRadius : 0;
         if (item.type !== 'frame' || !item.linkMode) {
             return {
                 'border-top-width.px': w, 'border-right-width.px': w,
                 'border-bottom-width.px': w, 'border-left-width.px': w,
+                'border-top-left-radius.px': r, 'border-top-right-radius.px': r,
+                'border-bottom-right-radius.px': r, 'border-bottom-left-radius.px': r,
             };
         }
-        const tol = Math.max(3, w + 1);
-        let top = w, left = w;
+        const n = this.linkedNeighbours(item);
+        return {
+            // collapse: only top/left give way so the shared line is drawn once
+            'border-top-width.px': n.top ? 0 : w,
+            'border-right-width.px': w,
+            'border-bottom-width.px': w,
+            'border-left-width.px': n.left ? 0 : w,
+            // round a corner only when neither of its two edges meets a neighbour
+            'border-top-left-radius.px': (n.top || n.left) ? 0 : r,
+            'border-top-right-radius.px': (n.top || n.right) ? 0 : r,
+            'border-bottom-right-radius.px': (n.bottom || n.right) ? 0 : r,
+            'border-bottom-left-radius.px': (n.bottom || n.left) ? 0 : r,
+        };
+    }
+
+    // Which sides of a link-mode frame touch another link-mode frame.
+    private linkedNeighbours(item: StreamItem): { top: boolean; right: boolean; bottom: boolean; left: boolean } {
+        const tol = Math.max(3, item.borderWidth + 1);
+        const out = { top: false, right: false, bottom: false, left: false };
         for (const o of this.layout.items) {
             if (o.id === item.id || o.type !== 'frame' || !o.linkMode) {
                 continue;
             }
-            if (Math.abs((o.x + o.w) - item.x) <= tol &&
-                this.rangesOverlap(item.y, item.y + item.h, o.y, o.y + o.h)) {
-                left = 0;
-            }
-            if (Math.abs((o.y + o.h) - item.y) <= tol &&
-                this.rangesOverlap(item.x, item.x + item.w, o.x, o.x + o.w)) {
-                top = 0;
-            }
+            const vOverlap = this.rangesOverlap(item.y, item.y + item.h, o.y, o.y + o.h);
+            const hOverlap = this.rangesOverlap(item.x, item.x + item.w, o.x, o.x + o.w);
+            if (vOverlap && Math.abs((o.x + o.w) - item.x) <= tol) { out.left = true; }
+            if (vOverlap && Math.abs(o.x - (item.x + item.w)) <= tol) { out.right = true; }
+            if (hOverlap && Math.abs((o.y + o.h) - item.y) <= tol) { out.top = true; }
+            if (hOverlap && Math.abs(o.y - (item.y + item.h)) <= tol) { out.bottom = true; }
         }
-        return {
-            'border-top-width.px': top, 'border-right-width.px': w,
-            'border-bottom-width.px': w, 'border-left-width.px': left,
-        };
+        return out;
     }
 
     private rangesOverlap(a1: number, a2: number, b1: number, b2: number): boolean {
@@ -617,6 +639,42 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         for (const id of this.targetIds()) {
             this.streamLayoutService.updateItem(id, patch);
         }
+    }
+
+    // Styling fields carried by Copy/Paste — everything visual, but not the
+    // element's identity, geometry, or content (id/type/x/y/w/h/text/title
+    // text/history columns stay put).
+    private static readonly STYLE_KEYS: (keyof StreamItem)[] = [
+        'color', 'fontSize', 'fontFamily', 'bold', 'align', 'useLedColor',
+        'hideOnCall', 'hideOnIdle', 'titleHideOnCall', 'titleHideOnIdle',
+        'titleEnabled', 'titleColor', 'titleBold', 'titleUseLed', 'titleFontSize', 'titleFontFamily',
+        'autoScroll', 'histRowLines', 'histColLines', 'histLineWidth', 'histLineColor',
+        'borderWidth', 'innerWidth', 'cornerRadius', 'centerFill', 'centerColor', 'centerUseLed',
+        'middleFill', 'middleWidth', 'middleColor', 'middleUseLed', 'linkMode',
+    ];
+
+    copyItemStyle(): void {
+        const src = this.ctxItem;
+        if (!src) {
+            return;
+        }
+        const style: Partial<StreamItem> = {};
+        for (const k of RdioScannerStreamComponent.STYLE_KEYS) {
+            (style as Record<string, unknown>)[k] = src[k];
+        }
+        this.copiedStyle = style;
+        this.copiedStyleType = src.type;
+        this.snack.open('Settings copied — right-click another element to paste', '', { duration: 2000 });
+    }
+
+    pasteItemStyle(): void {
+        if (!this.copiedStyle) {
+            return;
+        }
+        this.applyToTargets({ ...this.copiedStyle });
+        const n = this.targetIds().length;
+        this.snack.open(`Settings pasted${n > 1 ? ' to ' + n + ' elements' : ''}`, '', { duration: 1500 });
+        this.refreshCtxItem();
     }
 
     removeCtxItem(): void {
