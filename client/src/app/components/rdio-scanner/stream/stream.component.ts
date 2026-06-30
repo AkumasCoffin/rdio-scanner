@@ -22,7 +22,7 @@ import { ChangeDetectorRef, Component, ElementRef, Inject, OnDestroy, OnInit, Vi
 import { FormBuilder } from '@angular/forms';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { Subscription } from 'rxjs';
-import { RdioScannerEvent } from '../rdio-scanner';
+import { RdioScannerCall, RdioScannerEvent } from '../rdio-scanner';
 import { RdioScannerService } from '../rdio-scanner.service';
 import { RdioScannerMainComponent } from '../main/main.component';
 import {
@@ -425,6 +425,38 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setCtxItemTitleBold(titleBold: boolean): void {
         this.applyToTargets({ titleBold });
+    }
+
+    // Patch one column of the right-clicked history table, then refresh ctxItem
+    // from the updated layout so further edits read fresh data.
+    setHistCol(index: number, patch: Partial<{ title: string; visible: boolean; color: string; fontSize: number; bold: boolean }>): void {
+        if (!this.ctxItem) {
+            return;
+        }
+        if (typeof patch.fontSize === 'number') {
+            if (!Number.isFinite(patch.fontSize)) {
+                return;
+            }
+            patch = { ...patch, fontSize: Math.max(6, Math.min(120, Math.round(patch.fontSize))) };
+        }
+        const id = this.ctxItem.id;
+        const cols = (this.ctxItem.historyCols || []).map((c, i) => (i === index ? { ...c, ...patch } : c));
+        this.streamLayoutService.updateItem(id, { historyCols: cols });
+        this.ctxItem = this.layout.items.find((i) => i.id === id) ?? this.ctxItem;
+    }
+
+    // Value for a history-table cell.
+    histCell(call: RdioScannerCall | undefined, key: string): string {
+        switch (key) {
+            case 'system':
+                return call?.systemData?.label || `${call?.system ?? ''}`;
+            case 'talkgroup':
+                return call?.talkgroupData?.label || `${call?.talkgroup ?? ''}`;
+            case 'name':
+                return call?.talkgroupData?.name || `${call?.frequency ?? ''}`;
+            default:
+                return '';
+        }
     }
 
     setGridSize(value: number): void {

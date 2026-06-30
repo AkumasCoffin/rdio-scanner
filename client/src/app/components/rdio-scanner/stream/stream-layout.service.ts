@@ -19,6 +19,7 @@
 
 import { EventEmitter, Injectable, OnDestroy } from '@angular/core';
 import {
+    StreamHistoryCol,
     StreamItem,
     StreamLayout,
     STREAM_DEFAULT_BORDER_COLOR,
@@ -26,6 +27,7 @@ import {
     STREAM_DEFAULT_TITLE_COLOR,
     STREAM_LAYOUT_CHANNEL,
     STREAM_LAYOUT_STORAGE_KEY,
+    defaultHistoryCols,
     defaultStreamLayout,
     streamItemTypeDef,
 } from './stream-layout';
@@ -102,6 +104,7 @@ export class StreamLayoutService implements OnDestroy {
             titleColor: STREAM_DEFAULT_TITLE_COLOR,
             titleBold: true,
             useLedColor: false,
+            historyCols: type === 'history' ? defaultHistoryCols() : [],
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
         this.commit(true);
@@ -255,6 +258,28 @@ export class StreamLayoutService implements OnDestroy {
             titleColor: typeof r.titleColor === 'string' ? r.titleColor : STREAM_DEFAULT_TITLE_COLOR,
             titleBold: typeof r.titleBold === 'boolean' ? r.titleBold : true,
             useLedColor: typeof r.useLedColor === 'boolean' ? r.useLedColor : false,
+            historyCols: def.type === 'history' ? this.normalizeHistoryCols(r.historyCols) : [],
         };
+    }
+
+    private normalizeHistoryCols(input: unknown): StreamHistoryCol[] {
+        const base = defaultHistoryCols();
+        if (!Array.isArray(input)) {
+            return base;
+        }
+        return base.map((bc) => {
+            const found = (input as Partial<StreamHistoryCol>[]).find((c) => c && c.key === bc.key);
+            if (!found) {
+                return bc;
+            }
+            return {
+                key: bc.key,
+                title: typeof found.title === 'string' ? found.title : bc.title,
+                visible: typeof found.visible === 'boolean' ? found.visible : bc.visible,
+                color: typeof found.color === 'string' ? found.color : bc.color,
+                fontSize: typeof found.fontSize === 'number' ? found.fontSize : bc.fontSize,
+                bold: typeof found.bold === 'boolean' ? found.bold : bc.bold,
+            };
+        });
     }
 }

@@ -65,6 +65,44 @@
         letter-spacing: 0.05em;
     }
 
+    /* Playing-history table: scrolls within its box; per-column colors / sizes
+       / weights are applied inline from each column's settings. */
+    &.history {
+        display: block;
+        align-items: stretch;
+        overflow: hidden;
+
+        .item-content {
+            height: 100%;
+            overflow-y: auto;
+            white-space: normal;
+        }
+
+        .hist-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+
+            th,
+            td {
+                text-align: left;
+                padding: 1px 6px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            thead th {
+                opacity: 0.85;
+                letter-spacing: 0.03em;
+            }
+
+            tbody tr {
+                border-top: 1px solid rgba(127, 127, 127, 0.25);
+            }
+        }
+    }
+
     /* Custom text wraps and honours manual line breaks within its box. */
     &.textbox {
         align-items: flex-start;
@@ -368,6 +406,43 @@
         height: 1px;
         margin: 6px 4px;
         background: rgba(148, 163, 184, 0.2);
+    }
+
+    .hist-cols {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+
+        .hist-col {
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 6px;
+            padding: 4px 6px;
+        }
+
+        .hist-col-head {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 2px;
+
+            input[type="checkbox"] {
+                width: 16px;
+                height: 16px;
+                cursor: pointer;
+            }
+
+            .hist-title {
+                flex: 1;
+                min-width: 0;
+                padding: 3px 6px;
+                border: 1px solid rgba(148, 163, 184, 0.4);
+                border-radius: 6px;
+                background: rgba(2, 6, 23, 0.5);
+                color: #e2e8f0;
+                font-size: 12px;
+                font-weight: 700;
+            }
+        }
     }
 }
 
