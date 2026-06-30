@@ -170,7 +170,7 @@ export const STREAM_ITEM_TYPES: ReadonlyArray<StreamItemType> = [
     { type: 'tempAvoid', label: 'Avoid Timer', w: 110, h: 26, minW: 70, minH: 20, fontSize: 14, title: 'Avoid', titleOn: false },
     { type: 'avoid', label: 'Avoid Flag', w: 90, h: 26, minW: 60, minH: 20, fontSize: 14, title: '', titleOn: false },
     { type: 'patch', label: 'Patch Flag', w: 90, h: 26, minW: 60, minH: 20, fontSize: 14, title: '', titleOn: false },
-    { type: 'transcript', label: 'Transcript', w: 600, h: 170, minW: 200, minH: 60, fontSize: 20, title: '', titleOn: false },
+    { type: 'transcript', label: 'Transcript', w: 600, h: 170, minW: 200, minH: 60, fontSize: 20, title: 'TRANSCRIPT', titleOn: true },
     { type: 'history', label: 'History Table', w: 600, h: 200, minW: 240, minH: 80, fontSize: 13, title: '', titleOn: false },
     { type: 'frame', label: 'Border Frame', w: 560, h: 240, minW: 40, minH: 30, fontSize: 18, title: '', titleOn: false },
 ];

@@ -59,9 +59,14 @@
 
             <!-- Transcript -->
             <ng-container *ngIf="item.type === 'transcript' && dataVisible(item)">
-                <div class="transcript-label">TRANSCRIPT</div>
-                <div class="transcript-text" *ngIf="displayCall?.transcript && !waitingForCall">{{ displayCall?.transcript }}</div>
-                <div class="transcript-text placeholder" *ngIf="!displayCall?.transcript || waitingForCall">—</div>
+                <div class="transcript-label"
+                    *ngIf="item.titleEnabled && titleVisible(item)"
+                    [style.color]="titleColorOf(item)"
+                    [style.font-size.px]="item.titleFontSize"
+                    [style.font-family]="item.titleFontFamily || null"
+                    [style.font-weight]="item.titleBold ? 700 : 400">{{ titleOf(item.type) }}</div>
+                <div class="transcript-text" *ngIf="displayCall?.transcript">{{ displayCall?.transcript }}</div>
+                <div class="transcript-text placeholder" *ngIf="!displayCall?.transcript">—</div>
             </ng-container>
 
             <!-- Title + value -->
@@ -75,21 +80,21 @@
                 <span class="item-value" *ngIf="dataVisible(item)" [ngSwitch]="item.type">
                     <span *ngSwitchCase="'text'">{{ item.text }}</span>
                     <span *ngSwitchCase="'clock'">{{ clock | date:timeFormat }}</span>
-                    <span *ngSwitchCase="'callProgress'">{{ waitingForCall ? '' : (callProgress | date:timeFormat) }}</span>
+                    <span *ngSwitchCase="'callProgress'">{{ callProgress | date:timeFormat }}</span>
                     <span *ngSwitchCase="'listeners'">{{ listeners }}</span>
                     <span *ngSwitchCase="'queue'">{{ callQueue }}</span>
                     <span *ngSwitchCase="'delay'">{{ queueDelayLabel || '0:00' }}<span *ngIf="delayRemovedLabel"
                             class="delay-removed"> {{ delayRemovedLabel }}</span></span>
-                    <span *ngSwitchCase="'system'">{{ waitingForCall ? '' : callSystem }}</span>
-                    <span *ngSwitchCase="'tag'">{{ waitingForCall ? '' : callTag }}</span>
-                    <span *ngSwitchCase="'talkgroup'">{{ waitingForCall ? '' : callTalkgroup }}</span>
-                    <span *ngSwitchCase="'callDate'">{{ waitingForCall ? '' : (callDate | date:'MM/dd') }}</span>
-                    <span *ngSwitchCase="'talkgroupName'">{{ waitingForCall ? '' : callTalkgroupName }}</span>
-                    <span *ngSwitchCase="'tgid'">{{ waitingForCall ? '' : (callTalkgroupId || 0) }}</span>
-                    <span *ngSwitchCase="'uid'"><ng-container *ngIf="callUnit && !waitingForCall">{{ callUnit }}</ng-container></span>
-                    <span *ngSwitchCase="'tempAvoid'"><ng-container *ngIf="tempAvoid && !waitingForCall">&#x23f2;&#xFE0E; {{ tempAvoid }}M</ng-container></span>
-                    <span *ngSwitchCase="'avoid'" class="flag-text"><ng-container *ngIf="avoided && !waitingForCall">AVOID</ng-container></span>
-                    <span *ngSwitchCase="'patch'" class="flag-text"><ng-container *ngIf="patched && !waitingForCall">PATCH</ng-container></span>
+                    <span *ngSwitchCase="'system'">{{ callSystem }}</span>
+                    <span *ngSwitchCase="'tag'">{{ callTag }}</span>
+                    <span *ngSwitchCase="'talkgroup'">{{ callTalkgroup }}</span>
+                    <span *ngSwitchCase="'callDate'">{{ callDate | date:'MM/dd' }}</span>
+                    <span *ngSwitchCase="'talkgroupName'">{{ callTalkgroupName }}</span>
+                    <span *ngSwitchCase="'tgid'">{{ callTalkgroupId || 0 }}</span>
+                    <span *ngSwitchCase="'uid'"><ng-container *ngIf="callUnit">{{ callUnit }}</ng-container></span>
+                    <span *ngSwitchCase="'tempAvoid'"><ng-container *ngIf="tempAvoid">&#x23f2;&#xFE0E; {{ tempAvoid }}M</ng-container></span>
+                    <span *ngSwitchCase="'avoid'" class="flag-text"><ng-container *ngIf="avoided">AVOID</ng-container></span>
+                    <span *ngSwitchCase="'patch'" class="flag-text"><ng-container *ngIf="patched">PATCH</ng-container></span>
                 </span>
             </ng-container>
         </div>
@@ -296,14 +301,14 @@
             </label>
 
             <div class="ctx-sep"></div>
-            <div class="ctx-head">Visibility</div>
+            <div class="ctx-head">{{ itemLabel(ctxItem.type) }} visibility</div>
             <label class="ctx-row">
                 <span>Hide while call playing</span>
                 <input type="checkbox" [checked]="ctxItem.hideOnCall"
                     (change)="setHideOnCall($any($event.target).checked)">
             </label>
             <label class="ctx-row">
-                <span>Hide while idle (no call)</span>
+                <span>Hide while idle</span>
                 <input type="checkbox" [checked]="ctxItem.hideOnIdle"
                     (change)="setHideOnIdle($any($event.target).checked)">
             </label>
@@ -342,13 +347,15 @@
                         <input type="checkbox" [checked]="ctxItem.titleBold"
                             (change)="setCtxItemTitleBold($any($event.target).checked)">
                     </label>
+                    <div class="ctx-sep"></div>
+                    <div class="ctx-head">Title visibility</div>
                     <label class="ctx-row">
-                        <span>Hide title while call playing</span>
+                        <span>Hide while call playing</span>
                         <input type="checkbox" [checked]="ctxItem.titleHideOnCall"
                             (change)="setTitleHideOnCall($any($event.target).checked)">
                     </label>
                     <label class="ctx-row">
-                        <span>Hide title while idle</span>
+                        <span>Hide while idle</span>
                         <input type="checkbox" [checked]="ctxItem.titleHideOnIdle"
                             (change)="setTitleHideOnIdle($any($event.target).checked)">
                     </label>

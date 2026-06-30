@@ -154,10 +154,9 @@
         }
 
         .transcript-label {
-            font-size: 12px;
-            font-weight: 700;
-            letter-spacing: 0.16em;
-            opacity: 0.7;
+            /* Color / size / font / weight come from the item's title settings
+               (set inline); keep only the layout here. */
+            letter-spacing: 0.04em;
             margin-bottom: 6px;
         }
 

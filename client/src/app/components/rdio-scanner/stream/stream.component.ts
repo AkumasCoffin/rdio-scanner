@@ -312,19 +312,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return parts.length ? parts.join(', ') : null;
     }
 
-    // True when nothing is playing and the queue is empty — the stream is idle
-    // and should show "Waiting for call" rather than holding the last call.
+    // True when nothing is playing and the queue is empty (idle). Drives the
+    // per-element "hide while idle" toggles.
     get waitingForCall(): boolean {
         return !this.call && this.callQueue === 0;
-    }
-
-    private static readonly CALL_FIELDS = new Set([
-        'system', 'tag', 'talkgroup', 'callDate', 'callProgress',
-        'talkgroupName', 'tgid', 'uid', 'avoid', 'patch', 'tempAvoid',
-    ]);
-
-    isCallField(type: string): boolean {
-        return RdioScannerStreamComponent.CALL_FIELDS.has(type);
     }
 
     // Whether the data value should be shown given the call/idle hide toggles.
@@ -352,9 +343,6 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // Whether a conditionally-empty element currently has a value to show — so
     // its title isn't shown standing alone when there's nothing after it.
     hasContent(item: StreamItem): boolean {
-        if (this.waitingForCall && this.isCallField(item.type)) {
-            return false;
-        }
         switch (item.type) {
             case 'uid':
                 return !!this.callUnit;
