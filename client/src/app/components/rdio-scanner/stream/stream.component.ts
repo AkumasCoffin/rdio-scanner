@@ -69,6 +69,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     @ViewChild('importFile') private importFile: ElementRef<HTMLInputElement> | undefined;
     @ViewChild('ctxMenu') private ctxMenuRef: ElementRef<HTMLElement> | undefined;
+    @ViewChild('streamRoot') private streamRootRef: ElementRef<HTMLElement> | undefined;
 
     private svc: RdioScannerService;
     private cdr: ChangeDetectorRef;
@@ -317,8 +318,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private openContext(event: MouseEvent, item: StreamItem | null): void {
         event.preventDefault();
         this.ctxItem = item;
-        this.addX = event.clientX;
-        this.addY = event.clientY;
+        // Where a new element will be dropped (canvas-local).
+        const p = this.localPoint(event.clientX, event.clientY);
+        this.addX = p.x;
+        this.addY = p.y;
+        // Where the menu itself appears (fixed-positioned → viewport coords).
         this.ctxX = event.clientX;
         this.ctxY = event.clientY;
         this.ctxOpen = true;
@@ -526,6 +530,15 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return this.selectedIds.has(id);
     }
 
+    // Convert a viewport (client) point to canvas-local coordinates — the same
+    // space items are positioned in. Items / the rubber-band are absolutely
+    // positioned within .stream-root, which is normally at (0,0) but this keeps
+    // selection + placement correct even if it ever isn't.
+    private localPoint(clientX: number, clientY: number): { x: number; y: number } {
+        const rect = this.streamRootRef?.nativeElement.getBoundingClientRect();
+        return { x: clientX - (rect?.left ?? 0), y: clientY - (rect?.top ?? 0) };
+    }
+
     onDragStart(item: StreamItem, event: PointerEvent): void {
         if (!this.layout.moveMode) {
             return;
@@ -641,11 +654,12 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         if (event.ctrlKey || event.metaKey) {
             // Start a rubber-band; existing selection is kept (additive).
             event.preventDefault();
+            const p = this.localPoint(event.clientX, event.clientY);
             this.selecting = true;
-            this.selStartX = event.clientX;
-            this.selStartY = event.clientY;
-            this.selX = event.clientX;
-            this.selY = event.clientY;
+            this.selStartX = p.x;
+            this.selStartY = p.y;
+            this.selX = p.x;
+            this.selY = p.y;
             this.selW = 0;
             this.selH = 0;
             window.addEventListener('pointermove', this.boundSelMove);
@@ -663,10 +677,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         if (!this.selecting) {
             return;
         }
-        this.selX = Math.min(this.selStartX, event.clientX);
-        this.selY = Math.min(this.selStartY, event.clientY);
-        this.selW = Math.abs(event.clientX - this.selStartX);
-        this.selH = Math.abs(event.clientY - this.selStartY);
+        const p = this.localPoint(event.clientX, event.clientY);
+        this.selX = Math.min(this.selStartX, p.x);
+        this.selY = Math.min(this.selStartY, p.y);
+        this.selW = Math.abs(p.x - this.selStartX);
+        this.selH = Math.abs(p.y - this.selStartY);
         this.cdr.detectChanges();
     }
 

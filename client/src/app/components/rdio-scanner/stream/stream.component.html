@@ -1,4 +1,4 @@
-<div class="stream-root" [class.move-mode]="layout.moveMode"
+<div #streamRoot class="stream-root" [class.move-mode]="layout.moveMode"
     [style.background]="layout.bgColor"
     [style.--stream-grid]="layout.gridSize + 'px'"
     (pointerdown)="onCanvasPointerDown($event)"
