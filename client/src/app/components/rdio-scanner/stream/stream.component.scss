@@ -17,12 +17,14 @@
     user-select: none;
     -webkit-user-select: none;
 
-    /* Faint snapping grid, only visible in edit mode. */
-    &.move-mode {
+    /* Faint snapping grid, only visible in edit mode when Show Grid is on. */
+    &.move-mode.show-grid {
         background-image:
             repeating-linear-gradient(0deg, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px)),
             repeating-linear-gradient(90deg, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px));
+    }
 
+    &.move-mode {
         /* Frames become interactive while editing so they can be dragged /
            resized / right-clicked in their empty areas; they stay BEHIND
            elements (lower z-index) so elements on top are always grabbable. */
@@ -202,6 +204,26 @@
     border: 1px solid #38bdf8;
     background: rgba(56, 189, 248, 0.15);
     pointer-events: none;
+}
+
+/* Alignment guides shown while dragging an element near another's edge. */
+.guide {
+    position: absolute;
+    z-index: 45;
+    pointer-events: none;
+    background: #f472b6;
+
+    &.guide-v {
+        top: 0;
+        bottom: 0;
+        width: 1px;
+    }
+
+    &.guide-h {
+        left: 0;
+        right: 0;
+        height: 1px;
+    }
 }
 
 .move-badge {

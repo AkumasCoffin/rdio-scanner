@@ -1,4 +1,5 @@
 <div #streamRoot class="stream-root" [class.move-mode]="layout.moveMode"
+    [class.show-grid]="layout.showGrid"
     [style.background]="layout.bgColor"
     [style.--stream-grid]="layout.gridSize + 'px'"
     (pointerdown)="onCanvasPointerDown($event)"
@@ -91,6 +92,10 @@
     <!-- Rubber-band selection rectangle (Ctrl+drag) -->
     <div class="sel-rect" *ngIf="selecting"
         [style.left.px]="selX" [style.top.px]="selY" [style.width.px]="selW" [style.height.px]="selH"></div>
+
+    <!-- Alignment guides while dragging -->
+    <div class="guide guide-v" *ngIf="guideX !== null" [style.left.px]="guideX"></div>
+    <div class="guide guide-h" *ngIf="guideY !== null" [style.top.px]="guideY"></div>
 
     <!-- Edit-mode hint -->
     <div class="move-badge" *ngIf="layout.moveMode">
@@ -217,6 +222,11 @@
             <span>Grid snap (px)</span>
             <input type="number" min="2" max="200" [value]="layout.gridSize"
                 (change)="setGridSize($any($event.target).valueAsNumber)">
+        </label>
+        <label class="ctx-row">
+            <span>Show grid</span>
+            <input type="checkbox" [checked]="layout.showGrid"
+                (change)="setShowGrid($any($event.target).checked)">
         </label>
         <div class="ctx-sep"></div>
 

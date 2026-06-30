@@ -103,6 +103,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private gestureOrigH = 0;
     // Original positions of every item being moved (one, or all selected).
     private moveTargets: { id: string; x: number; y: number }[] = [];
+
+    // Active alignment guides while dragging (canvas-local), or null.
+    guideX: number | null = null;
+    guideY: number | null = null;
     private boundMove = (e: PointerEvent) => this.onGestureMove(e);
     private boundUp = () => this.onGestureEnd();
     private boundDocClick = () => this.closeContext();
@@ -687,11 +691,28 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         };
 
         if (this.gestureMode === 'move') {
+            // Single-item drags snap to other elements' edges (alignment guides)
+            // unless Shift is held (which forces grid snap instead).
+            const elementSnap = this.moveTargets.length === 1 && !event.shiftKey;
+            this.guideX = null;
+            this.guideY = null;
+
             for (const t of this.moveTargets) {
-                this.streamLayoutService.updateItem(t.id, {
-                    x: Math.max(0, snap(t.x + dx)),
-                    y: Math.max(0, snap(t.y + dy)),
-                });
+                let x = Math.max(0, snap(t.x + dx));
+                let y = Math.max(0, snap(t.y + dy));
+
+                if (elementSnap) {
+                    const item = this.layout.items.find((i) => i.id === t.id);
+                    if (item) {
+                        const s = this.snapToElements(x, y, item.w, item.h, t.id);
+                        x = s.x;
+                        y = s.y;
+                        this.guideX = s.guideX;
+                        this.guideY = s.guideY;
+                    }
+                }
+
+                this.streamLayoutService.updateItem(t.id, { x, y });
             }
         } else {
             const item = this.layout.items.find((i) => i.id === this.gestureId);
@@ -707,7 +728,64 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.gestureId = null;
         this.gestureMode = null;
         this.moveTargets = [];
+        this.guideX = null;
+        this.guideY = null;
         this.detachGestureListeners();
+    }
+
+    // Snap a dragged box's edges/center to nearby other elements' edges/center
+    // so it lines up with borders / other readouts. Returns the adjusted
+    // position and the guide lines (canvas-local) that were snapped to.
+    private snapToElements(
+        x: number, y: number, w: number, h: number, id: string,
+    ): { x: number; y: number; guideX: number | null; guideY: number | null } {
+        const threshold = 7;
+        const movingIds = new Set(this.moveTargets.map((t) => t.id));
+
+        let bestDX = threshold + 1;
+        let bestDY = threshold + 1;
+        let snapX = x;
+        let snapY = y;
+        let guideX: number | null = null;
+        let guideY: number | null = null;
+
+        const myV = [x, x + w / 2, x + w];
+        const myH = [y, y + h / 2, y + h];
+
+        for (const o of this.layout.items) {
+            if (o.id === id || movingIds.has(o.id)) {
+                continue;
+            }
+            const oV = [o.x, o.x + o.w / 2, o.x + o.w];
+            const oH = [o.y, o.y + o.h / 2, o.y + o.h];
+
+            for (const m of myV) {
+                for (const v of oV) {
+                    const d = Math.abs(m - v);
+                    if (d < bestDX) {
+                        bestDX = d;
+                        snapX = x + (v - m);
+                        guideX = v;
+                    }
+                }
+            }
+            for (const m of myH) {
+                for (const v of oH) {
+                    const d = Math.abs(m - v);
+                    if (d < bestDY) {
+                        bestDY = d;
+                        snapY = y + (v - m);
+                        guideY = v;
+                    }
+                }
+            }
+        }
+
+        return { x: Math.max(0, snapX), y: Math.max(0, snapY), guideX, guideY };
+    }
+
+    setShowGrid(showGrid: boolean): void {
+        this.streamLayoutService.update({ showGrid });
     }
 
     private detachGestureListeners(): void {

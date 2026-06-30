@@ -94,6 +94,8 @@ export interface StreamLayout {
     moveMode: boolean;
     // Grid size (px) used for Shift-drag snapping.
     gridSize: number;
+    // Show the snap grid overlay while editing.
+    showGrid: boolean;
     items: StreamItem[];
 }
 
@@ -232,6 +234,7 @@ export function defaultStreamLayout(): StreamLayout {
         bgColor: '#000000',
         moveMode: false,
         gridSize: 20,
+        showGrid: true,
         items: [
             // Frames first so they render behind the readouts.
             frame('default-lcd-frame', 12, 12, 628, 292),

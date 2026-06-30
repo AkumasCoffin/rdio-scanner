@@ -227,6 +227,7 @@ export class StreamLayoutService implements OnDestroy {
             // but we honour whatever was stored so a live toggle survives sync.
             moveMode: typeof input.moveMode === 'boolean' ? input.moveMode : base.moveMode,
             gridSize: typeof input.gridSize === 'number' ? input.gridSize : base.gridSize,
+            showGrid: typeof input.showGrid === 'boolean' ? input.showGrid : base.showGrid,
             items,
         };
     }
