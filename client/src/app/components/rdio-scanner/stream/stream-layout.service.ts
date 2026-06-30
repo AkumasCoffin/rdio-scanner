@@ -104,6 +104,7 @@ export class StreamLayoutService implements OnDestroy {
             titleColor: STREAM_DEFAULT_TITLE_COLOR,
             titleBold: true,
             useLedColor: false,
+            autoScroll: true,
             historyCols: type === 'history' ? defaultHistoryCols() : [],
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
@@ -258,6 +259,7 @@ export class StreamLayoutService implements OnDestroy {
             titleColor: typeof r.titleColor === 'string' ? r.titleColor : STREAM_DEFAULT_TITLE_COLOR,
             titleBold: typeof r.titleBold === 'boolean' ? r.titleBold : true,
             useLedColor: typeof r.useLedColor === 'boolean' ? r.useLedColor : false,
+            autoScroll: typeof r.autoScroll === 'boolean' ? r.autoScroll : true,
             historyCols: def.type === 'history' ? this.normalizeHistoryCols(r.historyCols) : [],
         };
     }

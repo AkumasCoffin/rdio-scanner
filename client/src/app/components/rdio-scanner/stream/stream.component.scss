@@ -53,7 +53,11 @@
     .item-content {
         width: 100%;
         white-space: nowrap;
-        overflow: visible;
+        /* Clip overflowing text to the box (no overlapping neighbours). When
+           it doesn't fit and auto-scroll is on, the rAF loop marquees it by
+           setting scrollLeft. The item itself stays overflow:visible so the
+           resize handle outside the box is still shown. */
+        overflow: hidden;
         /* Font size / family / weight come from the item's inline style (set
            per item in the context menu) and are inherited here. */
         font-size: inherit;

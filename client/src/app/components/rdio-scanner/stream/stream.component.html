@@ -14,6 +14,7 @@
         [class.textbox]="item.type === 'text'"
         [class.movable]="layout.moveMode"
         [class.selected]="layout.moveMode && isSelected(item.id)"
+        [attr.data-type]="item.type" [attr.data-autoscroll]="item.autoScroll ? '1' : '0'"
         [style.left.px]="item.x" [style.top.px]="item.y"
         [style.width.px]="item.w" [style.height.px]="item.h"
         [style.color]="itemColor(item)" [style.borderColor]="itemColor(item)"
@@ -98,7 +99,8 @@
 
     <!-- Right-click context menu -->
     <div #ctxMenu class="ctx-menu" *ngIf="ctxOpen" [style.left.px]="ctxX" [style.top.px]="ctxY"
-        (click)="onMenuClick($event)" (contextmenu)="$event.preventDefault()">
+        (pointerdown)="$event.stopPropagation()" (click)="onMenuClick($event)"
+        (contextmenu)="$event.preventDefault()">
 
         <ng-container *ngIf="ctxItem">
             <div class="ctx-head">{{ selectedCount > 1 ? (selectedCount + ' elements selected') : itemLabel(ctxItem.type) }}</div>
@@ -168,6 +170,11 @@
                         (change)="setCtxItemBold($any($event.target).checked)">
                 </label>
             </ng-container>
+            <label class="ctx-row" *ngIf="ctxItem.type !== 'frame' && ctxItem.type !== 'history' && ctxItem.type !== 'text'">
+                <span>Auto-scroll if too big</span>
+                <input type="checkbox" [checked]="ctxItem.autoScroll"
+                    (change)="setCtxItemAutoScroll($any($event.target).checked)">
+            </label>
             <ng-container *ngIf="titleOf(ctxItem.type)">
                 <div class="ctx-sep"></div>
                 <label class="ctx-row">

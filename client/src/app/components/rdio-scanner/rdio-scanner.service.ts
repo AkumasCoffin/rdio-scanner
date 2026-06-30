@@ -1102,6 +1102,12 @@ export class RdioScannerService implements OnDestroy {
         return this.autoJumpAhead;
     }
 
+    // Decoded duration (seconds) of a call, if known — used by /stream to pace
+    // the transcript auto-scroll so it reaches the bottom as the call ends.
+    getCallDuration(id: number | undefined): number | undefined {
+        return id ? this.callDurations.get(id) : undefined;
+    }
+
     setAutoJumpThresholdMinutes(minutes: number): void {
         const clamped = Math.max(
             RdioScannerService.QUEUE_AUTO_JUMP_MIN_MIN,

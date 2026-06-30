@@ -107,6 +107,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private boundUp = () => this.onGestureEnd();
     private boundDocClick = () => this.closeContext();
 
+    // Animation loop state for transcript auto-scroll + value marquee.
+    private animRaf: number | undefined;
+    private lastTime = 0;
+    private lastTimeAt = 0;
+
     // Manifest swap so installing /stream as a PWA opens /stream, not the
     // main page.
     private manifestLink: HTMLLinkElement | null = null;
@@ -147,6 +152,8 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
         document.addEventListener('click', this.boundDocClick);
 
+        this.startAnim();
+
         // Point the PWA manifest at the stream-specific one so "Install app"
         // from this page yields an app that launches /stream.
         this.useStreamManifest();
@@ -174,6 +181,9 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         window.removeEventListener('pointermove', this.boundSelMove);
         window.removeEventListener('pointerup', this.boundSelUp);
         document.removeEventListener('click', this.boundDocClick);
+        if (this.animRaf !== undefined) {
+            cancelAnimationFrame(this.animRaf);
+        }
         this.restoreManifest();
         this.svc.disableFollowerMode();
         super.ngOnDestroy();
@@ -280,6 +290,13 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private streamEventHandler(event: RdioScannerEvent): void {
         if ('config' in event) {
             this.cdr.detectChanges();
+        }
+
+        // Track call progress (with a wall-clock stamp) so the transcript can
+        // be scrolled smoothly between the once-a-second time events.
+        if (typeof event.time === 'number') {
+            this.lastTime = event.time;
+            this.lastTimeAt = performance.now();
         }
 
         // Mirror our current call / progress to the main page so its LCD shows
@@ -458,6 +475,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setCtxItemBold(bold: boolean): void {
         this.applyToTargets({ bold });
+    }
+
+    setCtxItemAutoScroll(autoScroll: boolean): void {
+        this.applyToTargets({ autoScroll });
     }
 
     setCtxItemLed(useLedColor: boolean): void {
@@ -692,6 +713,89 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private detachGestureListeners(): void {
         window.removeEventListener('pointermove', this.boundMove);
         window.removeEventListener('pointerup', this.boundUp);
+    }
+
+    // ---------------------------------------------------------------------
+    // Auto-scroll: transcript vertical (in time with the call) + value marquee
+    // ---------------------------------------------------------------------
+
+    private startAnim(): void {
+        const tick = (): void => {
+            this.animFrame();
+            this.animRaf = requestAnimationFrame(tick);
+        };
+        this.animRaf = requestAnimationFrame(tick);
+    }
+
+    private animFrame(): void {
+        const root = this.streamRootRef?.nativeElement;
+        if (!root) {
+            return;
+        }
+        const now = performance.now();
+        const writes: Array<() => void> = [];
+
+        root.querySelectorAll('.stream-item').forEach((node) => {
+            const el = node as HTMLElement;
+            const type = el.dataset['type'] || '';
+            const auto = el.dataset['autoscroll'] === '1';
+            const content = el.querySelector('.item-content') as HTMLElement | null;
+            if (!content) {
+                return;
+            }
+
+            if (type === 'transcript') {
+                if (!auto) {
+                    return;
+                }
+                const maxV = content.scrollHeight - content.clientHeight;
+                const call = this.call;
+                if (maxV <= 0 || !call || !this.displayCall?.transcript) {
+                    return;
+                }
+                const dur = this.svc.getCallDuration(call.id) ?? 0;
+                if (dur <= 0) {
+                    return;
+                }
+                const est = this.lastTime + (now - this.lastTimeAt) / 1000;
+                const top = Math.max(0, Math.min(1, est / dur)) * maxV;
+                writes.push(() => { content.scrollTop = top; });
+
+            } else if (type !== 'history' && type !== 'frame' && type !== 'text') {
+                // Single-line value: marquee horizontally when it overflows.
+                const maxH = content.scrollWidth - content.clientWidth;
+                if (!auto || maxH <= 1) {
+                    if (content.scrollLeft !== 0) {
+                        writes.push(() => { content.scrollLeft = 0; });
+                    }
+                    return;
+                }
+                const left = this.marqueePos(now, maxH);
+                writes.push(() => { content.scrollLeft = left; });
+            }
+        });
+
+        for (const w of writes) {
+            w();
+        }
+    }
+
+    // Ping-pong marquee position with a pause at each end.
+    private marqueePos(now: number, max: number): number {
+        const pxPerSec = 45;
+        const pauseMs = 1500;
+        const travelMs = (max / pxPerSec) * 1000;
+        const t = now % ((travelMs + pauseMs) * 2);
+        if (t < pauseMs) {
+            return 0;
+        }
+        if (t < pauseMs + travelMs) {
+            return ((t - pauseMs) / travelMs) * max;
+        }
+        if (t < pauseMs * 2 + travelMs) {
+            return max;
+        }
+        return max - ((t - (pauseMs * 2 + travelMs)) / travelMs) * max;
     }
 
     // ---------------------------------------------------------------------

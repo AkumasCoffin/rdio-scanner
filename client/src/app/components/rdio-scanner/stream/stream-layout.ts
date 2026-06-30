@@ -47,6 +47,10 @@ export interface StreamItem {
     // When true the element's color follows the playing talkgroup's LCD (LED)
     // color instead of `color`.
     useLedColor: boolean;
+    // When true, content that doesn't fit the box scrolls into view (single-line
+    // values marquee horizontally; the transcript scrolls down in time with the
+    // call) instead of being clipped.
+    autoScroll: boolean;
     // Column config for the 'history' (playing history table) type; [] otherwise.
     historyCols: StreamHistoryCol[];
 }
@@ -128,7 +132,7 @@ export const STREAM_ITEM_TYPES: ReadonlyArray<StreamItemType> = [
     { type: 'callDate', label: 'Call Date', w: 110, h: 30, minW: 80, minH: 24, fontSize: 18, title: 'Date', titleOn: false },
     { type: 'talkgroupName', label: 'Talkgroup Name', w: 600, h: 44, minW: 200, minH: 30, fontSize: 26, title: 'Name', titleOn: false },
     { type: 'tgid', label: 'TGID', w: 180, h: 30, minW: 110, minH: 24, fontSize: 18, title: 'TGID', titleOn: true },
-    { type: 'uid', label: 'UID', w: 240, h: 30, minW: 120, minH: 24, fontSize: 18, title: 'UID', titleOn: true },
+    { type: 'uid', label: 'UID', w: 320, h: 30, minW: 140, minH: 24, fontSize: 18, title: 'UID', titleOn: true },
     { type: 'tempAvoid', label: 'Avoid Timer', w: 110, h: 26, minW: 70, minH: 20, fontSize: 14, title: 'Avoid', titleOn: false },
     { type: 'avoid', label: 'Avoid Flag', w: 90, h: 26, minW: 60, minH: 20, fontSize: 14, title: '', titleOn: false },
     { type: 'patch', label: 'Patch Flag', w: 90, h: 26, minW: 60, minH: 20, fontSize: 14, title: '', titleOn: false },
@@ -205,7 +209,7 @@ export function defaultStreamLayout(): StreamLayout {
             id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR,
             fontSize: 18, fontFamily: '', bold: true, text: '',
             titleEnabled: false, titleColor: STREAM_DEFAULT_TITLE_COLOR, titleBold: true,
-            useLedColor: false, historyCols: [],
+            useLedColor: false, autoScroll: true, historyCols: [],
         });
 
     const el = (type: string, x: number, y: number, w: number, h: number): StreamItem =>
@@ -220,6 +224,7 @@ export function defaultStreamLayout(): StreamLayout {
             titleColor: STREAM_DEFAULT_TITLE_COLOR,
             titleBold: true,
             useLedColor: false,
+            autoScroll: true,
             historyCols: [],
         });
 
@@ -243,7 +248,7 @@ export function defaultStreamLayout(): StreamLayout {
             el('callDate', 330, 132, 110, 30),
             el('talkgroupName', 24, 170, 600, 44),
             el('tgid', 24, 226, 180, 30),
-            el('uid', 330, 226, 240, 30),
+            el('uid', 300, 226, 320, 30),
             el('tempAvoid', 24, 266, 110, 26),
             el('avoid', 150, 266, 90, 26),
             el('patch', 250, 266, 90, 26),
