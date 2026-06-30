@@ -64,7 +64,7 @@
                     [style.color]="titleColorOf(item)"
                     [style.font-size.px]="item.titleFontSize"
                     [style.font-family]="item.titleFontFamily || null"
-                    [style.font-weight]="item.titleBold ? 700 : 400">{{ titleOf(item.type) }}</div>
+                    [style.font-weight]="item.titleBold ? 700 : 400">{{ titleTextOf(item) }}</div>
                 <div class="transcript-text" *ngIf="displayCall?.transcript">{{ displayCall?.transcript }}</div>
                 <div class="transcript-text placeholder" *ngIf="!displayCall?.transcript">—</div>
             </ng-container>
@@ -76,7 +76,7 @@
                     [style.color]="titleColorOf(item)"
                     [style.font-size.px]="item.titleFontSize"
                     [style.font-family]="item.titleFontFamily || null"
-                    [style.font-weight]="item.titleBold ? 700 : 400">{{ titleOf(item.type) }}: </span>
+                    [style.font-weight]="item.titleBold ? 700 : 400">{{ titleTextOf(item) }}: </span>
                 <span class="item-value" *ngIf="dataVisible(item)" [ngSwitch]="item.type">
                     <span *ngSwitchCase="'text'">{{ item.text }}</span>
                     <span *ngSwitchCase="'clock'">{{ clock | date:timeFormat }}</span>
@@ -321,6 +321,12 @@
                         (change)="setCtxItemTitleEnabled($any($event.target).checked)">
                 </label>
                 <ng-container *ngIf="ctxItem.titleEnabled">
+                    <label class="ctx-row">
+                        <span>Title text</span>
+                        <input type="text" [value]="ctxItem.titleText"
+                            [placeholder]="titleOf(ctxItem.type)"
+                            (input)="setCtxItemTitleText($any($event.target).value)">
+                    </label>
                     <label class="ctx-row">
                         <span>Match LCD color</span>
                         <input type="checkbox" [checked]="ctxItem.titleUseLed"

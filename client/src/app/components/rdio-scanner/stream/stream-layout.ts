@@ -54,6 +54,8 @@ export interface StreamItem {
     titleUseLed: boolean;
     titleFontSize: number;
     titleFontFamily: string;
+    // Custom title text; empty = the type's default label.
+    titleText: string;
     // When true the element's color follows the playing talkgroup's LCD (LED)
     // color instead of `color`.
     useLedColor: boolean;
@@ -244,7 +246,7 @@ export function defaultStreamLayout(): StreamLayout {
             fontSize: 18, fontFamily: '', bold: true, text: '',
             hideOnCall: false, hideOnIdle: false, titleHideOnCall: false, titleHideOnIdle: false,
             titleEnabled: false, titleColor: STREAM_DEFAULT_TITLE_COLOR, titleBold: true,
-            titleUseLed: false, titleFontSize: 18, titleFontFamily: '',
+            titleUseLed: false, titleFontSize: 18, titleFontFamily: '', titleText: '',
             useLedColor: false, align: 'left', autoScroll: true, historyCols: [],
             histRowLines: true, histColLines: false, histLineWidth: 1, histLineColor: '#888888',
             borderWidth: 2, innerWidth: 2, cornerRadius: 6, centerFill: false, centerColor: '#000000', centerUseLed: false,
@@ -269,6 +271,7 @@ export function defaultStreamLayout(): StreamLayout {
             titleUseLed: false,
             titleFontSize: streamItemTypeDef(type)?.fontSize ?? 18,
             titleFontFamily: '',
+            titleText: '',
             useLedColor: false,
             align: 'left',
             autoScroll: true,

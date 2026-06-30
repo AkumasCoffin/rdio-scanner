@@ -227,6 +227,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return streamItemTitle(type);
     }
 
+    // The displayed title text — the item's custom override or the type default.
+    titleTextOf(item: StreamItem): string {
+        return item.titleText || streamItemTitle(item.type);
+    }
+
     // How many of this item type are currently placed on the canvas. Used by
     // the Add menu to show counts and flag types that aren't on screen.
     countOf(type: string): number {
@@ -664,6 +669,13 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     setCtxItemTitleEnabled(titleEnabled: boolean): void {
         this.applyToTargets({ titleEnabled });
         this.refreshCtxItem();
+    }
+
+    setCtxItemTitleText(titleText: string): void {
+        // Per-item text — only the right-clicked item.
+        if (this.ctxItem) {
+            this.streamLayoutService.updateItem(this.ctxItem.id, { titleText });
+        }
     }
 
     setCtxItemTitleColor(titleColor: string): void {
