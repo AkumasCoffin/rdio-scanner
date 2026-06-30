@@ -137,6 +137,11 @@
                 <span>{{ ctxItem.type === 'frame' ? 'Outline color' : 'Text color' }}</span>
                 <input type="color" [value]="ctxItem.color" (input)="setCtxItemColor($any($event.target).value)">
             </label>
+            <label class="ctx-row" *ngIf="ctxItem.type !== 'history'">
+                <span>{{ ctxItem.type === 'frame' ? 'Outline: match LCD color' : 'Match LCD color' }}</span>
+                <input type="checkbox" [checked]="ctxItem.useLedColor"
+                    (change)="setCtxItemLed($any($event.target).checked)">
+            </label>
             <ng-container *ngIf="ctxItem.type === 'frame'">
                 <label class="ctx-row">
                     <span>Outline thickness</span>
@@ -197,11 +202,6 @@
                     </label>
                 </ng-container>
             </ng-container>
-            <label class="ctx-row" *ngIf="ctxItem.type !== 'history'">
-                <span>{{ ctxItem.type === 'frame' ? 'Outline: match LCD color' : 'Match LCD color' }}</span>
-                <input type="checkbox" [checked]="ctxItem.useLedColor"
-                    (change)="setCtxItemLed($any($event.target).checked)">
-            </label>
 
             <!-- History table: per-column toggle / title / text settings -->
             <ng-container *ngIf="ctxItem.type === 'history'">
