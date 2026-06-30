@@ -513,7 +513,14 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         window.addEventListener('pointerup', this.boundUp);
     }
 
-    // Grab an edge: insert a new corner at its midpoint and drag it out.
+    // Round a value to the layout grid (the spacing used by Show Grid).
+    private snapToGrid(n: number): number {
+        const g = this.layout.gridSize;
+        return g > 0 ? Math.round(n / g) * g : Math.round(n);
+    }
+
+    // Grab an edge: insert a new corner at its midpoint and drag it out. The new
+    // corner lands on the grid so it starts aligned like the others.
     onEdgeAdd(item: StreamItem, edgeIndex: number, event: PointerEvent): void {
         if (!this.layout.moveMode || event.button !== 0) {
             return;
@@ -522,7 +529,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         event.stopPropagation();
         const abs = this.absShapePoints(item);
         const a = abs[edgeIndex], b = abs[(edgeIndex + 1) % abs.length];
-        abs.splice(edgeIndex + 1, 0, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+        abs.splice(edgeIndex + 1, 0, {
+            x: Math.max(0, this.snapToGrid((a.x + b.x) / 2)),
+            y: Math.max(0, this.snapToGrid((a.y + b.y) / 2)),
+        });
         this.commitShapePoints(item.id, abs);
         const updated = this.layout.items.find((i) => i.id === item.id);
         this.gestureId = item.id;
@@ -870,7 +880,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     addItem(type: string): void {
-        this.streamLayoutService.addItem(type, this.addX, this.addY);
+        // A new shapable border starts grid-aligned so its corners sit on the grid.
+        const x = type === 'shape' ? this.snapToGrid(this.addX) : this.addX;
+        const y = type === 'shape' ? this.snapToGrid(this.addY) : this.addY;
+        this.streamLayoutService.addItem(type, x, y);
         this.closeContext();
     }
 
@@ -1267,12 +1280,14 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             }
         } else if (this.gestureMode === 'vertex') {
             // Drag a single shapable-border corner; re-anchor the box to wrap it.
+            // Corners snap to the grid by default (hold Shift for free placement).
+            const vsnap = (n: number): number => (event.shiftKey ? Math.round(n) : this.snapToGrid(n));
             const abs = this.gestureVertexAbs.map((p) => ({ ...p }));
             const start = this.gestureVertexAbs[this.gestureVertexIndex];
             if (start) {
                 abs[this.gestureVertexIndex] = {
-                    x: Math.max(0, snap(start.x + dx)),
-                    y: Math.max(0, snap(start.y + dy)),
+                    x: Math.max(0, vsnap(start.x + dx)),
+                    y: Math.max(0, vsnap(start.y + dy)),
                 };
                 this.commitShapePoints(this.gestureId, abs);
             }

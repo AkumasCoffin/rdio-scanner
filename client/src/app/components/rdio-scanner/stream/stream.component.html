@@ -119,7 +119,8 @@
             <div class="vertex-handle" *ngFor="let p of shapePoints(item); let i = index"
                 [style.left.px]="item.x + p.x" [style.top.px]="item.y + p.y"
                 (pointerdown)="onVertexStart(item, i, $event)"
-                (dblclick)="onVertexDelete(item, i, $event)" title="Drag to move • double-click to delete"></div>
+                (dblclick)="onVertexDelete(item, i, $event)"
+                title="Drag to move (snaps to grid, hold Shift for free) • double-click to delete"></div>
         </ng-container>
     </ng-container>
 
