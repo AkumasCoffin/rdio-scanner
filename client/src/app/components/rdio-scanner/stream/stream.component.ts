@@ -566,18 +566,13 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         });
     }
 
-    // SVG path for a rectilinear loop with rounded corners. Convex corners round
-    // inward (cut the corner); concave/reflex corners round outward (the bulge
-    // at an inner L corner). Radius is clamped to half the shorter adjacent edge.
+    // SVG path for a closed polygon with rounded corners. The arc at each corner
+    // simply follows the direction the path turns there, so it works for any
+    // shape regardless of how the points were wound. Radius is clamped to half
+    // the shorter adjacent edge.
     private roundedPath(poly: { x: number; y: number }[], radius: number): string {
         const n = poly.length;
         if (n < 3) { return ''; }
-        let area2 = 0;
-        for (let i = 0; i < n; i++) {
-            const a = poly[i], b = poly[(i + 1) % n];
-            area2 += a.x * b.y - b.x * a.y;
-        }
-        const orient = area2 >= 0 ? 1 : -1;
         const pin: { x: number; y: number }[] = [];
         const pout: { x: number; y: number }[] = [];
         const sweep: number[] = [];
@@ -596,7 +591,8 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             rad.push(r);
             pin.push({ x: v.x - uinX * r, y: v.y - uinY * r });
             pout.push({ x: v.x + uoutX * r, y: v.y + uoutY * r });
-            sweep.push(Math.sign(turn) === orient ? 1 : 0);
+            // Arc curves the way the path turns here (CW turn -> SVG sweep 1).
+            sweep.push(turn > 0 ? 1 : 0);
         }
         const f = (p: { x: number; y: number }) => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
         let d = `M ${f(pout[0])}`;
