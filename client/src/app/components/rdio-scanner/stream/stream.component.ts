@@ -567,6 +567,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.applyToTargets({ autoScroll });
     }
 
+    setAlign(align: 'left' | 'center' | 'right'): void {
+        this.applyToTargets({ align });
+    }
+
     setCtxItemLed(useLedColor: boolean): void {
         this.applyToTargets({ useLedColor });
     }

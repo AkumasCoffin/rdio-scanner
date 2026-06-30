@@ -47,6 +47,8 @@ export interface StreamItem {
     // When true the element's color follows the playing talkgroup's LCD (LED)
     // color instead of `color`.
     useLedColor: boolean;
+    // Horizontal text alignment within the box.
+    align: 'left' | 'center' | 'right';
     // When true, content that doesn't fit the box scrolls into view (single-line
     // values marquee horizontally; the transcript scrolls down in time with the
     // call) instead of being clipped.
@@ -223,7 +225,7 @@ export function defaultStreamLayout(): StreamLayout {
             id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR,
             fontSize: 18, fontFamily: '', bold: true, text: '',
             titleEnabled: false, titleColor: STREAM_DEFAULT_TITLE_COLOR, titleBold: true,
-            useLedColor: false, autoScroll: true, historyCols: [],
+            useLedColor: false, align: 'left', autoScroll: true, historyCols: [],
             histRowLines: true, histColLines: false, histLineWidth: 1, histLineColor: '#888888',
             borderWidth: 2, centerFill: false, centerColor: '#000000', centerUseLed: false,
         });
@@ -240,6 +242,7 @@ export function defaultStreamLayout(): StreamLayout {
             titleColor: STREAM_DEFAULT_TITLE_COLOR,
             titleBold: true,
             useLedColor: false,
+            align: 'left',
             autoScroll: true,
             historyCols: [],
             histRowLines: true,

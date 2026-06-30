@@ -26,7 +26,7 @@
         (pointerdown)="onDragStart(item, $event)"
         (contextmenu)="onItemContext(item, $event)">
 
-        <div class="item-content">
+        <div class="item-content" [style.text-align]="item.align">
             <ng-container *ngIf="item.type === 'history'; else notHistory">
                 <table class="hist-table"
                     [class.row-lines]="item.histRowLines" [class.col-lines]="item.histColLines"
@@ -228,6 +228,17 @@
                     <input type="checkbox" [checked]="ctxItem.bold"
                         (change)="setCtxItemBold($any($event.target).checked)">
                 </label>
+                <div class="ctx-row">
+                    <span>Align</span>
+                    <div class="align-btns">
+                        <button type="button" [class.active]="ctxItem.align === 'left'"
+                            (click)="setAlign('left')" title="Align left"><mat-icon>format_align_left</mat-icon></button>
+                        <button type="button" [class.active]="ctxItem.align === 'center'"
+                            (click)="setAlign('center')" title="Align center"><mat-icon>format_align_center</mat-icon></button>
+                        <button type="button" [class.active]="ctxItem.align === 'right'"
+                            (click)="setAlign('right')" title="Align right"><mat-icon>format_align_right</mat-icon></button>
+                    </div>
+                </div>
             </ng-container>
             <label class="ctx-row" *ngIf="ctxItem.type !== 'frame' && ctxItem.type !== 'history' && ctxItem.type !== 'text'">
                 <span>Auto-scroll if too big</span>
@@ -255,9 +266,10 @@
             <button class="ctx-btn danger" (click)="removeCtxItem()">
                 <mat-icon>delete</mat-icon> Remove
             </button>
-            <div class="ctx-sep"></div>
         </ng-container>
 
+        <!-- General / canvas settings: only on the empty-space menu. -->
+        <ng-container *ngIf="!ctxItem">
         <div class="ctx-head">Add element <span class="ctx-hint">(highlighted = not on screen)</span></div>
         <div class="ctx-add">
             <button *ngFor="let t of itemTypes" (click)="addItem(t.type)"
@@ -287,6 +299,7 @@
         <button class="ctx-btn" (click)="exportConfig()"><mat-icon>download</mat-icon> Export config</button>
         <button class="ctx-btn" (click)="triggerImport()"><mat-icon>upload</mat-icon> Import config</button>
         <button class="ctx-btn" (click)="resetLayout()"><mat-icon>restart_alt</mat-icon> Reset layout</button>
+        </ng-container>
     </div>
 
     <input #importFile type="file" accept="application/json,.json" hidden (change)="onImportFile($event)">
