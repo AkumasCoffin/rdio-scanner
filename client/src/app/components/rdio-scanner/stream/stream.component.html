@@ -9,6 +9,7 @@
         [class.small]="item.type === 'delay' || item.type === 'tempAvoid' || item.type === 'avoid' || item.type === 'patch'"
         [class.flag]="item.type === 'avoid' || item.type === 'patch'"
         [class.transcript]="item.type === 'transcript'"
+        [class.textbox]="item.type === 'text'"
         [class.movable]="layout.moveMode"
         [style.left.px]="item.x" [style.top.px]="item.y"
         [style.width.px]="item.w" [style.height.px]="item.h"
@@ -69,8 +70,9 @@
             <div class="ctx-head">{{ itemLabel(ctxItem.type) }}</div>
             <label class="ctx-row ctx-text" *ngIf="ctxItem.type === 'text'">
                 <span>Text</span>
-                <input type="text" [value]="ctxItem.text"
-                    (input)="setCtxItemText($any($event.target).value)" placeholder="Custom text">
+                <textarea rows="2" [value]="ctxItem.text"
+                    (input)="setCtxItemText($any($event.target).value)"
+                    placeholder="Custom text (Enter for new line)"></textarea>
             </label>
             <label class="ctx-row">
                 <span>{{ ctxItem.type === 'frame' ? 'Border color' : 'Text color' }}</span>
@@ -118,9 +120,12 @@
             <div class="ctx-sep"></div>
         </ng-container>
 
-        <div class="ctx-head">Add element</div>
+        <div class="ctx-head">Add element <span class="ctx-hint">(highlighted = not on screen)</span></div>
         <div class="ctx-add">
-            <button *ngFor="let t of itemTypes" (click)="addItem(t.type)">{{ t.label }}</button>
+            <button *ngFor="let t of itemTypes" (click)="addItem(t.type)"
+                [class.missing]="!countOf(t.type)" [title]="countOf(t.type) ? (countOf(t.type) + ' on screen') : 'Not on screen'">
+                {{ t.label }}<span class="count" *ngIf="countOf(t.type)">{{ countOf(t.type) }}</span>
+            </button>
         </div>
         <div class="ctx-sep"></div>
 

@@ -182,6 +182,12 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return streamItemTitle(type);
     }
 
+    // How many of this item type are currently placed on the canvas. Used by
+    // the Add menu to show counts and flag types that aren't on screen.
+    countOf(type: string): number {
+        return this.layout.items.reduce((n, i) => (i.type === type ? n + 1 : n), 0);
+    }
+
     // Whether a conditionally-empty element currently has a value to show — so
     // its title isn't shown standing alone when there's nothing after it.
     hasContent(item: StreamItem): boolean {
@@ -263,7 +269,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     removeCtxItem(): void {
-        if (this.ctxItem) {
+        if (this.ctxItem && window.confirm(`Remove this ${this.itemLabel(this.ctxItem.type)}?`)) {
             this.streamLayoutService.removeItem(this.ctxItem.id);
         }
         this.closeContext();
@@ -328,7 +334,9 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     resetLayout(): void {
-        this.streamLayoutService.reset();
+        if (window.confirm('Reset the entire layout to defaults? This removes all your changes.')) {
+            this.streamLayoutService.reset();
+        }
         this.closeContext();
     }
 
