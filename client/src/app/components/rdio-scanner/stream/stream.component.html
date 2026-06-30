@@ -5,11 +5,19 @@
     (pointerdown)="onCanvasPointerDown($event)"
     (contextmenu)="onCanvasContext($event)">
 
-    <!-- Merged outline for touching link-mode frames (drawn behind the items). -->
+    <!-- Merged outline for touching link-mode frames (drawn behind the items).
+         Differently coloured modules blend along a per-group gradient. -->
     <svg class="link-layer" *ngIf="linkOutlines.length">
+        <defs>
+            <linearGradient *ngFor="let grad of linkGrads" [attr.id]="grad.id"
+                gradientUnits="userSpaceOnUse"
+                [attr.x1]="grad.x1" [attr.y1]="grad.y1" [attr.x2]="grad.x2" [attr.y2]="grad.y2">
+                <stop *ngFor="let s of grad.stops" [attr.offset]="s.offset" [attr.stop-color]="s.color"></stop>
+            </linearGradient>
+        </defs>
         <path *ngFor="let p of linkOutlines" [attr.d]="p.d" fill="none"
-            [attr.stroke]="p.color" [attr.stroke-width]="p.width"
-            stroke-linejoin="round" stroke-linecap="round"></path>
+            [attr.stroke]="p.stroke" [attr.stroke-width]="p.width"
+            stroke-linejoin="round" [attr.stroke-linecap]="p.cap"></path>
     </svg>
 
     <div *ngFor="let item of layout.items; trackBy: trackItem" class="stream-item"
@@ -173,9 +181,14 @@
                         (change)="setLinkMode($any($event.target).checked)">
                 </label>
                 <div class="ctx-hint" *ngIf="ctxItem.linkMode">
-                    Shares edges with adjacent frames that also have Link mode on,
-                    so touching frames join into one grid.
+                    Merges with touching frames that also have Link mode on into
+                    one outline; their colours blend smoothly across the modules.
                 </div>
+                <label class="ctx-row" *ngIf="ctxItem.linkMode">
+                    <span>Keep dividers</span>
+                    <input type="checkbox" [checked]="ctxItem.linkDivider"
+                        (change)="setLinkDivider($any($event.target).checked)">
+                </label>
 
                 <div class="ctx-sep"></div>
                 <label class="ctx-row">

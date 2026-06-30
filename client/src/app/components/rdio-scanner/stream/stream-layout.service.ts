@@ -130,6 +130,7 @@ export class StreamLayoutService implements OnDestroy {
             middleColor: '#888888',
             middleUseLed: false,
             linkMode: false,
+            linkDivider: false,
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
         this.commit(true);
@@ -310,6 +311,7 @@ export class StreamLayoutService implements OnDestroy {
             middleColor: typeof r.middleColor === 'string' ? r.middleColor : '#888888',
             middleUseLed: typeof r.middleUseLed === 'boolean' ? r.middleUseLed : false,
             linkMode: typeof r.linkMode === 'boolean' ? r.linkMode : false,
+            linkDivider: typeof r.linkDivider === 'boolean' ? r.linkDivider : false,
         };
     }
 

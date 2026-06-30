@@ -346,12 +346,18 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // The whole group shares one border colour/width (the top-left frame's).
     // Recomputed only when the frames' geometry/style changes.
     private linkSig = '';
-    private linkPaths: { d: string; color: string; width: number }[] = [];
+    private linkPaths: { d: string; stroke: string; width: number; cap: string }[] = [];
+    private linkGradients: { id: string; x1: number; y1: number; x2: number; y2: number; stops: { offset: number; color: string }[] }[] = [];
     private linkGroupOf = new Map<string, StreamItem[]>();
 
-    get linkOutlines(): { d: string; color: string; width: number }[] {
+    get linkOutlines(): { d: string; stroke: string; width: number; cap: string }[] {
         this.recomputeLinks();
         return this.linkPaths;
+    }
+
+    get linkGrads(): { id: string; x1: number; y1: number; x2: number; y2: number; stops: { offset: number; color: string }[] }[] {
+        this.recomputeLinks();
+        return this.linkGradients;
     }
 
     private isLinkGrouped(item: StreamItem): boolean {
@@ -372,7 +378,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private recomputeLinks(): void {
         const frames = this.layout.items.filter((i) => i.type === 'frame' && i.linkMode);
         const sig = frames
-            .map((f) => `${f.id}:${f.x},${f.y},${f.w},${f.h},${f.borderWidth},${f.cornerRadius},${f.color},${f.useLedColor ? 1 : 0}`)
+            .map((f) => `${f.id}:${f.x},${f.y},${f.w},${f.h},${f.borderWidth},${f.cornerRadius},${f.color},${f.useLedColor ? 1 : 0},${f.linkDivider ? 1 : 0}`)
             .join('|') + '#' + (this.ledColor() ?? '');
         if (sig === this.linkSig) {
             return;
@@ -380,6 +386,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.linkSig = sig;
         this.linkGroupOf = new Map();
         this.linkPaths = [];
+        this.linkGradients = [];
 
         // Union-find over touching/overlapping frames.
         const parent = new Map<string, string>();
@@ -404,17 +411,94 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             groups.set(root, arr);
         }
 
+        let g = 0;
         for (const grp of groups.values()) {
             for (const f of grp) { this.linkGroupOf.set(f.id, grp); }
             if (grp.length < 2) { continue; }
             const rep = grp.reduce((a, b) => (b.y < a.y || (b.y === a.y && b.x < a.x) ? b : a));
-            const color = this.itemColor(rep);
             const width = rep.borderWidth;
+            const stroke = this.linkStroke(grp, g);
+            g++;
             for (const loop of this.unionOutline(grp)) {
                 const d = this.roundedPath(loop, rep.cornerRadius);
-                if (d) { this.linkPaths.push({ d, color, width }); }
+                if (d) { this.linkPaths.push({ d, stroke, width, cap: 'round' }); }
+            }
+            if (rep.linkDivider) {
+                for (let i = 0; i < grp.length; i++) {
+                    for (let j = i + 1; j < grp.length; j++) {
+                        const seg = this.sharedEdge(grp[i], grp[j]);
+                        if (seg) {
+                            this.linkPaths.push({
+                                d: `M ${seg.x1.toFixed(2)} ${seg.y1.toFixed(2)} L ${seg.x2.toFixed(2)} ${seg.y2.toFixed(2)}`,
+                                stroke, width, cap: 'butt',
+                            });
+                        }
+                    }
+                }
             }
         }
+    }
+
+    // Stroke for a group's outline: a solid colour when every frame shares one
+    // colour, otherwise a linear gradient that blends each frame's colour along
+    // the group's longer axis so the colours flow smoothly across the modules.
+    private linkStroke(grp: StreamItem[], index: number): string {
+        const colors = grp.map((f) => this.itemColor(f));
+        if (colors.every((c) => c === colors[0])) {
+            return colors[0];
+        }
+        const minX = Math.min(...grp.map((f) => f.x));
+        const maxX = Math.max(...grp.map((f) => f.x + f.w));
+        const minY = Math.min(...grp.map((f) => f.y));
+        const maxY = Math.max(...grp.map((f) => f.y + f.h));
+        const horizontal = (maxX - minX) >= (maxY - minY);
+        const span = (horizontal ? maxX - minX : maxY - minY) || 1;
+        const lo = horizontal ? minX : minY;
+        const stops = grp
+            .map((f) => {
+                const center = horizontal ? f.x + f.w / 2 : f.y + f.h / 2;
+                return { offset: Math.max(0, Math.min(1, (center - lo) / span)), color: this.itemColor(f) };
+            })
+            .sort((a, b) => a.offset - b.offset);
+        // Anchor the ends so the outer edges take the extreme frames' colours.
+        stops[0] = { ...stops[0], offset: 0 };
+        stops[stops.length - 1] = { ...stops[stops.length - 1], offset: 1 };
+        const id = `link-grad-${index}`;
+        const cy = (minY + maxY) / 2, cx = (minX + maxX) / 2;
+        this.linkGradients.push(horizontal
+            ? { id, x1: minX, y1: cy, x2: maxX, y2: cy, stops }
+            : { id, x1: cx, y1: minY, x2: cx, y2: maxY, stops });
+        return `url(#${id})`;
+    }
+
+    // The shared edge segment between two adjacent frames (for divider lines).
+    private sharedEdge(a: StreamItem, b: StreamItem): { x1: number; y1: number; x2: number; y2: number } | null {
+        const tol = Math.max(3, Math.max(a.borderWidth, b.borderWidth) + 1);
+        // vertical seam (a|b side by side)
+        const vy1 = Math.max(a.y, b.y), vy2 = Math.min(a.y + a.h, b.y + b.h);
+        if (vy2 - vy1 > 1) {
+            if (Math.abs((a.x + a.w) - b.x) <= tol) {
+                const x = ((a.x + a.w) + b.x) / 2;
+                return { x1: x, y1: vy1, x2: x, y2: vy2 };
+            }
+            if (Math.abs(a.x - (b.x + b.w)) <= tol) {
+                const x = (a.x + (b.x + b.w)) / 2;
+                return { x1: x, y1: vy1, x2: x, y2: vy2 };
+            }
+        }
+        // horizontal seam (a over b)
+        const hx1 = Math.max(a.x, b.x), hx2 = Math.min(a.x + a.w, b.x + b.w);
+        if (hx2 - hx1 > 1) {
+            if (Math.abs((a.y + a.h) - b.y) <= tol) {
+                const y = ((a.y + a.h) + b.y) / 2;
+                return { x1: hx1, y1: y, x2: hx2, y2: y };
+            }
+            if (Math.abs(a.y - (b.y + b.h)) <= tol) {
+                const y = (a.y + (b.y + b.h)) / 2;
+                return { x1: hx1, y1: y, x2: hx2, y2: y };
+            }
+        }
+        return null;
     }
 
     private framesTouch(a: StreamItem, b: StreamItem): boolean {
@@ -809,7 +893,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         'titleEnabled', 'titleColor', 'titleBold', 'titleUseLed', 'titleFontSize', 'titleFontFamily',
         'autoScroll', 'histRowLines', 'histColLines', 'histLineWidth', 'histLineColor',
         'borderWidth', 'innerWidth', 'cornerRadius', 'centerFill', 'centerColor', 'centerUseLed',
-        'middleFill', 'middleWidth', 'middleColor', 'middleUseLed', 'linkMode',
+        'middleFill', 'middleWidth', 'middleColor', 'middleUseLed', 'linkMode', 'linkDivider',
     ];
 
     copyItemStyle(): void {
@@ -868,7 +952,9 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     setCtxItemColor(value: string): void {
-        this.applyLinked({ color: value });
+        // Per-frame: linked frames keep individual colours and blend smoothly
+        // along the merged outline (see linkOutlines gradient).
+        this.applyToTargets({ color: value });
     }
 
     setCtxItemSize(value: number): void {
@@ -910,7 +996,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     setCtxItemLed(useLedColor: boolean): void {
-        this.applyLinked({ useLedColor });
+        this.applyToTargets({ useLedColor });
+    }
+
+    setLinkDivider(linkDivider: boolean): void {
+        this.applyLinked({ linkDivider });
     }
 
     setCtxItemText(text: string): void {
