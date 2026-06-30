@@ -81,6 +81,14 @@ interface StreamSyncMessage {
     pauseStatus?: boolean;
     muted?: boolean;
     volume?: number;
+    // 'fdisp' — a follower (/stream) mirrors its current call/progress to the
+    // leader (main page) so the main LCD shows what the stream is playing.
+    call?: RdioScannerCall;
+    time?: number;
+    queue?: number;
+    queueTime?: number;
+    queueJumped?: number;
+    transcriptReady?: { id: number; transcript: string };
 }
 
 @Injectable()
@@ -600,6 +608,15 @@ export class RdioScannerService implements OnDestroy {
             return;
         }
 
+        if (msg.type === 'fdisp') {
+            // A /stream window reports what it's playing; the leader mirrors it
+            // onto the main LCD (only while a stream is open and we're a leader).
+            if (!this.followerMode && this.streamOpenState) {
+                this.applyFollowerDisplay(msg);
+            }
+            return;
+        }
+
         if (msg.type === 'state') {
             // Only followers apply incoming state; leaders ignore it.
             if (this.followerMode) {
@@ -619,6 +636,45 @@ export class RdioScannerService implements OnDestroy {
         } catch (_) {
             //
         }
+    }
+
+    // Follower → leader: mirror the stream's current call/progress so the main
+    // LCD shows what's playing. No-op unless this is a follower. The caller
+    // strips the heavy audio payload before sending.
+    broadcastFollowerDisplay(payload: StreamSyncMessage): void {
+        if (!this.followerMode || !this.syncChannel) {
+            return;
+        }
+        try {
+            this.syncChannel.postMessage({ ...payload, type: 'fdisp' });
+        } catch (_) {
+            //
+        }
+    }
+
+    // Leader side: re-emit the mirrored display fields on our own event stream
+    // so the main LCD components render them exactly like a local call.
+    private applyFollowerDisplay(msg: StreamSyncMessage): void {
+        const out: RdioScannerEvent = {};
+        if ('call' in msg) {
+            out.call = msg.call;
+        }
+        if (typeof msg.time === 'number') {
+            out.time = msg.time;
+        }
+        if (typeof msg.queue === 'number') {
+            out.queue = msg.queue;
+        }
+        if (typeof msg.queueTime === 'number') {
+            out.queueTime = msg.queueTime;
+        }
+        if (typeof msg.queueJumped === 'number') {
+            out.queueJumped = msg.queueJumped;
+        }
+        if (msg.transcriptReady) {
+            out.transcriptReady = msg.transcriptReady;
+        }
+        this.event.emit(out);
     }
 
     private applyFollowerCommand(msg: StreamSyncMessage): void {

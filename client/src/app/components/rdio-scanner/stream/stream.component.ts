@@ -281,6 +281,53 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         if ('config' in event) {
             this.cdr.detectChanges();
         }
+
+        // Mirror our current call / progress to the main page so its LCD shows
+        // what the stream is playing. Audio is stripped — the main page only
+        // needs the metadata to render.
+        const disp: {
+            call?: RdioScannerCall;
+            time?: number;
+            queue?: number;
+            queueTime?: number;
+            queueJumped?: number;
+            transcriptReady?: { id: number; transcript: string };
+        } = {};
+        let has = false;
+        if ('call' in event) {
+            disp.call = this.stripAudio(event.call);
+            has = true;
+        }
+        if (typeof event.time === 'number') {
+            disp.time = event.time;
+            has = true;
+        }
+        if (typeof event.queue === 'number') {
+            disp.queue = event.queue;
+            has = true;
+        }
+        if (typeof event.queueTime === 'number') {
+            disp.queueTime = event.queueTime;
+            has = true;
+        }
+        if (typeof event.queueJumped === 'number') {
+            disp.queueJumped = event.queueJumped;
+            has = true;
+        }
+        if (event.transcriptReady) {
+            disp.transcriptReady = event.transcriptReady;
+            has = true;
+        }
+        if (has) {
+            this.svc.broadcastFollowerDisplay(disp);
+        }
+    }
+
+    private stripAudio(call: RdioScannerCall | undefined): RdioScannerCall | undefined {
+        if (!call || !call.audio) {
+            return call;
+        }
+        return { ...call, audio: undefined };
     }
 
     // ---------------------------------------------------------------------
