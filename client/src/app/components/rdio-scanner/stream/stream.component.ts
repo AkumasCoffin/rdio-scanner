@@ -431,7 +431,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // No polygon offsetting, so corners (including reflex bumps) can't spike.
     private shapeRender(item: StreamItem): { outline: string; bands: { color: string; width: number }[] } | null {
         const abs = this.absShapePoints(item);
-        const outline = this.roundedPath(abs, this.cornerRadii(abs, item.cornerRadius));
+        const outline = this.roundedPath(abs, item.cornerRadius);
         if (!outline) {
             return null;
         }
@@ -559,34 +559,19 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         });
     }
 
-    // Per-corner rounding radius for a polygon: the requested radius, clamped to
-    // half the shorter adjacent edge, and 0 where the point sits (near) straight
-    // on its edge (not a real corner). Computed once on the outer outline so the
-    // concentric band boundaries can reuse it and stay truly concentric.
-    private cornerRadii(poly: { x: number; y: number }[], radius: number): number[] {
-        const n = poly.length;
-        const radii: number[] = [];
-        for (let i = 0; i < n; i++) {
-            const prev = poly[(i - 1 + n) % n], v = poly[i], next = poly[(i + 1) % n];
-            const inX = v.x - prev.x, inY = v.y - prev.y;
-            const outX = next.x - v.x, outY = next.y - v.y;
-            const lenIn = Math.hypot(inX, inY) || 1, lenOut = Math.hypot(outX, outY) || 1;
-            const turn = (inX / lenIn) * (outY / lenOut) - (inY / lenIn) * (outX / lenOut);
-            radii.push(Math.abs(turn) < 0.02 ? 0 : Math.max(0, Math.min(radius, lenIn / 2, lenOut / 2)));
-        }
-        return radii;
-    }
-
-    // SVG path for a closed polygon with a given per-corner radius. The arc at
-    // each corner follows the direction the path turns there, so it works for any
-    // winding. Pre-supplied radii keep concentric band boundaries concentric.
-    private roundedPath(poly: { x: number; y: number }[], radii: number[]): string {
+    // SVG path for a closed polygon with rounded corners of a constant arc
+    // radius. A true corner fillet is tangent to both edges, so how far back the
+    // arc starts depends on the corner's angle: sharp corners cut back further,
+    // near-straight corners barely round. The cut-back is clamped to half the
+    // shorter adjacent edge (reducing the radius there if needed). The arc curves
+    // the way the path turns, so it's correct for any winding.
+    private roundedPath(poly: { x: number; y: number }[], radius: number): string {
         const n = poly.length;
         if (n < 3) { return ''; }
         const pin: { x: number; y: number }[] = [];
         const pout: { x: number; y: number }[] = [];
         const sweep: number[] = [];
-        const rad: number[] = [];
+        const arc: number[] = [];
         for (let i = 0; i < n; i++) {
             const prev = poly[(i - 1 + n) % n], v = poly[i], next = poly[(i + 1) % n];
             const inX = v.x - prev.x, inY = v.y - prev.y;
@@ -594,20 +579,32 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             const lenIn = Math.hypot(inX, inY) || 1, lenOut = Math.hypot(outX, outY) || 1;
             const uinX = inX / lenIn, uinY = inY / lenIn;
             const uoutX = outX / lenOut, uoutY = outY / lenOut;
-            const turn = uinX * uoutY - uinY * uoutX;
-            const r = Math.max(0, radii[i] || 0);
-            rad.push(r);
-            pin.push({ x: v.x - uinX * r, y: v.y - uinY * r });
-            pout.push({ x: v.x + uoutX * r, y: v.y + uoutY * r });
-            // Arc curves the way the path turns here (CW turn -> SVG sweep 1).
-            sweep.push(turn > 0 ? 1 : 0);
+            const cross = uinX * uoutY - uinY * uoutX;   // sin(turn angle), signed
+            const dot = uinX * uoutX + uinY * uoutY;      // cos(turn angle)
+            const sin = Math.abs(cross);
+            // tan(half the turn angle); near 0 on a straight run, large at a cusp
+            const halfTan = sin / Math.max(1e-6, 1 + dot);
+            // Straight point (collinear, not a cusp): no rounding.
+            if (sin < 0.02 && dot > 0) {
+                pin.push(v); pout.push(v); arc.push(0); sweep.push(0);
+                continue;
+            }
+            // Tangent cut-back for this radius, clamped so the arc fits the edges;
+            // the arc radius shrinks with it when clamped.
+            let t = radius * halfTan;
+            t = Math.min(t, lenIn / 2, lenOut / 2);
+            const r = halfTan > 1e-6 ? t / halfTan : 0;
+            pin.push({ x: v.x - uinX * t, y: v.y - uinY * t });
+            pout.push({ x: v.x + uoutX * t, y: v.y + uoutY * t });
+            arc.push(r);
+            sweep.push(cross > 0 ? 1 : 0);
         }
         const f = (p: { x: number; y: number }) => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
         let d = `M ${f(pout[0])}`;
         for (let step = 1; step <= n; step++) {
             const i = step % n;
-            if (rad[i] > 0.5) {
-                d += ` L ${f(pin[i])} A ${rad[i].toFixed(2)} ${rad[i].toFixed(2)} 0 0 ${sweep[i]} ${f(pout[i])}`;
+            if (arc[i] > 0.5) {
+                d += ` L ${f(pin[i])} A ${arc[i].toFixed(2)} ${arc[i].toFixed(2)} 0 0 ${sweep[i]} ${f(pout[i])}`;
             } else {
                 // No rounding: go straight through the vertex. Emitting both pin
                 // and pout (which coincide) would make a zero-length segment that
