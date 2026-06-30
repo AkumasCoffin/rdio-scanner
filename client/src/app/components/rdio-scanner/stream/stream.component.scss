@@ -43,14 +43,15 @@
         /* Frames become interactive while editing so they can be dragged /
            resized / right-clicked in their empty areas; they stay BEHIND
            elements (lower z-index) so elements on top are always grabbable. */
-        .stream-item.frame {
+        .stream-item.frame,
+        .stream-item.shape {
             pointer-events: auto;
         }
 
         /* Hover-raise lifts an element (and its resize handle) to the front so
-           handles never hide behind a neighbour. Frames are excluded — raising
-           a frame would cover the elements inside it and block grabbing them. */
-        .stream-item.movable:hover:not(.frame) {
+           handles never hide behind a neighbour. Borders are excluded — raising
+           one would cover the elements inside it and block grabbing them. */
+        .stream-item.movable:hover:not(.frame):not(.shape) {
             z-index: 1000;
         }
     }
@@ -225,6 +226,34 @@
     border: 1px solid #38bdf8;
     background: rgba(56, 189, 248, 0.15);
     pointer-events: none;
+}
+
+/* Shapable-border editing handles, sat at the polygon's corners/edge midpoints. */
+.vertex-handle,
+.edge-handle {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    z-index: 1100;
+    pointer-events: auto;
+    box-sizing: border-box;
+}
+
+.vertex-handle {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #38bdf8;
+    border: 2px solid #0f172a;
+    cursor: grab;
+}
+
+.edge-handle {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    background: rgba(56, 189, 248, 0.55);
+    border: 1px solid #0f172a;
+    cursor: crosshair;
 }
 
 /* Live size readout shown while resizing an element. */

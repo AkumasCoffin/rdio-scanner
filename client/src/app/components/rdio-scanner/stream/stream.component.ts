@@ -33,7 +33,10 @@ import {
     STREAM_FONTS,
     STREAM_FONTS_HREF,
     STREAM_ITEM_TYPES,
+    defaultShapePoints,
+    streamIsBorder,
     streamIsFrame,
+    streamIsShape,
     streamItemLabel,
     streamItemMinH,
     streamItemMinW,
@@ -105,13 +108,17 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private boundSelMove = (e: PointerEvent) => this.onSelectMove(e);
     private boundSelUp = () => this.onSelectEnd();
 
-    // Active drag/resize state, set on pointerdown over an item in edit mode.
+    // Active drag/resize/vertex state, set on pointerdown over an item in edit mode.
     private gestureId: string | null = null;
-    private gestureMode: 'move' | 'resize' | null = null;
+    private gestureMode: 'move' | 'resize' | 'vertex' | null = null;
     private gestureStartX = 0;
     private gestureStartY = 0;
     private gestureOrigW = 0;
     private gestureOrigH = 0;
+    // Vertex drag (shapable border): which corner, and the shape's corner points
+    // (absolute canvas coords) captured at gesture start.
+    private gestureVertexIndex = 0;
+    private gestureVertexAbs: { x: number; y: number }[] = [];
     // Original positions of every item being moved (one, or all selected).
     private moveTargets: { id: string; x: number; y: number }[] = [];
 
@@ -229,9 +236,19 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return streamItemLabel(type);
     }
 
-    // Both border-box types ('frame' and the pre-linked 'frameLink').
+    // Rectangular CSS border.
     isFrame(type: string): boolean {
         return streamIsFrame(type);
+    }
+
+    // Editable polygon border.
+    isShape(type: string): boolean {
+        return streamIsShape(type);
+    }
+
+    // Any decorative border (frame or shape): shares the band controls.
+    isBorder(type: string): boolean {
+        return streamIsBorder(type);
     }
 
     // The title/label text for a type ('' when the type has no title option).
@@ -254,7 +271,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // — except custom text and frames, which are user-added decoration with no
     // inherent data, so they're never flagged as missing.
     isMissing(type: string): boolean {
-        return this.countOf(type) === 0 && type !== 'text' && !streamIsFrame(type);
+        return this.countOf(type) === 0 && type !== 'text' && !streamIsBorder(type);
     }
 
     // Hex equivalents of the main LCD's named LED colors.
@@ -313,7 +330,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // Builds the inset box-shadow for a frame's middle + inner bands (the outer
     // band is the CSS border). Each enabled band is stacked inward.
     frameShadow(item: StreamItem): string | null {
-        if (!streamIsFrame(item.type) || this.isLinkGrouped(item)) {
+        if (!streamIsFrame(item.type)) {
             return null;
         }
         const parts: string[] = [];
@@ -329,169 +346,141 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return parts.length ? parts.join(', ') : null;
     }
 
-    // Per-side border widths + per-corner radii for a frame. A frame that is
-    // part of a multi-frame link group draws no CSS border at all — the merged
-    // SVG outline (linkOutlines) renders its border instead.
+    // CSS border width + radius for the rectangular frame (uniform on all sides).
     frameBorderStyle(item: StreamItem): { [key: string]: number } {
         const w = streamIsFrame(item.type) ? item.borderWidth : 0;
         const r = streamIsFrame(item.type) ? item.cornerRadius : 0;
-        const draw = streamIsFrame(item.type) && !this.isLinkGrouped(item);
-        const bw = draw ? w : 0;
-        const br = draw ? r : 0;
         return {
-            'border-top-width.px': bw, 'border-right-width.px': bw,
-            'border-bottom-width.px': bw, 'border-left-width.px': bw,
-            'border-top-left-radius.px': br, 'border-top-right-radius.px': br,
-            'border-bottom-right-radius.px': br, 'border-bottom-left-radius.px': br,
+            'border-top-width.px': w, 'border-right-width.px': w,
+            'border-bottom-width.px': w, 'border-left-width.px': w,
+            'border-top-left-radius.px': r, 'border-top-right-radius.px': r,
+            'border-bottom-right-radius.px': r, 'border-bottom-left-radius.px': r,
         };
     }
 
-    // ---- Linked frames -------------------------------------------------------
-    // Touching link-mode frames are rendered as ONE merged outline so an L of
-    // frames shows a continuous border: rounded convex corners on the outer
-    // perimeter and an outward-curving (concave) fillet at each inner corner.
-    // The whole group shares one border colour/width (the top-left frame's).
-    // Recomputed only when the frames' geometry/style changes.
-    private linkSig = '';
-    private linkDirty = false;
-    private linkPaths: { d: string; stroke: string; width: number; cap: string }[] = [];
-    private linkGradients: { id: string; x1: number; y1: number; x2: number; y2: number; stops: { offset: number; color: string }[] }[] = [];
-    private linkGroupOf = new Map<string, StreamItem[]>();
+    // ---- Shapable border -----------------------------------------------------
+    // A 'shape' element is an editable closed polygon (drag corners, bend edges)
+    // drawn as up to three concentric SVG bands (outer / middle / inner). The
+    // bands are rebuilt imperatively into the #linkLayer <svg> whenever a shape's
+    // geometry or styling changes, and recomputed only when needed (sig check).
+    private shapeSig = '';
+    private shapeDirty = false;
+    private shapePaths: { d: string; color: string; width: number }[] = [];
 
-    // The merged outline/gradient is drawn imperatively (createElementNS) into
-    // the #linkLayer <svg> after each change — building SVG paint-server defs via
-    // Angular templates is brittle re: the SVG namespace, so we own it directly.
     ngAfterViewChecked(): void {
-        this.recomputeLinks();
-        if (this.linkDirty) {
-            this.linkDirty = false;
-            this.renderLinkLayer();
+        this.recomputeShapes();
+        if (this.shapeDirty) {
+            this.shapeDirty = false;
+            this.renderShapeLayer();
         }
     }
 
-    private isLinkGrouped(item: StreamItem): boolean {
-        if (item.type !== 'frameLink' || !item.linkMode) {
-            return false;
-        }
-        this.recomputeLinks();
-        const g = this.linkGroupOf.get(item.id);
-        return !!g && g.length > 1;
+    get shapeItems(): StreamItem[] {
+        return this.layout.items.filter((i) => i.type === 'shape');
     }
 
-    private groupMatesOf(id: string): StreamItem[] {
-        this.recomputeLinks();
-        const g = this.linkGroupOf.get(id);
-        return g && g.length > 1 ? g : [];
+    // The shape's corner points (relative to the item), defaulting to a rectangle.
+    shapePoints(item: StreamItem): { x: number; y: number }[] {
+        return item.points && item.points.length >= 3 ? item.points : defaultShapePoints(item.w, item.h);
     }
 
-    private recomputeLinks(): void {
-        const frames = this.layout.items.filter((i) => i.type === 'frameLink' && i.linkMode);
-        const sig = frames
-            .map((f) => `${f.id}:${f.x},${f.y},${f.w},${f.h},${f.borderWidth},${f.cornerRadius},${f.color},${f.useLedColor ? 1 : 0},${f.linkDivider ? 1 : 0}`)
-            .join('|') + '#' + (this.ledColor() ?? '');
-        if (sig === this.linkSig) {
+    // Corner points in absolute canvas coordinates.
+    private absShapePoints(item: StreamItem): { x: number; y: number }[] {
+        return this.shapePoints(item).map((p) => ({ x: item.x + p.x, y: item.y + p.y }));
+    }
+
+    // Absolute midpoint of every edge (where the "add a bend" handles sit).
+    edgeMids(item: StreamItem): { x: number; y: number }[] {
+        const abs = this.absShapePoints(item);
+        return abs.map((p, i) => {
+            const q = abs[(i + 1) % abs.length];
+            return { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+        });
+    }
+
+    private recomputeShapes(): void {
+        const shapes = this.shapeItems;
+        const sig = shapes
+            .map((s) => `${s.id}:${s.x},${s.y}:${JSON.stringify(s.points)}:${s.borderWidth},${s.cornerRadius},${s.color},${s.useLedColor ? 1 : 0}`
+                + `|${s.middleFill ? 1 : 0},${s.middleWidth},${s.middleColor},${s.middleUseLed ? 1 : 0}`
+                + `|${s.centerFill ? 1 : 0},${s.innerWidth},${s.centerColor},${s.centerUseLed ? 1 : 0}`)
+            .join('||') + '#' + (this.ledColor() ?? '');
+        if (sig === this.shapeSig) {
             return;
         }
-        this.linkSig = sig;
-        this.linkDirty = true;
-        this.linkGroupOf = new Map();
-        this.linkPaths = [];
-        this.linkGradients = [];
-
-        // Union-find over touching/overlapping frames.
-        const parent = new Map<string, string>();
-        const find = (a: string): string => {
-            let r = a;
-            while (parent.get(r) !== r) { r = parent.get(r)!; }
-            return r;
-        };
-        frames.forEach((f) => parent.set(f.id, f.id));
-        for (let i = 0; i < frames.length; i++) {
-            for (let j = i + 1; j < frames.length; j++) {
-                if (this.framesTouch(frames[i], frames[j])) {
-                    parent.set(find(frames[i].id), find(frames[j].id));
-                }
-            }
-        }
-        const groups = new Map<string, StreamItem[]>();
-        for (const f of frames) {
-            const root = find(f.id);
-            const arr = groups.get(root) ?? [];
-            arr.push(f);
-            groups.set(root, arr);
-        }
-
-        let g = 0;
-        for (const grp of groups.values()) {
-            for (const f of grp) { this.linkGroupOf.set(f.id, grp); }
-            if (grp.length < 2) { continue; }
-            const rep = grp.reduce((a, b) => (b.y < a.y || (b.y === a.y && b.x < a.x) ? b : a));
-            const width = rep.borderWidth;
-            const stroke = this.linkStroke(grp, g);
-            g++;
-            for (const loop of this.unionOutline(grp)) {
-                const d = this.roundedPath(loop, rep.cornerRadius);
-                if (d) { this.linkPaths.push({ d, stroke, width, cap: 'round' }); }
-            }
-            if (rep.linkDivider) {
-                for (let i = 0; i < grp.length; i++) {
-                    for (let j = i + 1; j < grp.length; j++) {
-                        const seg = this.sharedEdge(grp[i], grp[j]);
-                        if (seg) {
-                            this.linkPaths.push({
-                                d: `M ${seg.x1.toFixed(2)} ${seg.y1.toFixed(2)} L ${seg.x2.toFixed(2)} ${seg.y2.toFixed(2)}`,
-                                stroke, width, cap: 'butt',
-                            });
-                        }
-                    }
+        this.shapeSig = sig;
+        this.shapeDirty = true;
+        this.shapePaths = [];
+        for (const s of shapes) {
+            for (const band of this.shapeBands(s)) {
+                const d = this.roundedPath(band.poly, band.radius);
+                if (d) {
+                    this.shapePaths.push({ d, color: band.color, width: band.width });
                 }
             }
         }
     }
 
-    // Stroke for a group's outline: a solid colour when every frame shares one
-    // colour, otherwise a linear gradient along the group's longer axis. Each
-    // module holds its own colour across its span and blends into its neighbour
-    // only across a short zone at the shared seam, so the colours link smoothly
-    // while every module still clearly shows its own colour.
-    private linkStroke(grp: StreamItem[], index: number): string {
-        const colors = grp.map((f) => this.itemColor(f));
-        if (colors.every((c) => c === colors[0])) {
-            return colors[0];
+    // The concentric bands of a shapable border, from the outer edge inward.
+    private shapeBands(item: StreamItem): { poly: { x: number; y: number }[]; color: string; width: number; radius: number }[] {
+        const abs = this.absShapePoints(item);
+        const R = item.cornerRadius;
+        const wo = item.borderWidth;
+        const wm = item.middleFill ? item.middleWidth : 0;
+        const wi = item.centerFill ? item.innerWidth : 0;
+        const bands: { poly: { x: number; y: number }[]; color: string; width: number; radius: number }[] = [];
+        if (wo > 0) {
+            const inset = wo / 2;
+            bands.push({ poly: this.offsetPolygon(abs, inset), color: this.itemColor(item), width: wo, radius: Math.max(0, R - inset) });
         }
-        const minX = Math.min(...grp.map((f) => f.x));
-        const maxX = Math.max(...grp.map((f) => f.x + f.w));
-        const minY = Math.min(...grp.map((f) => f.y));
-        const maxY = Math.max(...grp.map((f) => f.y + f.h));
-        const horizontal = (maxX - minX) >= (maxY - minY);
-        const span = (horizontal ? maxX - minX : maxY - minY) || 1;
-        const lo = horizontal ? minX : minY;
-        const blend = Math.min(0.25, 24 / span); // half-width of the seam blend zone
-        const ordered = grp
-            .map((f) => {
-                const s = ((horizontal ? f.x : f.y) - lo) / span;
-                const e = ((horizontal ? f.x + f.w : f.y + f.h) - lo) / span;
-                return { s, e, color: this.itemColor(f) };
-            })
-            .sort((a, b) => a.s - b.s);
-        const stops: { offset: number; color: string }[] = [];
-        ordered.forEach((m, i) => {
-            const from = i === 0 ? 0 : Math.min(m.s + blend, (m.s + m.e) / 2);
-            const to = i === ordered.length - 1 ? 1 : Math.max(m.e - blend, (m.s + m.e) / 2);
-            stops.push({ offset: Math.max(0, Math.min(1, from)), color: m.color });
-            stops.push({ offset: Math.max(0, Math.min(1, to)), color: m.color });
+        if (wm > 0) {
+            const inset = wo + wm / 2;
+            bands.push({ poly: this.offsetPolygon(abs, inset), color: this.middleColorOf(item), width: wm, radius: Math.max(0, R - inset) });
+        }
+        if (wi > 0) {
+            const inset = wo + wm + wi / 2;
+            bands.push({ poly: this.offsetPolygon(abs, inset), color: this.innerColor(item), width: wi, radius: Math.max(0, R - inset) });
+        }
+        return bands;
+    }
+
+    // Offset a closed polygon inward (toward its interior) by `d` px: shift each
+    // edge along its inward normal and intersect consecutive edges for the new
+    // corners. Orientation-independent.
+    private offsetPolygon(pts: { x: number; y: number }[], d: number): { x: number; y: number }[] {
+        const n = pts.length;
+        if (n < 3 || d === 0) {
+            return pts.map((p) => ({ ...p }));
+        }
+        let area2 = 0;
+        for (let i = 0; i < n; i++) {
+            const a = pts[i], b = pts[(i + 1) % n];
+            area2 += a.x * b.y - b.x * a.y;
+        }
+        const orient = area2 >= 0 ? 1 : -1;
+        const lines = pts.map((a, i) => {
+            const b = pts[(i + 1) % n];
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const len = Math.hypot(dx, dy) || 1;
+            const ux = dx / len, uy = dy / len;
+            return { px: a.x - uy * orient * d, py: a.y + ux * orient * d, ux, uy };
         });
-        const id = `link-grad-${index}`;
-        const cy = (minY + maxY) / 2, cx = (minX + maxX) / 2;
-        this.linkGradients.push(horizontal
-            ? { id, x1: minX, y1: cy, x2: maxX, y2: cy, stops }
-            : { id, x1: cx, y1: minY, x2: cx, y2: maxY, stops });
-        return `url(#${id})`;
+        const out: { x: number; y: number }[] = [];
+        for (let i = 0; i < n; i++) {
+            const a = lines[(i - 1 + n) % n], b = lines[i];
+            const denom = a.ux * b.uy - a.uy * b.ux;
+            if (Math.abs(denom) < 1e-6) {
+                out.push({ x: b.px, y: b.py });
+            } else {
+                const t = ((b.px - a.px) * b.uy - (b.py - a.py) * b.ux) / denom;
+                out.push({ x: a.px + a.ux * t, y: a.py + a.uy * t });
+            }
+        }
+        return out;
     }
 
-    // Rebuild the #linkLayer SVG children directly so the gradient paint servers
-    // are guaranteed to live in the SVG namespace and resolve for the strokes.
-    private renderLinkLayer(): void {
+    // Rebuild the #linkLayer SVG children directly (correct SVG namespace).
+    private renderShapeLayer(): void {
         const svg = this.linkLayerRef?.nativeElement;
         if (!svg) {
             return;
@@ -500,131 +489,81 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         while (svg.firstChild) {
             svg.removeChild(svg.firstChild);
         }
-        svg.style.display = this.linkPaths.length ? '' : 'none';
-        if (!this.linkPaths.length) {
-            return;
-        }
-        if (this.linkGradients.length) {
-            const defs = this.document.createElementNS(NS, 'defs');
-            for (const grad of this.linkGradients) {
-                const lg = this.document.createElementNS(NS, 'linearGradient');
-                lg.setAttribute('id', grad.id);
-                lg.setAttribute('gradientUnits', 'userSpaceOnUse');
-                lg.setAttribute('x1', String(grad.x1));
-                lg.setAttribute('y1', String(grad.y1));
-                lg.setAttribute('x2', String(grad.x2));
-                lg.setAttribute('y2', String(grad.y2));
-                for (const s of grad.stops) {
-                    const stop = this.document.createElementNS(NS, 'stop');
-                    stop.setAttribute('offset', String(s.offset));
-                    stop.setAttribute('stop-color', s.color);
-                    lg.appendChild(stop);
-                }
-                defs.appendChild(lg);
-            }
-            svg.appendChild(defs);
-        }
-        for (const p of this.linkPaths) {
+        svg.style.display = this.shapePaths.length ? '' : 'none';
+        for (const p of this.shapePaths) {
             const path = this.document.createElementNS(NS, 'path');
             path.setAttribute('d', p.d);
             path.setAttribute('fill', 'none');
-            path.setAttribute('stroke', p.stroke);
+            path.setAttribute('stroke', p.color);
             path.setAttribute('stroke-width', String(p.width));
             path.setAttribute('stroke-linejoin', 'round');
-            path.setAttribute('stroke-linecap', p.cap);
+            path.setAttribute('stroke-linecap', 'round');
             svg.appendChild(path);
         }
     }
 
-    // The shared edge segment between two adjacent frames (for divider lines).
-    private sharedEdge(a: StreamItem, b: StreamItem): { x1: number; y1: number; x2: number; y2: number } | null {
-        const tol = Math.max(3, Math.max(a.borderWidth, b.borderWidth) + 1);
-        // vertical seam (a|b side by side)
-        const vy1 = Math.max(a.y, b.y), vy2 = Math.min(a.y + a.h, b.y + b.h);
-        if (vy2 - vy1 > 1) {
-            if (Math.abs((a.x + a.w) - b.x) <= tol) {
-                const x = ((a.x + a.w) + b.x) / 2;
-                return { x1: x, y1: vy1, x2: x, y2: vy2 };
-            }
-            if (Math.abs(a.x - (b.x + b.w)) <= tol) {
-                const x = (a.x + (b.x + b.w)) / 2;
-                return { x1: x, y1: vy1, x2: x, y2: vy2 };
-            }
+    // ---- Shape editing -------------------------------------------------------
+    // Start dragging a corner of a shapable border.
+    onVertexStart(item: StreamItem, index: number, event: PointerEvent): void {
+        if (!this.layout.moveMode || event.button !== 0) {
+            return;
         }
-        // horizontal seam (a over b)
-        const hx1 = Math.max(a.x, b.x), hx2 = Math.min(a.x + a.w, b.x + b.w);
-        if (hx2 - hx1 > 1) {
-            if (Math.abs((a.y + a.h) - b.y) <= tol) {
-                const y = ((a.y + a.h) + b.y) / 2;
-                return { x1: hx1, y1: y, x2: hx2, y2: y };
-            }
-            if (Math.abs(a.y - (b.y + b.h)) <= tol) {
-                const y = (a.y + (b.y + b.h)) / 2;
-                return { x1: hx1, y1: y, x2: hx2, y2: y };
-            }
-        }
-        return null;
+        event.preventDefault();
+        event.stopPropagation();
+        this.gestureId = item.id;
+        this.gestureMode = 'vertex';
+        this.gestureVertexIndex = index;
+        this.gestureStartX = event.clientX;
+        this.gestureStartY = event.clientY;
+        this.gestureVertexAbs = this.absShapePoints(item);
+        window.addEventListener('pointermove', this.boundMove);
+        window.addEventListener('pointerup', this.boundUp);
     }
 
-    private framesTouch(a: StreamItem, b: StreamItem): boolean {
-        const tol = Math.max(3, Math.max(a.borderWidth, b.borderWidth) + 1);
-        return a.x <= b.x + b.w + tol && b.x <= a.x + a.w + tol &&
-            a.y <= b.y + b.h + tol && b.y <= a.y + a.h + tol;
+    // Grab an edge: insert a new corner at its midpoint and drag it out.
+    onEdgeAdd(item: StreamItem, edgeIndex: number, event: PointerEvent): void {
+        if (!this.layout.moveMode || event.button !== 0) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const abs = this.absShapePoints(item);
+        const a = abs[edgeIndex], b = abs[(edgeIndex + 1) % abs.length];
+        abs.splice(edgeIndex + 1, 0, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+        this.commitShapePoints(item.id, abs);
+        const updated = this.layout.items.find((i) => i.id === item.id);
+        this.gestureId = item.id;
+        this.gestureMode = 'vertex';
+        this.gestureVertexIndex = edgeIndex + 1;
+        this.gestureStartX = event.clientX;
+        this.gestureStartY = event.clientY;
+        this.gestureVertexAbs = updated ? this.absShapePoints(updated) : abs;
+        window.addEventListener('pointermove', this.boundMove);
+        window.addEventListener('pointerup', this.boundUp);
     }
 
-    // Outline loop(s) of the union of a group's rectangles, each a list of
-    // corner points (collinear points dropped), via a grid-cell boundary trace
-    // with the interior kept on the right of every directed edge.
-    private unionOutline(frames: StreamItem[]): { x: number; y: number }[][] {
-        const xs = Array.from(new Set(frames.flatMap((f) => [f.x, f.x + f.w]))).sort((a, b) => a - b);
-        const ys = Array.from(new Set(frames.flatMap((f) => [f.y, f.y + f.h]))).sort((a, b) => a - b);
-        const nx = xs.length - 1, ny = ys.length - 1;
-        const inside = (i: number, j: number): boolean => {
-            if (i < 0 || j < 0 || i >= nx || j >= ny) { return false; }
-            const cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2;
-            return frames.some((f) => cx > f.x && cx < f.x + f.w && cy > f.y && cy < f.y + f.h);
-        };
-        const k = (i: number, j: number) => `${i},${j}`;
-        const edges = new Map<string, [number, number]>(); // from -> to (grid indices)
-        for (let i = 0; i <= nx; i++) {
-            for (let j = 0; j <= ny; j++) {
-                if (i < nx) { // horizontal edge (i,j)-(i+1,j): above=(i,j-1) below=(i,j)
-                    const below = inside(i, j), above = inside(i, j - 1);
-                    if (below && !above) { edges.set(k(i, j), [i + 1, j]); }
-                    else if (above && !below) { edges.set(k(i + 1, j), [i, j]); }
-                }
-                if (j < ny) { // vertical edge (i,j)-(i,j+1): left=(i-1,j) right=(i,j)
-                    const right = inside(i, j), left = inside(i - 1, j);
-                    if (right && !left) { edges.set(k(i, j + 1), [i, j]); }
-                    else if (left && !right) { edges.set(k(i, j), [i, j + 1]); }
-                }
-            }
+    // Double-click a corner to remove it (keep at least a triangle).
+    onVertexDelete(item: StreamItem, index: number, event: Event): void {
+        event.preventDefault();
+        event.stopPropagation();
+        const abs = this.absShapePoints(item);
+        if (abs.length <= 3) {
+            return;
         }
-        const loops: { x: number; y: number }[][] = [];
-        const used = new Set<string>();
-        for (const start of edges.keys()) {
-            if (used.has(start)) { continue; }
-            const pts: [number, number][] = [];
-            let cur: string | undefined = start;
-            while (cur && !used.has(cur)) {
-                used.add(cur);
-                const to = edges.get(cur);
-                if (!to) { break; }
-                const [ci, cj] = cur.split(',').map(Number);
-                pts.push([ci, cj]);
-                cur = k(to[0], to[1]);
-            }
-            if (pts.length < 4) { continue; }
-            const poly: { x: number; y: number }[] = [];
-            const n = pts.length;
-            for (let p = 0; p < n; p++) {
-                const a = pts[(p - 1 + n) % n], b = pts[p], c = pts[(p + 1) % n];
-                const collinear = (a[0] === b[0] && b[0] === c[0]) || (a[1] === b[1] && b[1] === c[1]);
-                if (!collinear) { poly.push({ x: xs[b[0]], y: ys[b[1]] }); }
-            }
-            if (poly.length >= 4) { loops.push(poly); }
-        }
-        return loops;
+        abs.splice(index, 1);
+        this.commitShapePoints(item.id, abs);
+    }
+
+    // Write absolute corner points back to a shape, re-anchoring x/y/w/h so the
+    // item's box always tightly wraps the polygon (points stay >= 0).
+    private commitShapePoints(id: string, abs: { x: number; y: number }[]): void {
+        const xs = abs.map((p) => p.x), ys = abs.map((p) => p.y);
+        const minX = Math.max(0, Math.min(...xs)), minY = Math.max(0, Math.min(...ys));
+        const maxX = Math.max(...xs), maxY = Math.max(...ys);
+        const points = abs.map((p) => ({ x: p.x - minX, y: p.y - minY }));
+        this.streamLayoutService.updateItem(id, {
+            x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY), points,
+        });
     }
 
     // SVG path for a rectilinear loop with rounded corners. Convex corners round
@@ -936,19 +875,6 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         }
     }
 
-    // Like applyToTargets, but also pushes the patch to every frame linked to a
-    // target — so a linked group's border colour/width/rounding stays unified.
-    private applyLinked(patch: Partial<StreamItem>): void {
-        for (const id of this.targetIds()) {
-            this.streamLayoutService.updateItem(id, patch);
-            for (const mate of this.groupMatesOf(id)) {
-                if (mate.id !== id) {
-                    this.streamLayoutService.updateItem(mate.id, patch);
-                }
-            }
-        }
-    }
-
     // Styling fields carried by Copy/Paste — everything visual, but not the
     // element's identity, geometry, or content (id/type/x/y/w/h/text/title
     // text/history columns stay put).
@@ -958,7 +884,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         'titleEnabled', 'titleColor', 'titleBold', 'titleUseLed', 'titleFontSize', 'titleFontFamily',
         'autoScroll', 'histRowLines', 'histColLines', 'histLineWidth', 'histLineColor',
         'borderWidth', 'innerWidth', 'cornerRadius', 'centerFill', 'centerColor', 'centerUseLed',
-        'middleFill', 'middleWidth', 'middleColor', 'middleUseLed', 'linkMode', 'linkDivider',
+        'middleFill', 'middleWidth', 'middleColor', 'middleUseLed',
     ];
 
     copyItemStyle(): void {
@@ -1062,10 +988,6 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setCtxItemLed(useLedColor: boolean): void {
         this.applyToTargets({ useLedColor });
-    }
-
-    setLinkDivider(linkDivider: boolean): void {
-        this.applyLinked({ linkDivider });
     }
 
     setCtxItemText(text: string): void {
@@ -1338,6 +1260,17 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
                 this.streamLayoutService.updateItem(t.id, { x, y });
             }
+        } else if (this.gestureMode === 'vertex') {
+            // Drag a single shapable-border corner; re-anchor the box to wrap it.
+            const abs = this.gestureVertexAbs.map((p) => ({ ...p }));
+            const start = this.gestureVertexAbs[this.gestureVertexIndex];
+            if (start) {
+                abs[this.gestureVertexIndex] = {
+                    x: Math.max(0, snap(start.x + dx)),
+                    y: Math.max(0, snap(start.y + dy)),
+                };
+                this.commitShapePoints(this.gestureId, abs);
+            }
         } else {
             const item = this.layout.items.find((i) => i.id === this.gestureId);
             const minW = item ? streamItemMinW(item.type) : 20;
@@ -1376,7 +1309,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         // prefer center-to-center alignment over edge alignment by discounting
         // its match distance.
         const dragged = this.layout.items.find((i) => i.id === id);
-        const preferCenter = !!dragged && !streamIsFrame(dragged.type);
+        const preferCenter = !!dragged && !streamIsBorder(dragged.type);
         const centerBonus = 5;
         const movingIds = new Set(this.moveTargets.map((t) => t.id));
 
@@ -1477,7 +1410,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setBorderWidth(value: number): void {
         if (Number.isFinite(value)) {
-            this.applyLinked({ borderWidth: this.clampWidth(value) });
+            this.applyToTargets({ borderWidth: this.clampWidth(value) });
         }
     }
 
@@ -1489,7 +1422,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setCornerRadius(value: number): void {
         if (Number.isFinite(value)) {
-            this.applyLinked({ cornerRadius: Math.max(0, Math.min(200, Math.round(value))) });
+            this.applyToTargets({ cornerRadius: Math.max(0, Math.min(200, Math.round(value))) });
         }
     }
 
@@ -1525,9 +1458,6 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.applyToTargets({ middleUseLed });
     }
 
-    setLinkMode(linkMode: boolean): void {
-        this.applyToTargets({ linkMode });
-    }
 
     private detachGestureListeners(): void {
         window.removeEventListener('pointermove', this.boundMove);
@@ -1580,7 +1510,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
                 const top = Math.max(0, Math.min(1, est / dur)) * maxV;
                 writes.push(() => { content.scrollTop = top; });
 
-            } else if (type !== 'history' && !streamIsFrame(type) && type !== 'text') {
+            } else if (type !== 'history' && !streamIsBorder(type) && type !== 'text') {
                 // Single-line value: marquee horizontally when it overflows.
                 const maxH = content.scrollWidth - content.clientWidth;
                 if (!auto || maxH <= 1) {

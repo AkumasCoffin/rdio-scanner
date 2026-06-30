@@ -5,13 +5,13 @@
     (pointerdown)="onCanvasPointerDown($event)"
     (contextmenu)="onCanvasContext($event)">
 
-    <!-- Merged outline for touching link-mode frames (drawn behind the items).
-         Populated imperatively in the component so gradient paint servers stay
-         in the SVG namespace; differently coloured modules blend at the seams. -->
+    <!-- Shapable-border bands (drawn behind the items). Populated imperatively
+         in the component so paths stay in the SVG namespace. -->
     <svg #linkLayer class="link-layer"></svg>
 
     <div *ngFor="let item of layout.items; trackBy: trackItem" class="stream-item"
         [class.frame]="isFrame(item.type)"
+        [class.shape]="isShape(item.type)"
         [class.big]="item.type === 'talkgroupName'"
         [class.small]="item.type === 'delay' || item.type === 'tempAvoid' || item.type === 'avoid' || item.type === 'patch'"
         [class.flag]="item.type === 'avoid' || item.type === 'patch'"
@@ -92,7 +92,7 @@
                     <span *ngSwitchCase="'system'">{{ callSystem }}</span>
                     <span *ngSwitchCase="'tag'">{{ callTag }}</span>
                     <span *ngSwitchCase="'talkgroup'">{{ callTalkgroup }}</span>
-                    <span *ngSwitchCase="'callDate'">{{ callDate | date:'MM/dd' }}</span>
+                    <span *ngSwitchCase="'callDate'">{{ displayCall?.dateTime | date:'MM/dd' }}</span>
                     <span *ngSwitchCase="'talkgroupName'">{{ callTalkgroupName }}</span>
                     <span *ngSwitchCase="'tgid'">{{ callTalkgroupId || 0 }}</span>
                     <span *ngSwitchCase="'uid'"><ng-container *ngIf="callUnit">{{ callUnit }}</ng-container></span>
@@ -103,10 +103,24 @@
             </ng-container>
         </div>
 
-        <!-- Resize handle (edit mode) -->
-        <span class="resize-handle" *ngIf="layout.moveMode"
+        <!-- Resize handle (edit mode). Shapable borders resize by their corners. -->
+        <span class="resize-handle" *ngIf="layout.moveMode && !isShape(item.type)"
             (pointerdown)="onResizeStart(item, $event)" title="Drag to resize"></span>
     </div>
+
+    <!-- Shapable-border editing handles (edit mode): drag a corner to move it,
+         double-click to delete it, drag an edge dot to add a new bend. -->
+    <ng-container *ngIf="layout.moveMode">
+        <ng-container *ngFor="let item of shapeItems">
+            <div class="edge-handle" *ngFor="let e of edgeMids(item); let i = index"
+                [style.left.px]="e.x" [style.top.px]="e.y"
+                (pointerdown)="onEdgeAdd(item, i, $event)" title="Drag to add a bend"></div>
+            <div class="vertex-handle" *ngFor="let p of shapePoints(item); let i = index"
+                [style.left.px]="item.x + p.x" [style.top.px]="item.y + p.y"
+                (pointerdown)="onVertexStart(item, i, $event)"
+                (dblclick)="onVertexDelete(item, i, $event)" title="Drag to move • double-click to delete"></div>
+        </ng-container>
+    </ng-container>
 
     <!-- Rubber-band selection rectangle (Ctrl+drag) -->
     <div class="sel-rect" *ngIf="selecting"
@@ -146,15 +160,19 @@
                     placeholder="Custom text (Enter for new line)"></textarea>
             </label>
             <label class="ctx-row" *ngIf="ctxItem.type !== 'history'">
-                <span>{{ isFrame(ctxItem.type) ? 'Outline color' : 'Text color' }}</span>
+                <span>{{ isBorder(ctxItem.type) ? 'Outline color' : 'Text color' }}</span>
                 <input type="color" [value]="ctxItem.color" (input)="setCtxItemColor($any($event.target).value)">
             </label>
             <label class="ctx-row" *ngIf="ctxItem.type !== 'history'">
-                <span>{{ isFrame(ctxItem.type) ? 'Outline: match LCD color' : 'Match LCD color' }}</span>
+                <span>{{ isBorder(ctxItem.type) ? 'Outline: match LCD color' : 'Match LCD color' }}</span>
                 <input type="checkbox" [checked]="ctxItem.useLedColor"
                     (change)="setCtxItemLed($any($event.target).checked)">
             </label>
-            <ng-container *ngIf="isFrame(ctxItem.type)">
+            <ng-container *ngIf="isBorder(ctxItem.type)">
+                <div class="ctx-hint" *ngIf="isShape(ctxItem.type)">
+                    Drag a corner to move it, double-click it to delete it, or drag
+                    an edge dot to add a new bend.
+                </div>
                 <label class="ctx-row">
                     <span>Outline thickness</span>
                     <input type="number" min="0" max="40" [value]="ctxItem.borderWidth"
@@ -165,22 +183,6 @@
                     <input type="range" min="0" max="60" [value]="ctxItem.cornerRadius"
                         (input)="setCornerRadius($any($event.target).valueAsNumber)">
                 </label>
-                <ng-container *ngIf="ctxItem.type === 'frameLink'">
-                    <label class="ctx-row">
-                        <span>Link mode</span>
-                        <input type="checkbox" [checked]="ctxItem.linkMode"
-                            (change)="setLinkMode($any($event.target).checked)">
-                    </label>
-                    <div class="ctx-hint" *ngIf="ctxItem.linkMode">
-                        Merges with touching Linked Frames into one outline; their
-                        colours blend smoothly across the modules.
-                    </div>
-                    <label class="ctx-row" *ngIf="ctxItem.linkMode">
-                        <span>Keep dividers</span>
-                        <input type="checkbox" [checked]="ctxItem.linkDivider"
-                            (change)="setLinkDivider($any($event.target).checked)">
-                    </label>
-                </ng-container>
 
                 <div class="ctx-sep"></div>
                 <label class="ctx-row">
@@ -285,7 +287,7 @@
                 </div>
             </ng-container>
 
-            <ng-container *ngIf="!isFrame(ctxItem.type) && ctxItem.type !== 'history'">
+            <ng-container *ngIf="!isBorder(ctxItem.type) && ctxItem.type !== 'history'">
                 <label class="ctx-row">
                     <span>Text size</span>
                     <input type="number" min="6" max="200" [value]="ctxItem.fontSize"
@@ -314,7 +316,7 @@
                     </div>
                 </div>
             </ng-container>
-            <label class="ctx-row" *ngIf="!isFrame(ctxItem.type) && ctxItem.type !== 'history' && ctxItem.type !== 'text'">
+            <label class="ctx-row" *ngIf="!isBorder(ctxItem.type) && ctxItem.type !== 'history' && ctxItem.type !== 'text'">
                 <span>Auto-scroll if too big</span>
                 <input type="checkbox" [checked]="ctxItem.autoScroll"
                     (change)="setCtxItemAutoScroll($any($event.target).checked)">

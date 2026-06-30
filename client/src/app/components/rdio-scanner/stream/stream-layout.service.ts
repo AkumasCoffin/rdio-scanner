@@ -28,8 +28,9 @@ import {
     STREAM_LAYOUT_CHANNEL,
     STREAM_LAYOUT_STORAGE_KEY,
     defaultHistoryCols,
+    defaultShapePoints,
     defaultStreamLayout,
-    streamIsFrame,
+    streamIsBorder,
     streamItemTypeDef,
 } from './stream-layout';
 
@@ -96,7 +97,7 @@ export class StreamLayoutService implements OnDestroy {
             y: Math.max(0, Math.round(y)),
             w: def.w,
             h: def.h,
-            color: streamIsFrame(type) ? STREAM_DEFAULT_BORDER_COLOR : STREAM_DEFAULT_TEXT_COLOR,
+            color: streamIsBorder(type) ? STREAM_DEFAULT_BORDER_COLOR : STREAM_DEFAULT_TEXT_COLOR,
             fontSize: def.fontSize,
             fontFamily: '',
             bold: true,
@@ -130,8 +131,9 @@ export class StreamLayoutService implements OnDestroy {
             middleWidth: 2,
             middleColor: '#888888',
             middleUseLed: false,
-            linkMode: type === 'frameLink',
+            linkMode: false,
             linkDivider: false,
+            points: type === 'shape' ? defaultShapePoints(def.w, def.h) : undefined,
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
         this.commit(true);
@@ -263,11 +265,13 @@ export class StreamLayoutService implements OnDestroy {
             return null;
         }
         const r = raw as Partial<StreamItem>;
-        const def = typeof r.type === 'string' ? streamItemTypeDef(r.type) : undefined;
+        // Migrate the old linked-frame element to the shapable border.
+        const rawType = r.type === 'frameLink' ? 'shape' : r.type;
+        const def = typeof rawType === 'string' ? streamItemTypeDef(rawType) : undefined;
         if (!def) {
             return null;
         }
-        const isFrame = streamIsFrame(def.type);
+        const isFrame = streamIsBorder(def.type);
         return {
             id: typeof r.id === 'string' && r.id ? r.id : this.genId(),
             type: def.type,
@@ -313,7 +317,21 @@ export class StreamLayoutService implements OnDestroy {
             middleUseLed: typeof r.middleUseLed === 'boolean' ? r.middleUseLed : false,
             linkMode: typeof r.linkMode === 'boolean' ? r.linkMode : false,
             linkDivider: typeof r.linkDivider === 'boolean' ? r.linkDivider : false,
+            points: def.type === 'shape' ? this.normalizeShapePoints(r.points, def.w, def.h) : undefined,
         };
+    }
+
+    private normalizeShapePoints(raw: unknown, w: number, h: number): { x: number; y: number }[] {
+        if (Array.isArray(raw)) {
+            const pts = raw
+                .filter((p): p is { x: number; y: number } =>
+                    !!p && typeof (p as { x?: unknown }).x === 'number' && typeof (p as { y?: unknown }).y === 'number')
+                .map((p) => ({ x: p.x, y: p.y }));
+            if (pts.length >= 3) {
+                return pts;
+            }
+        }
+        return defaultShapePoints(w, h);
     }
 
     private normalizeHistoryCols(input: unknown): StreamHistoryCol[] {

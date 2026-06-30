@@ -87,12 +87,12 @@ export interface StreamItem {
     middleWidth: number;
     middleColor: string;
     middleUseLed: boolean;
-    // Link mode: merge shared edges with adjacent frames that also have it on,
-    // so they form one connected outline instead of stacked rectangles.
+    // Reserved (legacy link-mode flags, no longer used by the UI).
     linkMode: boolean;
-    // When linked, still draw the dividing line between adjacent modules
-    // (the outer perimeter stays merged, internal seams are kept).
     linkDivider: boolean;
+    // For the 'shape' type only: the editable border polygon, as corner points
+    // measured relative to the item's x/y. Undefined for every other type.
+    points?: { x: number; y: number }[];
 }
 
 // One column of the history table — toggleable, retitleable, with its own text
@@ -181,13 +181,27 @@ export const STREAM_ITEM_TYPES: ReadonlyArray<StreamItemType> = [
     { type: 'transcript', label: 'Transcript', w: 600, h: 170, minW: 200, minH: 60, fontSize: 20, title: 'TRANSCRIPT', titleOn: true },
     { type: 'history', label: 'History Table', w: 600, h: 200, minW: 240, minH: 80, fontSize: 13, title: '', titleOn: false },
     { type: 'frame', label: 'Border Frame', w: 560, h: 240, minW: 40, minH: 30, fontSize: 18, title: '', titleOn: false },
-    { type: 'frameLink', label: 'Linked Frame', w: 280, h: 180, minW: 40, minH: 30, fontSize: 18, title: '', titleOn: false },
+    { type: 'shape', label: 'Shapable Border', w: 320, h: 200, minW: 40, minH: 30, fontSize: 18, title: '', titleOn: false },
 ];
 
-// Both frame types are border boxes; 'frameLink' just defaults Link mode on so
-// adjacent linked frames merge into one outline.
+// 'frame' is the rectangular CSS-rendered border box. 'shape' is the editable
+// polygon border (drag corners / bend edges), drawn as concentric SVG bands.
 export function streamIsFrame(type: string): boolean {
-    return type === 'frame' || type === 'frameLink';
+    return type === 'frame';
+}
+
+export function streamIsShape(type: string): boolean {
+    return type === 'shape';
+}
+
+// Any decorative border element (no inherent content; can have several).
+export function streamIsBorder(type: string): boolean {
+    return type === 'frame' || type === 'shape';
+}
+
+// The starting rectangle for a shapable border, relative to the item's x/y.
+export function defaultShapePoints(w: number, h: number): { x: number; y: number }[] {
+    return [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }];
 }
 
 export function streamItemMinW(type: string): number {
