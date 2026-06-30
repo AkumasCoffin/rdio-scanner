@@ -476,15 +476,27 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             return { px: a.x - uy * orient * d, py: a.y + ux * orient * d, ux, uy };
         });
         const out: { x: number; y: number }[] = [];
+        const limit = Math.abs(d) * 2.5; // miter cap so sharp/reflex corners don't spike
         for (let i = 0; i < n; i++) {
             const a = lines[(i - 1 + n) % n], b = lines[i];
             const denom = a.ux * b.uy - a.uy * b.ux;
+            let p: { x: number; y: number };
             if (Math.abs(denom) < 1e-6) {
-                out.push({ x: b.px, y: b.py });
+                p = { x: b.px, y: b.py };
             } else {
                 const t = ((b.px - a.px) * b.uy - (b.py - a.py) * b.ux) / denom;
-                out.push({ x: a.px + a.ux * t, y: a.py + a.uy * t });
+                p = { x: a.px + a.ux * t, y: a.py + a.uy * t };
             }
+            // Keep the offset corner from shooting far past the original vertex
+            // at sharp/reflex corners (which made the bands spike at tight bends).
+            const v = pts[i];
+            const mdx = p.x - v.x, mdy = p.y - v.y;
+            const mlen = Math.hypot(mdx, mdy);
+            if (mlen > limit && mlen > 1e-6) {
+                const k = limit / mlen;
+                p = { x: v.x + mdx * k, y: v.y + mdy * k };
+            }
+            out.push(p);
         }
         return out;
     }
