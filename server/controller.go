@@ -51,6 +51,10 @@ type Controller struct {
 	Transcriber         *Transcriber
 	PendingTranscripts  *PendingTranscripts
 	FallbackTranscripts *FallbackTranscripts
+	// calLogThrottle rate-limits the per-request CAL diagnostic log lines
+	// (not-found / access-denied) so bot traffic to dead share links can't
+	// flood the logs table.
+	calLogThrottle *LogThrottle
 	Clients            *Clients
 	Register           chan *Client
 	Unregister         chan *Client
@@ -113,6 +117,8 @@ func NewController(config *Config) *Controller {
 	controller.Transcriber = NewTranscriber(controller)
 	controller.PendingTranscripts = NewPendingTranscripts()
 	controller.FallbackTranscripts = NewFallbackTranscripts()
+	// At most 5 CAL not-found/denied log lines per source IP per minute.
+	controller.calLogThrottle = NewLogThrottle(5, time.Minute)
 
 	controller.Logs.setDaemon(config.daemon)
 	controller.Logs.setDatabase(controller.Database)
@@ -638,7 +644,11 @@ func (controller *Controller) ProcessMessageCommandCall(client *Client, message 
 			// Share-link to a call that's been purged (retention) or never
 			// existed. Logged so operators can confirm "the link doesn't
 			// work" is a missing-call situation rather than a delivery bug.
-			controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("CAL request: call id=%v not found (ip=%s ident=%s flag=%s)", id, client.GetRemoteAddr(), client.Access.Ident, message.Flag))
+			// Throttled per-IP: bots crawling dead share links would otherwise
+			// flood the logs table (every LogEvent is a DB insert).
+			if controller.calLogThrottle.Allow(client.GetRemoteAddr()) {
+				controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("CAL request: call id=%v not found (ip=%s ident=%s flag=%s)", id, client.GetRemoteAddr(), client.Access.Ident, message.Flag))
+			}
 			return nil
 		}
 		return err
@@ -648,8 +658,11 @@ func (controller *Controller) ProcessMessageCommandCall(client *Client, message 
 		// Restricted server: the requester's access code doesn't cover this
 		// call's system/talkgroup. Previously silent — logged so a shared
 		// link landing on a viewer who can't actually see the call shows up
-		// in the server log instead of producing a blank UI.
-		controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("CAL request: call id=%v denied (ip=%s ident=%s system=%v talkgroup=%v flag=%s)", id, client.GetRemoteAddr(), client.Access.Ident, call.System, call.Talkgroup, message.Flag))
+		// in the server log instead of producing a blank UI. Throttled per-IP
+		// for the same flood reason as the not-found case above.
+		if controller.calLogThrottle.Allow(client.GetRemoteAddr()) {
+			controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("CAL request: call id=%v denied (ip=%s ident=%s system=%v talkgroup=%v flag=%s)", id, client.GetRemoteAddr(), client.Access.Ident, call.System, call.Talkgroup, message.Flag))
+		}
 		return nil
 	}
 

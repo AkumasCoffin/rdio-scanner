@@ -42,7 +42,11 @@ type Admin struct {
 	Tokens           []string
 	Unregister       chan *websocket.Conn
 	mutex            sync.Mutex
-	running          bool
+	// attemptsMu guards the Attempts map, which LoginHandler mutates from
+	// concurrent HTTP goroutines. Separate from mutex (held by the config
+	// handler during DB writes) so a slow config save can't block logins.
+	attemptsMu sync.Mutex
+	running    bool
 }
 
 type AdminLoginAttempt struct {
@@ -56,7 +60,7 @@ func NewAdmin(controller *Controller) *Admin {
 	return &Admin{
 		Attempts:         AdminLoginAttempts{},
 		AttemptsMax:      uint(3),
-		AttemptsMaxDelay: time.Duration(time.Duration.Minutes(10)),
+		AttemptsMaxDelay: 10 * time.Minute,
 		Broadcast:        make(chan *[]byte),
 		Conns:            make(map[*websocket.Conn]bool),
 		Controller:       controller,
@@ -399,28 +403,25 @@ func (admin *Admin) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		remoteAddr := GetRemoteAddr(r)
+		now := time.Now()
 
-		attempt := admin.Attempts[remoteAddr]
-
-		if attempt == nil {
-			admin.Attempts[remoteAddr] = &AdminLoginAttempt{
-				Count: 1,
-				Date:  time.Now(),
+		// Lockout check (with auto-expiry). A failed-attempt record older than
+		// AttemptsMaxDelay is stale — drop it so the IP gets a fresh window
+		// instead of being locked out forever (the previous code only cleared
+		// records on a successful login, which is impossible while locked, so a
+		// lockout could only be undone by restarting the server). Reject before
+		// the bcrypt compare so a locked/brute-forcing IP can't burn CPU.
+		admin.attemptsMu.Lock()
+		if a := admin.Attempts[remoteAddr]; a != nil {
+			if now.Sub(a.Date) > admin.AttemptsMaxDelay {
+				delete(admin.Attempts, remoteAddr)
+			} else if a.Count >= admin.AttemptsMax {
+				admin.attemptsMu.Unlock()
+				w.WriteHeader(http.StatusUnauthorized)
+				return
 			}
-			attempt = admin.Attempts[remoteAddr]
-		} else {
-			attempt.Count++
-			attempt.Date = time.Now()
 		}
-
-		if attempt.Count > admin.AttemptsMax || time.Since(attempt.Date) < admin.AttemptsMaxDelay {
-			if attempt.Count == admin.AttemptsMax+1 {
-				admin.Controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("too many login attempts for ip=\"%v\"", remoteAddr))
-			}
-
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
+		admin.attemptsMu.Unlock()
 
 		ok := false
 
@@ -434,7 +435,22 @@ func (admin *Admin) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !ok {
-			admin.Controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("invalid login attempt for ip %v", remoteAddr))
+			admin.attemptsMu.Lock()
+			a := admin.Attempts[remoteAddr]
+			if a == nil {
+				a = &AdminLoginAttempt{}
+				admin.Attempts[remoteAddr] = a
+			}
+			a.Count++
+			a.Date = now
+			reachedLimit := a.Count == admin.AttemptsMax
+			admin.attemptsMu.Unlock()
+
+			if reachedLimit {
+				admin.Controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("too many login attempts for ip=\"%v\" (locked %v)", remoteAddr, admin.AttemptsMaxDelay))
+			} else {
+				admin.Controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("invalid login attempt for ip %v", remoteAddr))
+			}
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -469,11 +485,16 @@ func (admin *Admin) LoginHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Successful login: clear this IP's failed-attempt record and prune any
+		// other stale ones so the map can't grow unbounded over time.
+		admin.attemptsMu.Lock()
+		delete(admin.Attempts, remoteAddr)
 		for k, v := range admin.Attempts {
-			if time.Since(v.Date) > admin.AttemptsMaxDelay {
+			if now.Sub(v.Date) > admin.AttemptsMaxDelay {
 				delete(admin.Attempts, k)
 			}
 		}
+		admin.attemptsMu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(b)
