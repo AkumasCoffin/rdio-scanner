@@ -108,9 +108,9 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private boundSelMove = (e: PointerEvent) => this.onSelectMove(e);
     private boundSelUp = () => this.onSelectEnd();
 
-    // Active drag/resize/vertex state, set on pointerdown over an item in edit mode.
+    // Active drag/resize/vertex/divider state, set on pointerdown in edit mode.
     private gestureId: string | null = null;
-    private gestureMode: 'move' | 'resize' | 'vertex' | null = null;
+    private gestureMode: 'move' | 'resize' | 'vertex' | 'divider' | null = null;
     private gestureStartX = 0;
     private gestureStartY = 0;
     private gestureOrigW = 0;
@@ -119,6 +119,9 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // (absolute canvas coords) captured at gesture start.
     private gestureVertexIndex = 0;
     private gestureVertexAbs: { x: number; y: number }[] = [];
+    // Divider drag (shapable border): which divider, and its 0..1 position at start.
+    private gestureDividerIndex = 0;
+    private gestureDividerStartPos = 0;
     // Original positions of every item being moved (one, or all selected).
     private moveTargets: { id: string; x: number; y: number }[] = [];
 
@@ -365,7 +368,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // geometry or styling changes, and recomputed only when needed (sig check).
     private shapeSig = '';
     private shapeDirty = false;
-    private shapeRenders: { outline: string; bands: { color: string; width: number }[] }[] = [];
+    private shapeRenders: { outline: string; bands: { color: string; width: number }[]; dividers: { d: string; color: string; width: number }[] }[] = [];
 
     ngAfterViewChecked(): void {
         this.recomputeShapes();
@@ -398,13 +401,27 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         });
     }
 
+    // A shape's internal divider lines (vertical / horizontal).
+    shapeDividers(item: StreamItem): { axis: 'h' | 'v'; pos: number }[] {
+        return item.dividers ?? [];
+    }
+
+    // Where a divider's drag handle sits (its midpoint within the box).
+    dividerHandleX(item: StreamItem, dv: { axis: 'h' | 'v'; pos: number }): number {
+        return item.x + (dv.axis === 'v' ? dv.pos * item.w : item.w / 2);
+    }
+
+    dividerHandleY(item: StreamItem, dv: { axis: 'h' | 'v'; pos: number }): number {
+        return item.y + (dv.axis === 'h' ? dv.pos * item.h : item.h / 2);
+    }
+
     private recomputeShapes(): void {
         const shapes = this.shapeItems;
         const sig = shapes
             .map((s) => `${s.id}:${s.x},${s.y}:${JSON.stringify(s.points)}:${s.borderWidth},${s.cornerRadius},${s.color},${s.useLedColor ? 1 : 0}`
                 + `|${s.middleFill ? 1 : 0},${s.middleWidth},${s.middleColor},${s.middleUseLed ? 1 : 0}`
                 + `|${s.centerFill ? 1 : 0},${s.innerWidth},${s.centerColor},${s.centerUseLed ? 1 : 0}`
-                + `|${s.hideOnCall ? 1 : 0},${s.hideOnIdle ? 1 : 0}`)
+                + `|${s.hideOnCall ? 1 : 0},${s.hideOnIdle ? 1 : 0}:${s.w},${s.h}:${JSON.stringify(s.dividers)}`)
             .join('||') + '#' + (this.ledColor() ?? '') + (this.waitingForCall ? 'i' : 'c');
         if (sig === this.shapeSig) {
             return;
@@ -429,7 +446,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // only its inside half shows. Widest (outer colour) first, narrower bands
     // painted over it — giving outer/middle/inner bands aligned to the outline.
     // No polygon offsetting, so corners (including reflex bumps) can't spike.
-    private shapeRender(item: StreamItem): { outline: string; bands: { color: string; width: number }[] } | null {
+    private shapeRender(item: StreamItem): { outline: string; bands: { color: string; width: number }[]; dividers: { d: string; color: string; width: number }[] } | null {
         const abs = this.absShapePoints(item);
         const outline = this.roundedPath(abs, item.cornerRadius);
         if (!outline) {
@@ -449,7 +466,23 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         if (wi > 0) {
             bands.push({ color: this.innerColor(item), width: 2 * wi });
         }
-        return bands.length ? { outline, bands } : null;
+        // Internal dividers: full-extent lines in the outer colour, the border's
+        // thickness, clipped to the interior and drawn under the bands so they
+        // meet the inner edge of the border cleanly.
+        const dividers: { d: string; color: string; width: number }[] = [];
+        if (total > 0) {
+            const color = this.itemColor(item);
+            for (const dv of this.shapeDividers(item)) {
+                if (dv.axis === 'v') {
+                    const x = item.x + dv.pos * item.w;
+                    dividers.push({ d: `M ${x.toFixed(2)} ${(item.y - 2).toFixed(2)} L ${x.toFixed(2)} ${(item.y + item.h + 2).toFixed(2)}`, color, width: total });
+                } else {
+                    const y = item.y + dv.pos * item.h;
+                    dividers.push({ d: `M ${(item.x - 2).toFixed(2)} ${y.toFixed(2)} L ${(item.x + item.w + 2).toFixed(2)} ${y.toFixed(2)}`, color, width: total });
+                }
+            }
+        }
+        return bands.length ? { outline, bands, dividers } : null;
     }
 
     // Rebuild the #linkLayer SVG children directly (correct SVG namespace, so it
@@ -479,6 +512,17 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             clipPath.setAttribute('d', r.outline);
             clip.appendChild(clipPath);
             defs.appendChild(clip);
+            // Dividers first (under the bands), clipped to the shape interior.
+            for (const dv of r.dividers) {
+                const line = this.document.createElementNS(NS, 'path');
+                line.setAttribute('d', dv.d);
+                line.setAttribute('fill', 'none');
+                line.setAttribute('stroke', dv.color);
+                line.setAttribute('stroke-width', String(dv.width));
+                line.setAttribute('clip-path', `url(#${clipId})`);
+                line.style.clipPath = `url(#${clipId})`;
+                svg.appendChild(line);
+            }
             for (const band of r.bands) {
                 const path = this.document.createElementNS(NS, 'path');
                 path.setAttribute('d', r.outline);
@@ -567,6 +611,41 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.streamLayoutService.updateItem(id, {
             x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY), points,
         });
+    }
+
+    // Add a divider (centred) to the right-clicked shapable border.
+    addDivider(axis: 'h' | 'v'): void {
+        if (!this.ctxItem || this.ctxItem.type !== 'shape') {
+            return;
+        }
+        const dividers = [...(this.ctxItem.dividers ?? []), { axis, pos: 0.5 }];
+        this.streamLayoutService.updateItem(this.ctxItem.id, { dividers });
+        this.refreshCtxItem();
+    }
+
+    // Start dragging a divider along its axis.
+    onDividerStart(item: StreamItem, index: number, event: PointerEvent): void {
+        if (!this.layout.moveMode || event.button !== 0) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        this.gestureId = item.id;
+        this.gestureMode = 'divider';
+        this.gestureDividerIndex = index;
+        this.gestureDividerStartPos = (item.dividers ?? [])[index]?.pos ?? 0.5;
+        this.gestureStartX = event.clientX;
+        this.gestureStartY = event.clientY;
+        window.addEventListener('pointermove', this.boundMove);
+        window.addEventListener('pointerup', this.boundUp);
+    }
+
+    // Double-click a divider to remove it.
+    onDividerDelete(item: StreamItem, index: number, event: Event): void {
+        event.preventDefault();
+        event.stopPropagation();
+        const dividers = (item.dividers ?? []).filter((_, i) => i !== index);
+        this.streamLayoutService.updateItem(item.id, { dividers });
     }
 
     // SVG path for a closed polygon with rounded corners of a constant arc
@@ -1288,6 +1367,22 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
                     y: Math.max(0, vsnap(start.y + dy)),
                 };
                 this.commitShapePoints(this.gestureId, abs);
+            }
+        } else if (this.gestureMode === 'divider') {
+            // Slide a divider along its axis (snaps to grid; Shift for free).
+            const item = this.layout.items.find((i) => i.id === this.gestureId);
+            const dividers = item?.dividers ? item.dividers.map((d) => ({ ...d })) : null;
+            const dv = dividers?.[this.gestureDividerIndex];
+            if (item && dividers && dv) {
+                const gsnap = (n: number): number => (event.shiftKey ? Math.round(n) : this.snapToGrid(n));
+                if (dv.axis === 'v' && item.w > 0) {
+                    const abs = gsnap(item.x + this.gestureDividerStartPos * item.w + dx);
+                    dv.pos = Math.max(0, Math.min(1, (abs - item.x) / item.w));
+                } else if (dv.axis === 'h' && item.h > 0) {
+                    const abs = gsnap(item.y + this.gestureDividerStartPos * item.h + dy);
+                    dv.pos = Math.max(0, Math.min(1, (abs - item.y) / item.h));
+                }
+                this.streamLayoutService.updateItem(item.id, { dividers });
             }
         } else {
             const item = this.layout.items.find((i) => i.id === this.gestureId);

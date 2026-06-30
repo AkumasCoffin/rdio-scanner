@@ -132,6 +132,7 @@ export class StreamLayoutService implements OnDestroy {
             middleColor: '#888888',
             middleUseLed: false,
             points: type === 'shape' ? defaultShapePoints(def.w, def.h) : undefined,
+            dividers: type === 'shape' ? [] : undefined,
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
         this.commit(true);
@@ -318,6 +319,7 @@ export class StreamLayoutService implements OnDestroy {
                     typeof r.w === 'number' ? r.w : def.w,
                     typeof r.h === 'number' ? r.h : def.h)
                 : undefined,
+            dividers: def.type === 'shape' ? this.normalizeDividers(r.dividers) : undefined,
         };
     }
 
@@ -332,6 +334,17 @@ export class StreamLayoutService implements OnDestroy {
             }
         }
         return defaultShapePoints(w, h);
+    }
+
+    private normalizeDividers(raw: unknown): { axis: 'h' | 'v'; pos: number }[] {
+        if (!Array.isArray(raw)) {
+            return [];
+        }
+        return raw
+            .filter((d): d is { axis: 'h' | 'v'; pos: number } =>
+                !!d && ((d as { axis?: unknown }).axis === 'h' || (d as { axis?: unknown }).axis === 'v')
+                && typeof (d as { pos?: unknown }).pos === 'number')
+            .map((d) => ({ axis: d.axis, pos: Math.max(0, Math.min(1, d.pos)) }));
     }
 
     private normalizeHistoryCols(input: unknown): StreamHistoryCol[] {

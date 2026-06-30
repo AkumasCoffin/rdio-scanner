@@ -90,6 +90,9 @@ export interface StreamItem {
     // For the 'shape' type only: the editable border polygon, as corner points
     // measured relative to the item's x/y. Undefined for every other type.
     points?: { x: number; y: number }[];
+    // For the 'shape' type only: internal divider lines. axis 'v' (vertical) or
+    // 'h' (horizontal); pos is a 0..1 fraction across the shape's bounding box.
+    dividers?: { axis: 'h' | 'v'; pos: number }[];
 }
 
 // One column of the history table — toggleable, retitleable, with its own text

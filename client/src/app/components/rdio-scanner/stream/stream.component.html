@@ -121,6 +121,12 @@
                 (pointerdown)="onVertexStart(item, i, $event)"
                 (dblclick)="onVertexDelete(item, i, $event)"
                 title="Drag to move (snaps to grid, hold Shift for free) • double-click to delete"></div>
+            <div class="divider-handle" *ngFor="let dv of shapeDividers(item); let i = index"
+                [class.vertical]="dv.axis === 'v'"
+                [style.left.px]="dividerHandleX(item, dv)" [style.top.px]="dividerHandleY(item, dv)"
+                (pointerdown)="onDividerStart(item, i, $event)"
+                (dblclick)="onDividerDelete(item, i, $event)"
+                title="Drag to move (snaps to grid, hold Shift for free) • double-click to delete"></div>
         </ng-container>
     </ng-container>
 
@@ -185,6 +191,14 @@
                     <input type="range" min="0" max="60" [value]="ctxItem.cornerRadius"
                         (input)="setCornerRadius($any($event.target).valueAsNumber)">
                 </label>
+                <ng-container *ngIf="isShape(ctxItem.type)">
+                    <button class="ctx-btn" (click)="addDivider('v')">
+                        <mat-icon>vertical_split</mat-icon> Add vertical divider
+                    </button>
+                    <button class="ctx-btn" (click)="addDivider('h')">
+                        <mat-icon>horizontal_split</mat-icon> Add horizontal divider
+                    </button>
+                </ng-container>
 
                 <div class="ctx-sep"></div>
                 <label class="ctx-row">

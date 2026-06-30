@@ -230,12 +230,29 @@
 
 /* Shapable-border editing handles, sat at the polygon's corners/edge midpoints. */
 .vertex-handle,
-.edge-handle {
+.edge-handle,
+.divider-handle {
     position: absolute;
     transform: translate(-50%, -50%);
     z-index: 1100;
     pointer-events: auto;
     box-sizing: border-box;
+}
+
+/* Divider drag handle: a small amber bar, oriented along the divider. */
+.divider-handle {
+    width: 22px;
+    height: 12px;
+    border-radius: 3px;
+    background: #f59e0b;
+    border: 2px solid #0f172a;
+    cursor: ns-resize;
+
+    &.vertical {
+        width: 12px;
+        height: 22px;
+        cursor: ew-resize;
+    }
 }
 
 .vertex-handle {
