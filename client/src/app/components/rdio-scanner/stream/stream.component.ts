@@ -189,6 +189,13 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return this.layout.items.reduce((n, i) => (i.type === type ? n + 1 : n), 0);
     }
 
+    // A type is "missing" (highlighted in the Add menu) when none are on screen
+    // — except custom text and frames, which are user-added decoration with no
+    // inherent data, so they're never flagged as missing.
+    isMissing(type: string): boolean {
+        return this.countOf(type) === 0 && type !== 'text' && type !== 'frame';
+    }
+
     // Whether a conditionally-empty element currently has a value to show — so
     // its title isn't shown standing alone when there's nothing after it.
     hasContent(item: StreamItem): boolean {
