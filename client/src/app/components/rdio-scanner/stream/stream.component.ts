@@ -269,6 +269,14 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return item.color;
     }
 
+    // Inner border colour for a two-tone frame (optionally LED-driven).
+    innerColor(item: StreamItem): string {
+        if (item.centerUseLed) {
+            return this.ledColor() ?? item.centerColor;
+        }
+        return item.centerColor;
+    }
+
     // Whether a conditionally-empty element currently has a value to show — so
     // its title isn't shown standing alone when there's nothing after it.
     hasContent(item: StreamItem): boolean {
@@ -688,6 +696,14 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return this.selectedIds.has(id);
     }
 
+    // The item currently being resized (for the live dimension readout), or null.
+    get resizingItem(): StreamItem | null {
+        if (this.gestureMode !== 'resize' || !this.gestureId) {
+            return null;
+        }
+        return this.layout.items.find((i) => i.id === this.gestureId) ?? null;
+    }
+
     // Convert a viewport (client) point to canvas-local coordinates — the same
     // space items are positioned in. Items / the rubber-band are absolutely
     // positioned within .stream-root, which is normally at (0,0) but this keeps
@@ -917,6 +933,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setCenterColor(centerColor: string): void {
         this.applyToTargets({ centerColor });
+    }
+
+    setCenterUseLed(centerUseLed: boolean): void {
+        this.applyToTargets({ centerUseLed });
     }
 
     private detachGestureListeners(): void {

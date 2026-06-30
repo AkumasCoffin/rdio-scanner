@@ -20,7 +20,7 @@
         [style.width.px]="item.w" [style.height.px]="item.h"
         [style.color]="itemColor(item)" [style.borderColor]="itemColor(item)"
         [style.border-width.px]="item.type === 'frame' ? item.borderWidth : null"
-        [style.background]="item.type === 'frame' && item.centerFill ? item.centerColor : null"
+        [style.box-shadow]="item.type === 'frame' && item.centerFill ? ('inset 0 0 0 ' + item.borderWidth + 'px ' + innerColor(item)) : null"
         [style.font-size.px]="item.fontSize" [style.font-family]="item.fontFamily || null"
         [style.font-weight]="item.bold ? 700 : 400"
         (pointerdown)="onDragStart(item, $event)"
@@ -101,6 +101,12 @@
     <div class="guide guide-v" *ngIf="guideX !== null" [style.left.px]="guideX"></div>
     <div class="guide guide-h" *ngIf="guideY !== null" [style.top.px]="guideY"></div>
 
+    <!-- Live dimensions while resizing: width on the bottom edge, height on the right -->
+    <ng-container *ngIf="resizingItem as ri">
+        <div class="dim dim-w" [style.left.px]="ri.x + ri.w / 2" [style.top.px]="ri.y + ri.h">{{ ri.w }} px</div>
+        <div class="dim dim-h" [style.left.px]="ri.x + ri.w" [style.top.px]="ri.y + ri.h / 2">{{ ri.h }} px</div>
+    </ng-container>
+
     <!-- Edit-mode hint -->
     <div class="move-badge" *ngIf="layout.moveMode">
         EDIT MODE — drag to move · corner to resize · right-click to edit · Ctrl+click / Ctrl+drag to multi-select
@@ -130,14 +136,19 @@
                         (input)="setBorderWidth($any($event.target).valueAsNumber)">
                 </label>
                 <label class="ctx-row">
-                    <span>Fill center</span>
+                    <span>Inner border</span>
                     <input type="checkbox" [checked]="ctxItem.centerFill"
                         (change)="setCenterFill($any($event.target).checked)">
                 </label>
                 <label class="ctx-row" *ngIf="ctxItem.centerFill">
-                    <span>Center color</span>
+                    <span>Inner color</span>
                     <input type="color" [value]="ctxItem.centerColor"
                         (input)="setCenterColor($any($event.target).value)">
+                </label>
+                <label class="ctx-row" *ngIf="ctxItem.centerFill">
+                    <span>Inner: match LCD</span>
+                    <input type="checkbox" [checked]="ctxItem.centerUseLed"
+                        (change)="setCenterUseLed($any($event.target).checked)">
                 </label>
             </ng-container>
             <label class="ctx-row" *ngIf="ctxItem.type !== 'history'">

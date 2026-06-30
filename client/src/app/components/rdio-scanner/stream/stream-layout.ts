@@ -63,6 +63,8 @@ export interface StreamItem {
     borderWidth: number;
     centerFill: boolean;
     centerColor: string;
+    // Inner border colour follows the playing talkgroup's LCD/LED colour.
+    centerUseLed: boolean;
 }
 
 // One column of the history table — toggleable, retitleable, with its own text
@@ -223,7 +225,7 @@ export function defaultStreamLayout(): StreamLayout {
             titleEnabled: false, titleColor: STREAM_DEFAULT_TITLE_COLOR, titleBold: true,
             useLedColor: false, autoScroll: true, historyCols: [],
             histRowLines: true, histColLines: false, histLineWidth: 1, histLineColor: '#888888',
-            borderWidth: 2, centerFill: false, centerColor: '#000000',
+            borderWidth: 2, centerFill: false, centerColor: '#000000', centerUseLed: false,
         });
 
     const el = (type: string, x: number, y: number, w: number, h: number): StreamItem =>
@@ -247,6 +249,7 @@ export function defaultStreamLayout(): StreamLayout {
             borderWidth: 2,
             centerFill: false,
             centerColor: '#000000',
+            centerUseLed: false,
         });
 
     return {

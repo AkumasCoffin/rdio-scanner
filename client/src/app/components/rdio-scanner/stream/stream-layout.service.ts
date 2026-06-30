@@ -113,6 +113,7 @@ export class StreamLayoutService implements OnDestroy {
             borderWidth: 2,
             centerFill: false,
             centerColor: '#000000',
+            centerUseLed: false,
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
         this.commit(true);
@@ -276,6 +277,7 @@ export class StreamLayoutService implements OnDestroy {
             borderWidth: typeof r.borderWidth === 'number' ? r.borderWidth : 2,
             centerFill: typeof r.centerFill === 'boolean' ? r.centerFill : false,
             centerColor: typeof r.centerColor === 'string' ? r.centerColor : '#000000',
+            centerUseLed: typeof r.centerUseLed === 'boolean' ? r.centerUseLed : false,
         };
     }
 
