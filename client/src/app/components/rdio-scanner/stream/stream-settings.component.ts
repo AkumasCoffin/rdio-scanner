@@ -17,9 +17,10 @@
  * ****************************************************************************
  */
 
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { Component, ElementRef, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import { Subscription } from 'rxjs';
-import { StreamLayout, STREAM_ELEMENTS } from './stream-layout';
+import { StreamItem, StreamLayout, STREAM_ITEM_TYPES, streamItemLabel } from './stream-layout';
 import { StreamLayoutService } from './stream-layout.service';
 
 // The Stream-settings menu, shown on the main page (as a dialog). Every change
@@ -32,11 +33,16 @@ import { StreamLayoutService } from './stream-layout.service';
 export class RdioScannerStreamSettingsComponent implements OnDestroy, OnInit {
     layout: StreamLayout = this.streamLayoutService.getLayout();
 
-    readonly elements = STREAM_ELEMENTS;
+    readonly itemTypes = STREAM_ITEM_TYPES;
+
+    @ViewChild('importFile') private importFile: ElementRef<HTMLInputElement> | undefined;
 
     private sub: Subscription | undefined;
 
-    constructor(private streamLayoutService: StreamLayoutService) { }
+    constructor(
+        private streamLayoutService: StreamLayoutService,
+        private matSnackBar: MatSnackBar,
+    ) { }
 
     ngOnInit(): void {
         this.sub = this.streamLayoutService.changes.subscribe((layout) => (this.layout = layout));
@@ -46,12 +52,12 @@ export class RdioScannerStreamSettingsComponent implements OnDestroy, OnInit {
         this.sub?.unsubscribe();
     }
 
-    openStreamWindow(): void {
-        window.open('stream', 'rdio-scanner-stream', 'noopener');
+    trackItem(_index: number, item: StreamItem): string {
+        return item.id;
     }
 
-    setTextColor(value: string): void {
-        this.streamLayoutService.update({ textColor: value });
+    itemLabel(type: string): string {
+        return streamItemLabel(type);
     }
 
     setBgColor(value: string): void {
@@ -67,15 +73,61 @@ export class RdioScannerStreamSettingsComponent implements OnDestroy, OnInit {
         this.streamLayoutService.update({ gridSize: size });
     }
 
-    isVisible(key: string): boolean {
-        return !!this.layout.elements[key]?.visible;
+    addItem(type: string): void {
+        this.streamLayoutService.addItem(type);
     }
 
-    toggleVisible(key: string, visible: boolean): void {
-        this.streamLayoutService.setVisible(key, visible);
+    removeItem(id: string): void {
+        this.streamLayoutService.removeItem(id);
+    }
+
+    setItemColor(id: string, value: string): void {
+        this.streamLayoutService.updateItem(id, { color: value });
     }
 
     reset(): void {
         this.streamLayoutService.reset();
+    }
+
+    // Download the current layout as a JSON file.
+    exportConfig(): void {
+        const json = this.streamLayoutService.exportLayout();
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'rdio-scanner-stream-layout.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    triggerImport(): void {
+        this.importFile?.nativeElement.click();
+    }
+
+    onImportFile(event: Event): void {
+        const input = event.target as HTMLInputElement;
+        const file = input.files?.[0];
+        if (!file) {
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = this.streamLayoutService.importLayout(String(reader.result ?? ''));
+            this.matSnackBar.open(
+                result.success ? 'Stream layout imported' : `Import failed: ${result.error}`,
+                '',
+                { duration: 2500 },
+            );
+            input.value = '';
+        };
+        reader.onerror = () => {
+            this.matSnackBar.open('Could not read file', '', { duration: 2500 });
+            input.value = '';
+        };
+        reader.readAsText(file);
     }
 }

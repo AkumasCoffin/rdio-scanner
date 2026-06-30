@@ -136,6 +136,7 @@ export interface RdioScannerEvent {
     queueJumped?: number;
     autoJumpAhead?: boolean;
     autoJumpThreshold?: number;
+    streamOpen?: boolean;
     time?: number;
     tooMany?: boolean;
     volume?: number;

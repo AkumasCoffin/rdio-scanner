@@ -8,33 +8,20 @@
 
     <div class="body" mat-dialog-content>
         <p class="hint">
-            Opens an OBS-friendly LCD + transcript page that mirrors this page's talkgroup selection,
-            avoid, hold and auto-jump. Key out the background color in OBS.
+            OBS-friendly canvas (<code>/stream</code>) that mirrors this page's talkgroup selection, avoid,
+            hold and auto-jump. Add the readouts you want, drag/resize them in move mode, then key out the
+            background color in OBS.
         </p>
 
-        <button mat-stroked-button class="open-btn" (click)="openStreamWindow()">
-            <mat-icon>open_in_new</mat-icon>
-            Open /stream window
-        </button>
-
         <div class="section">
-            <div class="row color-row">
-                <label for="stream-text-color">Text color</label>
-                <input id="stream-text-color" type="color" [value]="layout.textColor"
-                    (input)="setTextColor($any($event.target).value)">
-            </div>
             <div class="row color-row">
                 <label for="stream-bg-color">Background color</label>
                 <input id="stream-bg-color" type="color" [value]="layout.bgColor"
                     (input)="setBgColor($any($event.target).value)">
             </div>
-        </div>
-
-        <div class="section">
             <div class="row">
-                <mat-slide-toggle [checked]="layout.moveMode"
-                    (change)="setMoveMode($event.checked)">
-                    Move mode (drag elements on /stream)
+                <mat-slide-toggle [checked]="layout.moveMode" (change)="setMoveMode($event.checked)">
+                    Move mode (drag / resize on /stream)
                 </mat-slide-toggle>
             </div>
             <div class="row grid-row" [class.disabled]="!layout.moveMode">
@@ -46,12 +33,44 @@
         </div>
 
         <div class="section">
-            <div class="section-title">Elements</div>
-            <div class="elements">
-                <mat-checkbox *ngFor="let el of elements" [checked]="isVisible(el.key)"
-                    (change)="toggleVisible(el.key, $event.checked)">
-                    {{ el.label }}
-                </mat-checkbox>
+            <div class="section-title">Add element</div>
+            <div class="add-palette">
+                <button mat-stroked-button *ngFor="let t of itemTypes" (click)="addItem(t.type)">
+                    <mat-icon>add</mat-icon>{{ t.label }}
+                </button>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Placed items ({{ layout.items.length }})</div>
+            <div class="items-list">
+                <div class="item-row" *ngFor="let item of layout.items; trackBy: trackItem">
+                    <span class="item-name">{{ itemLabel(item.type) }}</span>
+                    <input type="color" class="item-color" [value]="item.color"
+                        [title]="itemLabel(item.type) + (item.type === 'frame' ? ' border color' : ' text color')"
+                        (input)="setItemColor(item.id, $any($event.target).value)">
+                    <button mat-icon-button class="item-remove" (click)="removeItem(item.id)"
+                        [attr.aria-label]="'Remove ' + itemLabel(item.type)">
+                        <mat-icon>delete</mat-icon>
+                    </button>
+                </div>
+                <p class="empty-note" *ngIf="!layout.items.length">No items — add some above.</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Config</div>
+            <div class="config-actions">
+                <button mat-stroked-button (click)="exportConfig()">
+                    <mat-icon>download</mat-icon>
+                    Export
+                </button>
+                <button mat-stroked-button (click)="triggerImport()">
+                    <mat-icon>upload</mat-icon>
+                    Import
+                </button>
+                <input #importFile type="file" accept="application/json,.json" hidden
+                    (change)="onImportFile($event)">
             </div>
         </div>
     </div>

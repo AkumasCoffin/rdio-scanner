@@ -19,12 +19,14 @@
 
 import { EventEmitter, Injectable, OnDestroy } from '@angular/core';
 import {
-    StreamElementLayout,
+    StreamItem,
     StreamLayout,
-    STREAM_ELEMENTS,
+    STREAM_DEFAULT_BORDER_COLOR,
+    STREAM_DEFAULT_TEXT_COLOR,
     STREAM_LAYOUT_CHANNEL,
     STREAM_LAYOUT_STORAGE_KEY,
     defaultStreamLayout,
+    streamItemTypeDef,
 } from './stream-layout';
 
 // Shared, live-synced layout state for the /stream OBS overlay.
@@ -42,6 +44,9 @@ export class StreamLayoutService implements OnDestroy {
     private layout: StreamLayout = this.load();
 
     private channel: BroadcastChannel | undefined;
+
+    // Monotonic counter feeding unique item ids (combined with a timestamp).
+    private idSeq = 0;
 
     constructor() {
         try {
@@ -66,28 +71,44 @@ export class StreamLayoutService implements OnDestroy {
         return this.layout;
     }
 
-    // Patch top-level fields (colors / moveMode / gridSize).
-    update(partial: Partial<Omit<StreamLayout, 'elements'>>): void {
+    // Patch top-level fields (bgColor / moveMode / gridSize).
+    update(partial: Partial<Omit<StreamLayout, 'items'>>): void {
         this.layout = { ...this.layout, ...partial };
         this.commit(true);
     }
 
-    // Patch a single element's visibility and/or position.
-    updateElement(key: string, partial: Partial<StreamElementLayout>): void {
-        const current = this.layout.elements[key] ?? { visible: true, x: 0, y: 0 };
-        this.layout = {
-            ...this.layout,
-            elements: { ...this.layout.elements, [key]: { ...current, ...partial } },
+    // Add a new item of the given type at a default spot. Returns its id.
+    addItem(type: string): string {
+        const def = streamItemTypeDef(type);
+        if (!def) {
+            return '';
+        }
+        const id = this.genId();
+        const item: StreamItem = {
+            id,
+            type,
+            x: 40,
+            y: 40,
+            w: def.w,
+            h: def.h,
+            color: type === 'frame' ? STREAM_DEFAULT_BORDER_COLOR : STREAM_DEFAULT_TEXT_COLOR,
         };
+        this.layout = { ...this.layout, items: [...this.layout.items, item] };
+        this.commit(true);
+        return id;
+    }
+
+    removeItem(id: string): void {
+        this.layout = { ...this.layout, items: this.layout.items.filter((i) => i.id !== id) };
         this.commit(true);
     }
 
-    setVisible(key: string, visible: boolean): void {
-        this.updateElement(key, { visible });
-    }
-
-    setPosition(key: string, x: number, y: number): void {
-        this.updateElement(key, { x, y });
+    updateItem(id: string, partial: Partial<StreamItem>): void {
+        this.layout = {
+            ...this.layout,
+            items: this.layout.items.map((i) => (i.id === id ? { ...i, ...partial } : i)),
+        };
+        this.commit(true);
     }
 
     // Restore everything to the built-in defaults.
@@ -96,11 +117,43 @@ export class StreamLayoutService implements OnDestroy {
         this.commit(true);
     }
 
+    // Serialize the current layout for download / sharing.
+    exportLayout(): string {
+        return JSON.stringify(this.layout, null, 2);
+    }
+
+    // Load a layout from an exported JSON string. Returns a result so the UI
+    // can report success/failure. Unknown/old shapes are normalized.
+    importLayout(json: string): { success: boolean; error?: string } {
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(json);
+        } catch (_) {
+            return { success: false, error: 'Not valid JSON.' };
+        }
+
+        if (!parsed || typeof parsed !== 'object') {
+            return { success: false, error: 'Not a valid stream layout.' };
+        }
+
+        this.layout = this.normalize(parsed as Partial<StreamLayout>);
+        this.commit(true);
+        return { success: true };
+    }
+
+    private genId(): string {
+        // App-side id (Date.now/Math.random are fine here — this isn't a
+        // workflow script). Combined with a counter to avoid collisions within
+        // the same millisecond.
+        this.idSeq += 1;
+        return `i${Date.now().toString(36)}-${this.idSeq.toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+    }
+
     private onRemote(data: unknown): void {
         if (!data || typeof data !== 'object') {
             return;
         }
-        this.layout = this.normalize(data as StreamLayout);
+        this.layout = this.normalize(data as Partial<StreamLayout>);
         // Apply + persist locally, but don't re-broadcast (avoids ping-pong).
         this.commit(false);
     }
@@ -136,33 +189,54 @@ export class StreamLayoutService implements OnDestroy {
         return defaultStreamLayout();
     }
 
-    // Merge a stored/received layout over the defaults so new element keys
-    // (added in a later version) always exist and bad data can't break the UI.
+    // Coerce arbitrary stored/received data into a valid layout. Falls back to
+    // defaults for anything missing or malformed; drops items of unknown type.
     private normalize(input: Partial<StreamLayout> | null | undefined): StreamLayout {
         const base = defaultStreamLayout();
         if (!input || typeof input !== 'object') {
             return base;
         }
 
-        const elements = { ...base.elements };
-        const inEls = input.elements || {};
-        for (const { key } of STREAM_ELEMENTS) {
-            const el = inEls[key];
-            if (el && typeof el === 'object') {
-                elements[key] = {
-                    visible: typeof el.visible === 'boolean' ? el.visible : base.elements[key].visible,
-                    x: typeof el.x === 'number' ? el.x : base.elements[key].x,
-                    y: typeof el.y === 'number' ? el.y : base.elements[key].y,
-                };
-            }
-        }
+        const items = Array.isArray(input.items)
+            ? input.items.reduce((acc: StreamItem[], raw) => {
+                const item = this.normalizeItem(raw);
+                if (item) {
+                    acc.push(item);
+                }
+                return acc;
+            }, [])
+            : base.items;
 
         return {
-            textColor: typeof input.textColor === 'string' ? input.textColor : base.textColor,
             bgColor: typeof input.bgColor === 'string' ? input.bgColor : base.bgColor,
+            // moveMode never persists across a fresh load as "on" by accident —
+            // but we honour whatever was stored so a live toggle survives sync.
             moveMode: typeof input.moveMode === 'boolean' ? input.moveMode : base.moveMode,
             gridSize: typeof input.gridSize === 'number' ? input.gridSize : base.gridSize,
-            elements,
+            items,
+        };
+    }
+
+    private normalizeItem(raw: unknown): StreamItem | null {
+        if (!raw || typeof raw !== 'object') {
+            return null;
+        }
+        const r = raw as Partial<StreamItem>;
+        const def = typeof r.type === 'string' ? streamItemTypeDef(r.type) : undefined;
+        if (!def) {
+            return null;
+        }
+        const isFrame = def.type === 'frame';
+        return {
+            id: typeof r.id === 'string' && r.id ? r.id : this.genId(),
+            type: def.type,
+            x: typeof r.x === 'number' ? r.x : 40,
+            y: typeof r.y === 'number' ? r.y : 40,
+            w: typeof r.w === 'number' ? r.w : def.w,
+            h: typeof r.h === 'number' ? r.h : def.h,
+            color: typeof r.color === 'string'
+                ? r.color
+                : (isFrame ? STREAM_DEFAULT_BORDER_COLOR : STREAM_DEFAULT_TEXT_COLOR),
         };
     }
 }

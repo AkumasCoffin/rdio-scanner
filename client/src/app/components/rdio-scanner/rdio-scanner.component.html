@@ -49,7 +49,7 @@
         </div>
     </mat-sidenav>
     <mat-sidenav-content>
-        <button class="stream-settings-fab" mat-icon-button matTooltip="Stream overlay (OBS)"
+        <button *ngIf="streamOpen" class="stream-settings-fab" mat-icon-button matTooltip="Stream overlay (OBS)"
             aria-label="Stream overlay settings" (click)="openStreamSettings()">
             <mat-icon>cast</mat-icon>
         </button>

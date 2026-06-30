@@ -9,10 +9,7 @@
     width: 100vw;
     height: 100vh;
     overflow: hidden;
-    /* Default look is black text on a solid white field so OBS can key the
-       background out. Both colors are overridden inline from the layout. */
-    background: #ffffff;
-    color: #000000;
+    background: #000000;
     font-family: 'Roboto Mono', 'Courier New', monospace;
     font-size: 18px;
     line-height: 1.3;
@@ -25,79 +22,167 @@
         background-image:
             repeating-linear-gradient(0deg, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px)),
             repeating-linear-gradient(90deg, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px));
+
+        /* Lift items above frames while editing, and bring the hovered item
+           (with its handles) to the very front so handles never hide behind a
+           neighbouring element. */
+        .stream-item {
+            z-index: 20;
+        }
+
+        /* Frames go ABOVE elements while editing so their corner handles are
+           reachable. Their bodies are click-through (pointer-events: none), so
+           this doesn't block dragging the elements underneath. */
+        .stream-item.frame {
+            z-index: 30;
+        }
+
+        .stream-item.movable:hover {
+            z-index: 1000;
+        }
     }
 }
 
-.stream-el {
+.stream-item {
     position: absolute;
-    white-space: nowrap;
+    box-sizing: border-box;
+    z-index: 1;
+    /* Each item reserves a fixed box; text clips at the edge so the layout
+       never jumps as call data changes length. */
+    display: flex;
+    align-items: center;
+    overflow: hidden;
 
-    &.big {
-        font-size: 34px;
+    .item-content {
+        width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: clip;
+    }
+
+    &.big .item-content {
+        font-size: 32px;
         font-weight: 700;
     }
 
-    &.small {
+    &.small .item-content {
         font-size: 14px;
         font-weight: 600;
-    }
-
-    /* Avoid / Patch flags read as emphasis without introducing a key-unsafe
-       background — just bold + a thin outline in the current text color. */
-    &.flag span {
-        display: inline-block;
-        border: 1px solid currentColor;
-        border-radius: 4px;
-        padding: 0 4px;
-        font-weight: 700;
-        letter-spacing: 0.05em;
     }
 
     .delay-removed {
         font-weight: 800;
     }
 
-    /* In move mode every element gets a dashed handle + grab cursor. */
+    /* Avoid / Patch: bold emphasis without a key-unsafe background. */
+    &.flag .flag-text {
+        font-weight: 700;
+        letter-spacing: 0.05em;
+    }
+
+    /* Border-frame item: a pure decorative rectangle that never intercepts
+       pointer events (so elements above it stay draggable); its editing
+       handles re-enable pointer events individually in move mode. */
+    &.frame {
+        z-index: 0;
+        border: 2px solid;
+        border-radius: 6px;
+        pointer-events: none;
+    }
+
+    /* Transcript: wraps + scrolls within its box instead of clipping a line. */
+    &.transcript {
+        display: block;
+        align-items: stretch;
+
+        .item-content {
+            white-space: normal;
+            height: 100%;
+            overflow-y: auto;
+        }
+
+        .transcript-label {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            opacity: 0.7;
+            margin-bottom: 6px;
+        }
+
+        .transcript-text {
+            font-size: 20px;
+            font-weight: 600;
+            line-height: 1.4;
+            word-break: break-word;
+
+            &.placeholder {
+                opacity: 0.4;
+                font-style: italic;
+            }
+        }
+    }
+
+    /* Move mode: show each item's bounds (so overlaps are visible) and reveal
+       the drag/resize/remove handles. */
     &.movable {
-        cursor: grab;
         outline: 1px dashed rgba(127, 127, 127, 0.8);
-        outline-offset: 3px;
+        outline-offset: 2px;
+        cursor: grab;
 
         &:active {
             cursor: grabbing;
         }
     }
-}
 
-.stream-el.transcript {
-    /* Spaced well away from the LCD block above (its default y sits below all
-       the readout rows). Transparent fill so only text + a thin frame show. */
-    width: clamp(320px, 48vw, 640px);
-    max-height: 38vh;
-    overflow-y: auto;
-    border: 1px solid currentColor;
-    border-radius: 8px;
-    padding: 10px 14px;
-    white-space: normal;
-
-    .transcript-label {
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.16em;
-        opacity: 0.7;
-        margin-bottom: 6px;
+    .move-handle,
+    .del-handle,
+    .resize-handle {
+        position: absolute;
+        pointer-events: auto;
+        z-index: 2;
+        font-family: 'Roboto', sans-serif;
     }
 
-    .transcript-text {
-        font-size: 20px;
-        font-weight: 600;
-        line-height: 1.4;
-        word-break: break-word;
+    .move-handle {
+        top: -10px;
+        left: -2px;
+        cursor: grab;
+        color: #0f172a;
+        background: rgba(148, 163, 184, 0.95);
+        border-radius: 4px;
+        padding: 0 4px;
+        font-size: 11px;
+        line-height: 16px;
 
-        &.placeholder {
-            opacity: 0.4;
-            font-style: italic;
+        &:active {
+            cursor: grabbing;
         }
+    }
+
+    .del-handle {
+        top: -10px;
+        right: -2px;
+        width: 16px;
+        height: 16px;
+        padding: 0;
+        border: 0;
+        border-radius: 50%;
+        background: #ef4444;
+        color: #fff;
+        font-size: 13px;
+        line-height: 16px;
+        cursor: pointer;
+    }
+
+    .resize-handle {
+        right: -3px;
+        bottom: -3px;
+        width: 12px;
+        height: 12px;
+        background: rgba(148, 163, 184, 0.95);
+        border: 1px solid #0f172a;
+        border-radius: 2px;
+        cursor: nwse-resize;
     }
 }
 
@@ -116,6 +201,7 @@
     letter-spacing: 0.03em;
     white-space: nowrap;
     pointer-events: none;
+    z-index: 5;
 }
 
 /* Start / unlock overlay — its own dark scrim, independent of the keyable

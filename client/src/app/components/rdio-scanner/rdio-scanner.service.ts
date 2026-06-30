@@ -65,13 +65,22 @@ enum WebsocketCommand {
     Version = 'VER',
 }
 
-// Messages exchanged over the stream-sync BroadcastChannel. 'request' asks the
-// leader to (re)broadcast; 'state' carries the leader's effective selection.
+// Messages exchanged over the stream-sync BroadcastChannel:
+//   request  — follower asks the leader to (re)broadcast its state
+//   state    — leader's effective selection / avoid / auto-jump
+//   ping/bye — follower presence heartbeat
+//   cmd      — leader forwards a playback control (skip/replay/pause) so the
+//              main page acts as a remote control for the /stream page
 interface StreamSyncMessage {
     type?: string;
     map?: { [key: number]: { [key: number]: boolean } };
     autoJump?: boolean;
     autoJumpThreshold?: number;
+    cmd?: string;
+    delay?: boolean;
+    pauseStatus?: boolean;
+    muted?: boolean;
+    volume?: number;
 }
 
 @Injectable()
@@ -94,6 +103,22 @@ export class RdioScannerService implements OnDestroy {
     // on/off is deliberately NOT synced — the stream owns its own playback.
     private followerMode = false;
     private syncChannel: BroadcastChannel | undefined;
+
+    // Stream presence. Followers (/stream pages) send a heartbeat over the
+    // sync channel; leaders (main pages) track it so they can reveal the
+    // Stream-settings button only while at least one /stream window is open.
+    private streamPresenceHeartbeat: Subscription | undefined;
+    private streamPresenceWatchdog: Subscription | undefined;
+    private lastFollowerPingAt = 0;
+    private streamOpenState = false;
+    private static readonly STREAM_HEARTBEAT_MS = 2000;
+    private static readonly STREAM_PRESENCE_TIMEOUT_MS = 6000;
+
+    // Late-subscriber snapshot: a main page that mounts while a /stream window
+    // is already open can seed its button visibility from here.
+    get isStreamOpen(): boolean {
+        return this.streamOpenState;
+    }
 
     private transcriptResolvers = new Map<number, (text: string) => void>();
 
@@ -455,6 +480,9 @@ export class RdioScannerService implements OnDestroy {
 
         this.stop();
 
+        this.streamPresenceHeartbeat?.unsubscribe();
+        this.streamPresenceWatchdog?.unsubscribe();
+
         try {
             this.syncChannel?.close();
         } catch (_) {
@@ -483,15 +511,37 @@ export class RdioScannerService implements OnDestroy {
     }
 
     // Called by the /stream page. Turns this service instance into a
-    // follower: it no longer broadcasts and starts applying leader state.
+    // follower: it no longer broadcasts and starts applying leader state. Also
+    // starts a presence heartbeat so main pages can reveal their stream button.
     enableFollowerMode(): void {
         this.followerMode = true;
+
+        this.streamPresenceHeartbeat?.unsubscribe();
+        // timer(0, …) pings immediately, then on every interval.
+        this.streamPresenceHeartbeat = timer(0, RdioScannerService.STREAM_HEARTBEAT_MS).subscribe(() => {
+            try {
+                this.syncChannel?.postMessage({ type: 'ping' });
+            } catch (_) {
+                //
+            }
+        });
     }
 
     // Restores leader behaviour — called when the /stream page is torn down so
-    // a same-tab navigation back to the main page resumes broadcasting.
+    // a same-tab navigation back to the main page resumes broadcasting. Sends a
+    // final "bye" so leaders hide their stream button without waiting for the
+    // heartbeat to time out.
     disableFollowerMode(): void {
         this.followerMode = false;
+
+        this.streamPresenceHeartbeat?.unsubscribe();
+        this.streamPresenceHeartbeat = undefined;
+
+        try {
+            this.syncChannel?.postMessage({ type: 'bye' });
+        } catch (_) {
+            //
+        }
     }
 
     // Asks the leader window to (re)broadcast its current state — used by a
@@ -518,11 +568,103 @@ export class RdioScannerService implements OnDestroy {
             return;
         }
 
+        if (msg.type === 'ping') {
+            // A /stream window is alive — only leaders track presence.
+            if (!this.followerMode) {
+                this.noteFollowerPresence();
+            }
+            return;
+        }
+
+        if (msg.type === 'bye') {
+            if (!this.followerMode) {
+                this.clearFollowerPresence();
+            }
+            return;
+        }
+
+        if (msg.type === 'cmd') {
+            // The main page forwards playback controls; only followers obey.
+            if (this.followerMode) {
+                this.applyFollowerCommand(msg);
+            }
+            return;
+        }
+
         if (msg.type === 'state') {
             // Only followers apply incoming state; leaders ignore it.
             if (this.followerMode) {
                 this.applyFollowerState(msg);
             }
+        }
+    }
+
+    // Leader → follower: forward a playback control. No-op on followers and
+    // when there's no channel. BroadcastChannel never echoes to the sender.
+    private broadcastCommand(payload: StreamSyncMessage): void {
+        if (this.followerMode || !this.syncChannel) {
+            return;
+        }
+        try {
+            this.syncChannel.postMessage({ ...payload, type: 'cmd' });
+        } catch (_) {
+            //
+        }
+    }
+
+    private applyFollowerCommand(msg: StreamSyncMessage): void {
+        switch (msg.cmd) {
+            case 'skip':
+                this.skip({ delay: msg.delay });
+                break;
+            case 'replay':
+                this.replay();
+                break;
+            case 'pause':
+                this.pause(typeof msg.pauseStatus === 'boolean' ? msg.pauseStatus : undefined);
+                break;
+            case 'mute':
+                if (typeof msg.muted === 'boolean') {
+                    this.setMute(msg.muted);
+                }
+                break;
+            case 'volume':
+                if (typeof msg.volume === 'number') {
+                    this.setVolume(msg.volume);
+                }
+                break;
+        }
+    }
+
+    private noteFollowerPresence(): void {
+        this.lastFollowerPingAt = Date.now();
+
+        if (!this.streamOpenState) {
+            this.streamOpenState = true;
+            this.event.emit({ streamOpen: true });
+        }
+
+        // Start a watchdog that flips presence back off if pings stop arriving
+        // (e.g. the /stream window was closed without sending a "bye").
+        if (!this.streamPresenceWatchdog) {
+            this.streamPresenceWatchdog = timer(
+                RdioScannerService.STREAM_PRESENCE_TIMEOUT_MS,
+                RdioScannerService.STREAM_HEARTBEAT_MS,
+            ).subscribe(() => {
+                if (Date.now() - this.lastFollowerPingAt > RdioScannerService.STREAM_PRESENCE_TIMEOUT_MS) {
+                    this.clearFollowerPresence();
+                }
+            });
+        }
+    }
+
+    private clearFollowerPresence(): void {
+        this.streamPresenceWatchdog?.unsubscribe();
+        this.streamPresenceWatchdog = undefined;
+
+        if (this.streamOpenState) {
+            this.streamOpenState = false;
+            this.event.emit({ streamOpen: false });
         }
     }
 
@@ -591,6 +733,13 @@ export class RdioScannerService implements OnDestroy {
 
         this.livefeedMapState = this.livefeedMap;
 
+        // Drop any already-queued calls whose talkgroup the leader just avoided
+        // so the avoid takes effect on the stream immediately (mirrors what
+        // avoid() does on the leader side).
+        if (this.livefeedMode !== RdioScannerLivefeedMode.Playback) {
+            this.cleanQueue();
+        }
+
         // Persist so a stream reload restores the last mirrored selection.
         // saveLivefeedMap() also calls broadcastLivefeedState(), which is a
         // no-op here because followerMode is set.
@@ -598,7 +747,7 @@ export class RdioScannerService implements OnDestroy {
 
         this.rebuildCategories();
 
-        this.event.emit({ categories: this.categories, map: this.livefeedMap });
+        this.event.emit({ categories: this.categories, map: this.livefeedMap, queue: this.callQueue.length });
 
         if (this.livefeedMode === RdioScannerLivefeedMode.Online) {
             this.startLivefeed();
@@ -824,6 +973,9 @@ export class RdioScannerService implements OnDestroy {
         }
 
         this.event.emit({ pause: this.livefeedPaused });
+
+        // Forward to /stream followers so the main page controls them.
+        this.broadcastCommand({ cmd: 'pause', pauseStatus: this.livefeedPaused });
     }
 
     setVolume(volume: number): void {
@@ -831,6 +983,9 @@ export class RdioScannerService implements OnDestroy {
         this.updateGainNode();
         this.saveVolumeSettings();
         this.event.emit({ volume: this.volume, muted: this.muted });
+
+        // Forward to /stream followers so the main page controls them.
+        this.broadcastCommand({ cmd: 'volume', volume: this.volume });
     }
 
     setMute(muted: boolean): void {
@@ -838,6 +993,9 @@ export class RdioScannerService implements OnDestroy {
         this.updateGainNode();
         this.saveVolumeSettings();
         this.event.emit({ volume: this.volume, muted: this.muted });
+
+        // Forward to /stream followers so the main page controls them.
+        this.broadcastCommand({ cmd: 'mute', muted: this.muted });
     }
 
     getVolume(): number {
@@ -1590,6 +1748,9 @@ export class RdioScannerService implements OnDestroy {
 
     replay(): void {
         this.play(this.call || this.callPrevious);
+
+        // Forward to /stream followers so the main page controls them.
+        this.broadcastCommand({ cmd: 'replay' });
     }
 
     readPin(): string | undefined {
@@ -1634,6 +1795,9 @@ export class RdioScannerService implements OnDestroy {
     }
 
     skip(options?: { delay?: boolean }): void {
+        // Forward to /stream followers so the main page controls them.
+        this.broadcastCommand({ cmd: 'skip', delay: options?.delay });
+
         const play = () => {
             if (this.livefeedMode === RdioScannerLivefeedMode.Playback) {
                 this.playbackNextCall();

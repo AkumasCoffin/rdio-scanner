@@ -1,8 +1,8 @@
 .stream-settings {
     display: flex;
     flex-direction: column;
-    min-width: 320px;
-    max-width: 420px;
+    min-width: 340px;
+    max-width: 440px;
 
     .header {
         display: flex;
@@ -28,10 +28,6 @@
         font-size: 13px;
         color: var(--text-muted, #94a3b8);
         line-height: 1.4;
-    }
-
-    .open-btn {
-        align-self: flex-start;
     }
 
     .section {
@@ -94,14 +90,71 @@
         }
     }
 
-    .elements {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 4px 12px;
+    .add-palette {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
 
-        mat-checkbox {
-            font-size: 13px;
+        button {
+            line-height: 30px;
         }
+
+        mat-icon {
+            font-size: 16px;
+            width: 16px;
+            height: 16px;
+            margin-right: 2px;
+            vertical-align: middle;
+        }
+    }
+
+    .items-list {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        max-height: 220px;
+        overflow-y: auto;
+
+        .item-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 2px 0;
+
+            .item-name {
+                flex: 1;
+                font-size: 13px;
+            }
+
+            .item-color {
+                flex-shrink: 0;
+                width: 28px;
+                height: 22px;
+                border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.3));
+                border-radius: 4px;
+                background: transparent;
+                padding: 1px;
+                cursor: pointer;
+            }
+
+            .item-remove {
+                flex-shrink: 0;
+                width: 32px;
+                height: 32px;
+                line-height: 32px;
+            }
+        }
+
+        .empty-note {
+            margin: 4px 0;
+            font-size: 13px;
+            color: var(--text-muted, #94a3b8);
+        }
+    }
+
+    .config-actions {
+        display: flex;
+        gap: 12px;
     }
 
     .footer {

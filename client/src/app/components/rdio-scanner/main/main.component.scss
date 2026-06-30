@@ -429,6 +429,33 @@
     white-space: nowrap;
   }
 
+  .stream-controlling {
+    align-items: center;
+    color: var(--accent, #f97316);
+    display: flex;
+    font-size: 11px;
+    font-weight: 700;
+    gap: 6px;
+    letter-spacing: 0.08em;
+    margin-left: 12px;
+    text-transform: uppercase;
+    white-space: nowrap;
+
+    .dot {
+      background: var(--accent, #f97316);
+      border-radius: 50%;
+      box-shadow: 0 0 6px 2px rgba(249, 115, 22, 0.6);
+      height: 8px;
+      width: 8px;
+      animation: stream-dot-blink 1.4s ease-in-out infinite;
+    }
+  }
+
+  @keyframes stream-dot-blink {
+    0%, 100% { opacity: 0.4; }
+    50%      { opacity: 1; }
+  }
+
   .led {
     background: rgba(148, 163, 184, 0.3);
     border-radius: 50%;

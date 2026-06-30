@@ -17,61 +17,113 @@
  * ****************************************************************************
  */
 
-// Per-element layout for the /stream OBS overlay. Every LCD element is
-// individually positioned (absolute x/y), toggleable (visible), and
-// drag-movable in "move mode".
-export interface StreamElementLayout {
-    visible: boolean;
+// The /stream OBS overlay is an instance-based canvas: users add as many items
+// as they like (including multiples of the same type and multiple border
+// frames), position/size/recolor each, and remove the ones they don't want.
+//
+// A StreamItem is one placed thing. `type` selects what it renders (a readout,
+// a flag, the transcript, or a border frame). `color` is the text color, or the
+// border color for a frame.
+export interface StreamItem {
+    id: string;
+    type: string;
     x: number;
     y: number;
+    w: number;
+    h: number;
+    color: string;
 }
 
 export interface StreamLayout {
-    // Foreground (text) + background colors. Default is black-on-white so the
-    // background can be chroma-keyed out in OBS.
-    textColor: string;
+    // Background color — default black so a white-text overlay reads well and
+    // the background can be chroma-keyed out in OBS.
     bgColor: string;
-    // When true, the /stream page makes every element drag-movable. Hold Shift
-    // while dragging to snap to the grid.
+    // When true, the /stream page makes every item drag-movable and resizable.
+    // Hold Shift while dragging to snap to the grid.
     moveMode: boolean;
     // Grid size (px) used for Shift-drag snapping.
     gridSize: number;
-    elements: { [key: string]: StreamElementLayout };
+    items: StreamItem[];
 }
 
-// Ordered list of every movable/toggleable element on the stream LCD, with a
-// human label (used by the settings menu) and its default position.
-export const STREAM_ELEMENTS: ReadonlyArray<{ key: string; label: string; x: number; y: number }> = [
-    { key: 'clock', label: 'Clock', x: 24, y: 16 },
-    { key: 'listeners', label: 'Listeners', x: 220, y: 16 },
-    { key: 'queue', label: 'Queue', x: 420, y: 16 },
-    { key: 'delay', label: 'Delay', x: 420, y: 44 },
-    { key: 'system', label: 'System', x: 24, y: 78 },
-    { key: 'tag', label: 'Tag', x: 320, y: 78 },
-    { key: 'talkgroup', label: 'Talkgroup', x: 24, y: 108 },
-    { key: 'callDate', label: 'Call Date', x: 320, y: 108 },
-    { key: 'callProgress', label: 'Call Time', x: 420, y: 108 },
-    { key: 'talkgroupName', label: 'Talkgroup Name', x: 24, y: 142 },
-    { key: 'tgid', label: 'TGID', x: 24, y: 188 },
-    { key: 'uid', label: 'UID', x: 320, y: 188 },
-    { key: 'tempAvoid', label: 'Avoid Timer', x: 24, y: 220 },
-    { key: 'avoid', label: 'Avoid Flag', x: 150, y: 220 },
-    { key: 'patch', label: 'Patch Flag', x: 250, y: 220 },
-    { key: 'transcript', label: 'Transcript', x: 24, y: 276 },
+export const STREAM_DEFAULT_TEXT_COLOR = '#ffffff';
+export const STREAM_DEFAULT_BORDER_COLOR = '#ffffff';
+
+// Catalog of addable item types: a human label + the default box size used when
+// a new instance is added. 'frame' is the border-box type.
+export interface StreamItemType {
+    type: string;
+    label: string;
+    w: number;
+    h: number;
+}
+
+export const STREAM_ITEM_TYPES: ReadonlyArray<StreamItemType> = [
+    { type: 'clock', label: 'Time', w: 130, h: 28 },
+    { type: 'callProgress', label: 'Call Time', w: 180, h: 28 },
+    { type: 'listeners', label: 'Listeners', w: 150, h: 28 },
+    { type: 'queue', label: 'Queue', w: 120, h: 28 },
+    { type: 'delay', label: 'Delay', w: 150, h: 24 },
+    { type: 'system', label: 'System', w: 220, h: 28 },
+    { type: 'tag', label: 'Tag', w: 200, h: 28 },
+    { type: 'talkgroup', label: 'Talkgroup', w: 220, h: 28 },
+    { type: 'callDate', label: 'Call Date', w: 100, h: 28 },
+    { type: 'talkgroupName', label: 'Talkgroup Name', w: 460, h: 46 },
+    { type: 'tgid', label: 'TGID', w: 170, h: 28 },
+    { type: 'uid', label: 'UID', w: 200, h: 28 },
+    { type: 'tempAvoid', label: 'Avoid Timer', w: 100, h: 24 },
+    { type: 'avoid', label: 'Avoid Flag', w: 90, h: 24 },
+    { type: 'patch', label: 'Patch Flag', w: 90, h: 24 },
+    { type: 'transcript', label: 'Transcript', w: 600, h: 170 },
+    { type: 'frame', label: 'Border Frame', w: 560, h: 240 },
 ];
+
+export function streamItemTypeDef(type: string): StreamItemType | undefined {
+    return STREAM_ITEM_TYPES.find((t) => t.type === type);
+}
+
+export function streamItemLabel(type: string): string {
+    return streamItemTypeDef(type)?.label ?? type;
+}
 
 export const STREAM_LAYOUT_STORAGE_KEY = 'rdio-scanner-stream-layout';
 export const STREAM_LAYOUT_CHANNEL = 'rdio-scanner-stream-layout';
 
+// Out-of-the-box layout: an LCD frame + transcript frame, with the readouts
+// arranged to mirror the main page's LCD (Call Time under the clock), and the
+// transcript spaced below. Stable ids so resets are deterministic.
 export function defaultStreamLayout(): StreamLayout {
+    const frame = (id: string, x: number, y: number, w: number, h: number): StreamItem =>
+        ({ id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR });
+
+    const el = (type: string, x: number, y: number, w: number, h: number): StreamItem =>
+        ({ id: `default-${type}`, type, x, y, w, h, color: STREAM_DEFAULT_TEXT_COLOR });
+
     return {
-        textColor: '#000000',
-        bgColor: '#ffffff',
+        bgColor: '#000000',
         moveMode: false,
         gridSize: 20,
-        elements: STREAM_ELEMENTS.reduce((acc, el) => {
-            acc[el.key] = { visible: true, x: el.x, y: el.y };
-            return acc;
-        }, {} as { [key: string]: StreamElementLayout }),
+        items: [
+            // Frames first so they render behind the readouts.
+            frame('default-lcd-frame', 12, 12, 560, 272),
+            frame('default-transcript-frame', 12, 292, 624, 196),
+            // Readouts.
+            el('clock', 24, 24, 130, 28),
+            el('callProgress', 24, 56, 180, 28),
+            el('listeners', 214, 24, 150, 28),
+            el('queue', 410, 24, 120, 28),
+            el('delay', 410, 56, 150, 24),
+            el('system', 24, 92, 220, 28),
+            el('tag', 360, 92, 200, 28),
+            el('talkgroup', 24, 124, 220, 28),
+            el('callDate', 360, 124, 100, 28),
+            el('talkgroupName', 24, 158, 460, 46),
+            el('tgid', 24, 212, 170, 28),
+            el('uid', 360, 212, 200, 28),
+            el('tempAvoid', 24, 248, 100, 24),
+            el('avoid', 134, 248, 90, 24),
+            el('patch', 234, 248, 90, 24),
+            el('transcript', 24, 306, 600, 168),
+        ],
     };
 }

@@ -1,125 +1,57 @@
 <div class="stream-root" [class.move-mode]="layout.moveMode"
-    [style.background]="layout.bgColor" [style.color]="layout.textColor"
+    [style.background]="layout.bgColor"
     [style.--stream-grid]="layout.gridSize + 'px'">
 
-    <!-- Clock -->
-    <div class="stream-el" *ngIf="elVisible('clock')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('clock')" [style.top.px]="elY('clock')"
-        (pointerdown)="onDragStart('clock', $event)">
-        <span>{{ clock | date:timeFormat }}</span>
-    </div>
+    <div *ngFor="let item of layout.items; trackBy: trackItem" class="stream-item"
+        [class.frame]="item.type === 'frame'"
+        [class.big]="item.type === 'talkgroupName'"
+        [class.small]="item.type === 'delay' || item.type === 'tempAvoid' || item.type === 'avoid' || item.type === 'patch'"
+        [class.flag]="item.type === 'avoid' || item.type === 'patch'"
+        [class.transcript]="item.type === 'transcript'"
+        [class.movable]="layout.moveMode"
+        [style.left.px]="item.x" [style.top.px]="item.y"
+        [style.width.px]="item.w" [style.height.px]="item.h"
+        [style.color]="item.color" [style.borderColor]="item.color"
+        (pointerdown)="onDragStart(item, $event)">
 
-    <!-- Listeners -->
-    <div class="stream-el" *ngIf="elVisible('listeners')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('listeners')" [style.top.px]="elY('listeners')"
-        (pointerdown)="onDragStart('listeners', $event)">
-        <span>Listeners: {{ listeners }}</span>
-    </div>
+        <div class="item-content" [ngSwitch]="item.type">
+            <span *ngSwitchCase="'clock'">Time: {{ clock | date:timeFormat }}</span>
+            <span *ngSwitchCase="'callProgress'">Call Time: {{ callProgress | date:timeFormat }}</span>
+            <span *ngSwitchCase="'listeners'">Listeners: {{ listeners }}</span>
+            <span *ngSwitchCase="'queue'">Queue: {{ callQueue }}</span>
+            <span *ngSwitchCase="'delay'">Delay: {{ queueDelayLabel || '0:00' }}<span *ngIf="delayRemovedLabel"
+                    class="delay-removed"> {{ delayRemovedLabel }}</span></span>
+            <span *ngSwitchCase="'system'">{{ callSystem }}</span>
+            <span *ngSwitchCase="'tag'">{{ callTag }}</span>
+            <span *ngSwitchCase="'talkgroup'">{{ callTalkgroup }}</span>
+            <span *ngSwitchCase="'callDate'">{{ callDate | date:'MM/dd' }}</span>
+            <span *ngSwitchCase="'talkgroupName'">{{ callTalkgroupName }}</span>
+            <span *ngSwitchCase="'tgid'">TGID: {{ callTalkgroupId || 0 }}</span>
+            <span *ngSwitchCase="'uid'"><ng-container *ngIf="callUnit">UID: {{ callUnit }}</ng-container></span>
+            <span *ngSwitchCase="'tempAvoid'"><ng-container *ngIf="tempAvoid">&#x23f2;&#xFE0E; {{ tempAvoid }}M</ng-container></span>
+            <span *ngSwitchCase="'avoid'" class="flag-text"><ng-container *ngIf="avoided">AVOID</ng-container></span>
+            <span *ngSwitchCase="'patch'" class="flag-text"><ng-container *ngIf="patched">PATCH</ng-container></span>
+            <ng-container *ngSwitchCase="'transcript'">
+                <div class="transcript-label">TRANSCRIPT</div>
+                <div class="transcript-text" *ngIf="displayCall?.transcript">{{ displayCall?.transcript }}</div>
+                <div class="transcript-text placeholder" *ngIf="!displayCall?.transcript">—</div>
+            </ng-container>
+        </div>
 
-    <!-- Queue -->
-    <div class="stream-el" *ngIf="elVisible('queue')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('queue')" [style.top.px]="elY('queue')"
-        (pointerdown)="onDragStart('queue', $event)">
-        <span>Queue: {{ callQueue }}</span>
-    </div>
-
-    <!-- Delay -->
-    <div class="stream-el small" *ngIf="elVisible('delay')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('delay')" [style.top.px]="elY('delay')"
-        (pointerdown)="onDragStart('delay', $event)">
-        <span>Delay: {{ queueDelayLabel || '0:00' }}<span *ngIf="delayRemovedLabel" class="delay-removed">
-                {{ delayRemovedLabel }}</span></span>
-    </div>
-
-    <!-- System -->
-    <div class="stream-el" *ngIf="elVisible('system')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('system')" [style.top.px]="elY('system')"
-        (pointerdown)="onDragStart('system', $event)">
-        <span>{{ callSystem }}</span>
-    </div>
-
-    <!-- Tag -->
-    <div class="stream-el" *ngIf="elVisible('tag')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('tag')" [style.top.px]="elY('tag')"
-        (pointerdown)="onDragStart('tag', $event)">
-        <span>{{ callTag }}</span>
-    </div>
-
-    <!-- Talkgroup -->
-    <div class="stream-el" *ngIf="elVisible('talkgroup')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('talkgroup')" [style.top.px]="elY('talkgroup')"
-        (pointerdown)="onDragStart('talkgroup', $event)">
-        <span>{{ callTalkgroup }}</span>
-    </div>
-
-    <!-- Call date -->
-    <div class="stream-el" *ngIf="elVisible('callDate')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('callDate')" [style.top.px]="elY('callDate')"
-        (pointerdown)="onDragStart('callDate', $event)">
-        <span>{{ callDate | date:'MM/dd' }}</span>
-    </div>
-
-    <!-- Call progress time -->
-    <div class="stream-el" *ngIf="elVisible('callProgress')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('callProgress')" [style.top.px]="elY('callProgress')"
-        (pointerdown)="onDragStart('callProgress', $event)">
-        <span>{{ callProgress | date:timeFormat }}</span>
-    </div>
-
-    <!-- Talkgroup name (big) -->
-    <div class="stream-el big" *ngIf="elVisible('talkgroupName')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('talkgroupName')" [style.top.px]="elY('talkgroupName')"
-        (pointerdown)="onDragStart('talkgroupName', $event)">
-        <span>{{ callTalkgroupName }}</span>
-    </div>
-
-    <!-- TGID -->
-    <div class="stream-el" *ngIf="elVisible('tgid')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('tgid')" [style.top.px]="elY('tgid')"
-        (pointerdown)="onDragStart('tgid', $event)">
-        <span>TGID: {{ callTalkgroupId || 0 }}</span>
-    </div>
-
-    <!-- UID -->
-    <div class="stream-el" *ngIf="elVisible('uid')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('uid')" [style.top.px]="elY('uid')"
-        (pointerdown)="onDragStart('uid', $event)">
-        <span *ngIf="callUnit">UID: {{ callUnit }}</span>
-    </div>
-
-    <!-- Avoid timer -->
-    <div class="stream-el small" *ngIf="elVisible('tempAvoid')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('tempAvoid')" [style.top.px]="elY('tempAvoid')"
-        (pointerdown)="onDragStart('tempAvoid', $event)">
-        <span *ngIf="tempAvoid">&#x23f2;&#xFE0E; {{ tempAvoid }}M</span>
-    </div>
-
-    <!-- Avoid flag -->
-    <div class="stream-el small flag" *ngIf="elVisible('avoid')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('avoid')" [style.top.px]="elY('avoid')"
-        (pointerdown)="onDragStart('avoid', $event)">
-        <span *ngIf="avoided">AVOID</span>
-    </div>
-
-    <!-- Patch flag -->
-    <div class="stream-el small flag" *ngIf="elVisible('patch')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('patch')" [style.top.px]="elY('patch')"
-        (pointerdown)="onDragStart('patch', $event)">
-        <span *ngIf="patched">PATCH</span>
-    </div>
-
-    <!-- Transcript -->
-    <div class="stream-el transcript" *ngIf="elVisible('transcript')" [class.movable]="layout.moveMode"
-        [style.left.px]="elX('transcript')" [style.top.px]="elY('transcript')"
-        (pointerdown)="onDragStart('transcript', $event)">
-        <div class="transcript-label">TRANSCRIPT</div>
-        <div class="transcript-text" *ngIf="displayCall?.transcript">{{ displayCall?.transcript }}</div>
-        <div class="transcript-text placeholder" *ngIf="!displayCall?.transcript">—</div>
+        <!-- Move-mode editing affordances -->
+        <ng-container *ngIf="layout.moveMode">
+            <span class="move-handle" (pointerdown)="onDragStart(item, $event)" title="Drag to move">
+                <span class="grip">⠿</span>
+            </span>
+            <button type="button" class="del-handle" (pointerdown)="$event.stopPropagation()"
+                (click)="removeItem(item, $event)" title="Remove">×</button>
+            <span class="resize-handle" (pointerdown)="onResizeStart(item, $event)" title="Drag to resize"></span>
+        </ng-container>
     </div>
 
     <!-- Drag-mode badge -->
     <div class="move-badge" *ngIf="layout.moveMode">
-        MOVE MODE — drag elements · hold Shift to snap to grid
+        MOVE MODE — drag to move · corner to resize · × to remove · hold Shift to snap
     </div>
 
     <!-- Start / unlock overlay -->

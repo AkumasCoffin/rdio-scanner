@@ -109,6 +109,10 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
     listeners = 0;
 
+    // True while at least one /stream (OBS overlay) window is open and this
+    // page is acting as its remote control. Shown on the LCD.
+    controllingStream = false;
+
     livefeedOffline = true;
     livefeedOnline = false;
     livefeedPaused = false;
@@ -332,6 +336,8 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         // LCD would otherwise stay stuck on "NO LINK" until the next
         // reconnect. See rdio-scanner.service.ts `isLinked` getter.
         this.linked = this.rdioScannerService.isLinked;
+        // Seed in case a /stream window opened before this component subscribed.
+        this.controllingStream = this.rdioScannerService.isStreamOpen;
         // Seed config + map from the service's tracked state for the same
         // late-subscribe reason: CFG/map events may already have fired into
         // the void by the time this component subscribes.
@@ -651,6 +657,10 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
         if ('listeners' in event) {
             this.listeners = event.listeners || 0;
+        }
+
+        if ('streamOpen' in event) {
+            this.controllingStream = !!event.streamOpen;
         }
 
         if ('map' in event) {

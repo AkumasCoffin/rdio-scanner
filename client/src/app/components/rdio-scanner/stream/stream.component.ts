@@ -24,17 +24,19 @@ import { Subscription } from 'rxjs';
 import { RdioScannerEvent } from '../rdio-scanner';
 import { RdioScannerService } from '../rdio-scanner.service';
 import { RdioScannerMainComponent } from '../main/main.component';
-import { StreamLayout } from './stream-layout';
+import { StreamItem, StreamLayout } from './stream-layout';
 import { StreamLayoutService } from './stream-layout.service';
 
-// The /stream page. A stripped-down, OBS-friendly clone of the main LCD that:
+// The /stream page. An OBS-friendly, instance-based canvas clone of the main
+// LCD that:
 //   - mirrors the main page's talkgroup selection / avoid / hold / auto-jump
-//     live (via RdioScannerService follower mode) — no on-screen controls;
-//   - auto-starts its OWN livefeed with audio (the one thing it does NOT
-//     follow from the main page) so OBS can capture it;
-//   - renders black-on-white by default so the background can be chroma-keyed;
-//   - lets every element be repositioned (drag, Shift to grid-snap) and
-//     shown/hidden via the Stream-settings menu on the main page.
+//     live (via RdioScannerService follower mode); the main page also remote-
+//     controls its skip/replay/pause;
+//   - auto-starts its OWN livefeed with audio (the one thing it does NOT follow
+//     from the main page) so OBS can capture it;
+//   - renders white-on-black by default so the background can be chroma-keyed;
+//   - lets users add/remove/move/resize/recolor items via the Stream-settings
+//     menu on the main page (live-synced over StreamLayoutService).
 //
 // It extends RdioScannerMainComponent purely to reuse all of its LCD data
 // plumbing (event handling + updateDisplay computing callSystem, callTalkgroup,
@@ -46,7 +48,7 @@ import { StreamLayoutService } from './stream-layout.service';
     templateUrl: './stream.component.html',
 })
 export class RdioScannerStreamComponent extends RdioScannerMainComponent implements OnDestroy, OnInit {
-    // Current layout (colors, move mode, per-element visibility + position).
+    // Current layout (bgColor, move mode, items).
     layout: StreamLayout = this.streamLayoutService.getLayout();
 
     // Start overlay: hidden once the user has clicked Start (the gesture that
@@ -61,14 +63,17 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private layoutSub: Subscription | undefined;
     private streamEventSub: Subscription | undefined;
 
-    // Active drag state, set on pointerdown over an element in move mode.
-    private dragKey: string | null = null;
-    private dragStartX = 0;
-    private dragStartY = 0;
-    private dragOrigX = 0;
-    private dragOrigY = 0;
-    private boundMove = (e: PointerEvent) => this.onDragMove(e);
-    private boundUp = (e: PointerEvent) => this.onDragEnd(e);
+    // Active drag/resize state, set on pointerdown over an item in move mode.
+    private gestureId: string | null = null;
+    private gestureMode: 'move' | 'resize' | null = null;
+    private gestureStartX = 0;
+    private gestureStartY = 0;
+    private gestureOrigX = 0;
+    private gestureOrigY = 0;
+    private gestureOrigW = 0;
+    private gestureOrigH = 0;
+    private boundMove = (e: PointerEvent) => this.onGestureMove(e);
+    private boundUp = () => this.onGestureEnd();
 
     constructor(
         private streamLayoutService: StreamLayoutService,
@@ -107,9 +112,13 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     override ngOnDestroy(): void {
         this.layoutSub?.unsubscribe();
         this.streamEventSub?.unsubscribe();
-        this.detachDragListeners();
+        this.detachGestureListeners();
         this.svc.disableFollowerMode();
         super.ngOnDestroy();
+    }
+
+    trackItem(_index: number, item: StreamItem): string {
+        return item.id;
     }
 
     // True while the start overlay should cover the screen: before the user
@@ -131,82 +140,83 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.cdr.detectChanges();
     }
 
+    removeItem(item: StreamItem, event?: Event): void {
+        event?.stopPropagation();
+        this.streamLayoutService.removeItem(item.id);
+    }
+
     private streamEventHandler(event: RdioScannerEvent): void {
         // If auth was required and has now cleared (valid PIN accepted), the
         // overlay flips back to the Start button automatically via showOverlay.
-        // Nothing else to do here yet, but keep the hook for clarity/future use.
         if ('config' in event) {
             this.cdr.detectChanges();
         }
     }
 
-    // Template accessors — keep the markup terse and null-safe.
-    elVisible(key: string): boolean {
-        return !!this.layout.elements[key]?.visible;
-    }
-
-    elX(key: string): number {
-        return this.layout.elements[key]?.x ?? 0;
-    }
-
-    elY(key: string): number {
-        return this.layout.elements[key]?.y ?? 0;
-    }
-
     // ---------------------------------------------------------------------
-    // Drag-to-move (only active when layout.moveMode is on)
+    // Drag-to-move / drag-to-resize (only active when layout.moveMode is on)
     // ---------------------------------------------------------------------
 
-    onDragStart(key: string, event: PointerEvent): void {
+    onDragStart(item: StreamItem, event: PointerEvent): void {
+        this.beginGesture(item, event, 'move');
+    }
+
+    onResizeStart(item: StreamItem, event: PointerEvent): void {
+        this.beginGesture(item, event, 'resize');
+    }
+
+    private beginGesture(item: StreamItem, event: PointerEvent, mode: 'move' | 'resize'): void {
         if (!this.layout.moveMode) {
             return;
         }
         event.preventDefault();
         event.stopPropagation();
 
-        const el = this.layout.elements[key];
-        if (!el) {
-            return;
-        }
-
-        this.dragKey = key;
-        this.dragStartX = event.clientX;
-        this.dragStartY = event.clientY;
-        this.dragOrigX = el.x;
-        this.dragOrigY = el.y;
+        this.gestureId = item.id;
+        this.gestureMode = mode;
+        this.gestureStartX = event.clientX;
+        this.gestureStartY = event.clientY;
+        this.gestureOrigX = item.x;
+        this.gestureOrigY = item.y;
+        this.gestureOrigW = item.w;
+        this.gestureOrigH = item.h;
 
         window.addEventListener('pointermove', this.boundMove);
         window.addEventListener('pointerup', this.boundUp);
     }
 
-    private onDragMove(event: PointerEvent): void {
-        if (!this.dragKey) {
+    private onGestureMove(event: PointerEvent): void {
+        if (!this.gestureId || !this.gestureMode) {
             return;
         }
 
-        let x = this.dragOrigX + (event.clientX - this.dragStartX);
-        let y = this.dragOrigY + (event.clientY - this.dragStartY);
+        const dx = event.clientX - this.gestureStartX;
+        const dy = event.clientY - this.gestureStartY;
+        const snap = (n: number): number => {
+            if (event.shiftKey && this.layout.gridSize > 0) {
+                return Math.round(n / this.layout.gridSize) * this.layout.gridSize;
+            }
+            return Math.round(n);
+        };
 
-        // Hold Shift to snap to the grid.
-        if (event.shiftKey && this.layout.gridSize > 0) {
-            const g = this.layout.gridSize;
-            x = Math.round(x / g) * g;
-            y = Math.round(y / g) * g;
+        if (this.gestureMode === 'move') {
+            const x = Math.max(0, snap(this.gestureOrigX + dx));
+            const y = Math.max(0, snap(this.gestureOrigY + dy));
+            this.streamLayoutService.updateItem(this.gestureId, { x, y });
+        } else {
+            const w = Math.max(20, snap(this.gestureOrigW + dx));
+            const h = Math.max(16, snap(this.gestureOrigH + dy));
+            this.streamLayoutService.updateItem(this.gestureId, { w, h });
         }
-
-        // Keep elements from being dragged off the top/left into oblivion.
-        x = Math.max(0, x);
-        y = Math.max(0, y);
-
-        this.streamLayoutService.setPosition(this.dragKey, x, y);
     }
 
-    private onDragEnd(_event: PointerEvent): void {
-        this.dragKey = null;
-        this.detachDragListeners();
+    private onGestureEnd(): void {
+        this.gestureId = null;
+        this.gestureMode = null;
+        this.detachGestureListeners();
     }
 
-    private detachDragListeners(): void {
+    private detachGestureListeners(): void {
         window.removeEventListener('pointermove', this.boundMove);
         window.removeEventListener('pointerup', this.boundUp);
     }

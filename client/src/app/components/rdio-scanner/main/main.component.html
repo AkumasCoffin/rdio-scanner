@@ -1,5 +1,8 @@
 <div class="rdio-status">
     <div class="branding">{{ branding }}</div>
+    <div class="stream-controlling" *ngIf="controllingStream">
+        <span class="dot"></span>CONTROLLING STREAM DISPLAY
+    </div>
     <div class="led" [ngClass]="ledStyle"></div>
 </div>
 <div class="rdio-display" [ngClass]="{ idle: !dimmer }" (dblclick)="toggleFullscreen.emit()">

@@ -39,6 +39,10 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
 
     private livefeedMode: RdioScannerLivefeedMode = RdioScannerLivefeedMode.Offline;
 
+    // True while at least one /stream window is open (detected over the
+    // stream-sync channel). Gates the Stream-settings button.
+    streamOpen = false;
+
     @ViewChild('searchPanel') private searchPanel: MatSidenav | undefined;
 
     @ViewChild('selectPanel') private selectPanel: MatSidenav | undefined;
@@ -94,6 +98,10 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
     }
 
     ngOnInit(): void {
+        // Seed from the service in case a /stream window was already open
+        // before this component subscribed to the event stream.
+        this.streamOpen = this.rdioScannerService.isStreamOpen;
+
         /*
          * BEGIN OF RED TAPE:
          * 
@@ -183,6 +191,10 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
     private eventHandler(event: RdioScannerEvent): void {
         if (event.livefeedMode) {
             this.livefeedMode = event.livefeedMode;
+        }
+
+        if (typeof event.streamOpen === 'boolean') {
+            this.streamOpen = event.streamOpen;
         }
 
         if (typeof event.deepLinkCall === 'number' && event.deepLinkCall > 0) {
