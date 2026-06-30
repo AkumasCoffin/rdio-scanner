@@ -306,7 +306,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // Builds the inset box-shadow for a frame's middle + inner bands (the outer
     // band is the CSS border). Each enabled band is stacked inward.
     frameShadow(item: StreamItem): string | null {
-        if (item.type !== 'frame') {
+        if (item.type !== 'frame' || this.isLinkGrouped(item)) {
             return null;
         }
         const parts: string[] = [];
@@ -322,58 +322,204 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return parts.length ? parts.join(', ') : null;
     }
 
-    // Per-side border widths + per-corner radii for a frame. With link mode on
-    // we collapse the edge shared with another link-mode frame (suppress this
-    // frame's top/left border when a linked neighbour sits directly above/to-
-    // the-left, so the neighbour's bottom/right border draws the shared grid
-    // line once) and square off any corner that touches a neighbour, leaving
-    // only the grid's outer perimeter rounded.
+    // Per-side border widths + per-corner radii for a frame. A frame that is
+    // part of a multi-frame link group draws no CSS border at all — the merged
+    // SVG outline (linkOutlines) renders its border instead.
     frameBorderStyle(item: StreamItem): { [key: string]: number } {
         const w = item.type === 'frame' ? item.borderWidth : 0;
         const r = item.type === 'frame' ? item.cornerRadius : 0;
-        if (item.type !== 'frame' || !item.linkMode) {
-            return {
-                'border-top-width.px': w, 'border-right-width.px': w,
-                'border-bottom-width.px': w, 'border-left-width.px': w,
-                'border-top-left-radius.px': r, 'border-top-right-radius.px': r,
-                'border-bottom-right-radius.px': r, 'border-bottom-left-radius.px': r,
-            };
-        }
-        const n = this.linkedNeighbours(item);
+        const draw = item.type === 'frame' && !this.isLinkGrouped(item);
+        const bw = draw ? w : 0;
+        const br = draw ? r : 0;
         return {
-            // collapse: only top/left give way so the shared line is drawn once
-            'border-top-width.px': n.top ? 0 : w,
-            'border-right-width.px': w,
-            'border-bottom-width.px': w,
-            'border-left-width.px': n.left ? 0 : w,
-            // round a corner only when neither of its two edges meets a neighbour
-            'border-top-left-radius.px': (n.top || n.left) ? 0 : r,
-            'border-top-right-radius.px': (n.top || n.right) ? 0 : r,
-            'border-bottom-right-radius.px': (n.bottom || n.right) ? 0 : r,
-            'border-bottom-left-radius.px': (n.bottom || n.left) ? 0 : r,
+            'border-top-width.px': bw, 'border-right-width.px': bw,
+            'border-bottom-width.px': bw, 'border-left-width.px': bw,
+            'border-top-left-radius.px': br, 'border-top-right-radius.px': br,
+            'border-bottom-right-radius.px': br, 'border-bottom-left-radius.px': br,
         };
     }
 
-    // Which sides of a link-mode frame touch another link-mode frame.
-    private linkedNeighbours(item: StreamItem): { top: boolean; right: boolean; bottom: boolean; left: boolean } {
-        const tol = Math.max(3, item.borderWidth + 1);
-        const out = { top: false, right: false, bottom: false, left: false };
-        for (const o of this.layout.items) {
-            if (o.id === item.id || o.type !== 'frame' || !o.linkMode) {
-                continue;
-            }
-            const vOverlap = this.rangesOverlap(item.y, item.y + item.h, o.y, o.y + o.h);
-            const hOverlap = this.rangesOverlap(item.x, item.x + item.w, o.x, o.x + o.w);
-            if (vOverlap && Math.abs((o.x + o.w) - item.x) <= tol) { out.left = true; }
-            if (vOverlap && Math.abs(o.x - (item.x + item.w)) <= tol) { out.right = true; }
-            if (hOverlap && Math.abs((o.y + o.h) - item.y) <= tol) { out.top = true; }
-            if (hOverlap && Math.abs(o.y - (item.y + item.h)) <= tol) { out.bottom = true; }
-        }
-        return out;
+    // ---- Linked frames -------------------------------------------------------
+    // Touching link-mode frames are rendered as ONE merged outline so an L of
+    // frames shows a continuous border: rounded convex corners on the outer
+    // perimeter and an outward-curving (concave) fillet at each inner corner.
+    // The whole group shares one border colour/width (the top-left frame's).
+    // Recomputed only when the frames' geometry/style changes.
+    private linkSig = '';
+    private linkPaths: { d: string; color: string; width: number }[] = [];
+    private linkGroupOf = new Map<string, StreamItem[]>();
+
+    get linkOutlines(): { d: string; color: string; width: number }[] {
+        this.recomputeLinks();
+        return this.linkPaths;
     }
 
-    private rangesOverlap(a1: number, a2: number, b1: number, b2: number): boolean {
-        return a1 < b2 - 1 && b1 < a2 - 1;
+    private isLinkGrouped(item: StreamItem): boolean {
+        if (item.type !== 'frame' || !item.linkMode) {
+            return false;
+        }
+        this.recomputeLinks();
+        const g = this.linkGroupOf.get(item.id);
+        return !!g && g.length > 1;
+    }
+
+    private groupMatesOf(id: string): StreamItem[] {
+        this.recomputeLinks();
+        const g = this.linkGroupOf.get(id);
+        return g && g.length > 1 ? g : [];
+    }
+
+    private recomputeLinks(): void {
+        const frames = this.layout.items.filter((i) => i.type === 'frame' && i.linkMode);
+        const sig = frames
+            .map((f) => `${f.id}:${f.x},${f.y},${f.w},${f.h},${f.borderWidth},${f.cornerRadius},${f.color},${f.useLedColor ? 1 : 0}`)
+            .join('|') + '#' + (this.ledColor() ?? '');
+        if (sig === this.linkSig) {
+            return;
+        }
+        this.linkSig = sig;
+        this.linkGroupOf = new Map();
+        this.linkPaths = [];
+
+        // Union-find over touching/overlapping frames.
+        const parent = new Map<string, string>();
+        const find = (a: string): string => {
+            let r = a;
+            while (parent.get(r) !== r) { r = parent.get(r)!; }
+            return r;
+        };
+        frames.forEach((f) => parent.set(f.id, f.id));
+        for (let i = 0; i < frames.length; i++) {
+            for (let j = i + 1; j < frames.length; j++) {
+                if (this.framesTouch(frames[i], frames[j])) {
+                    parent.set(find(frames[i].id), find(frames[j].id));
+                }
+            }
+        }
+        const groups = new Map<string, StreamItem[]>();
+        for (const f of frames) {
+            const root = find(f.id);
+            const arr = groups.get(root) ?? [];
+            arr.push(f);
+            groups.set(root, arr);
+        }
+
+        for (const grp of groups.values()) {
+            for (const f of grp) { this.linkGroupOf.set(f.id, grp); }
+            if (grp.length < 2) { continue; }
+            const rep = grp.reduce((a, b) => (b.y < a.y || (b.y === a.y && b.x < a.x) ? b : a));
+            const color = this.itemColor(rep);
+            const width = rep.borderWidth;
+            for (const loop of this.unionOutline(grp)) {
+                const d = this.roundedPath(loop, rep.cornerRadius);
+                if (d) { this.linkPaths.push({ d, color, width }); }
+            }
+        }
+    }
+
+    private framesTouch(a: StreamItem, b: StreamItem): boolean {
+        const tol = Math.max(3, Math.max(a.borderWidth, b.borderWidth) + 1);
+        return a.x <= b.x + b.w + tol && b.x <= a.x + a.w + tol &&
+            a.y <= b.y + b.h + tol && b.y <= a.y + a.h + tol;
+    }
+
+    // Outline loop(s) of the union of a group's rectangles, each a list of
+    // corner points (collinear points dropped), via a grid-cell boundary trace
+    // with the interior kept on the right of every directed edge.
+    private unionOutline(frames: StreamItem[]): { x: number; y: number }[][] {
+        const xs = Array.from(new Set(frames.flatMap((f) => [f.x, f.x + f.w]))).sort((a, b) => a - b);
+        const ys = Array.from(new Set(frames.flatMap((f) => [f.y, f.y + f.h]))).sort((a, b) => a - b);
+        const nx = xs.length - 1, ny = ys.length - 1;
+        const inside = (i: number, j: number): boolean => {
+            if (i < 0 || j < 0 || i >= nx || j >= ny) { return false; }
+            const cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2;
+            return frames.some((f) => cx > f.x && cx < f.x + f.w && cy > f.y && cy < f.y + f.h);
+        };
+        const k = (i: number, j: number) => `${i},${j}`;
+        const edges = new Map<string, [number, number]>(); // from -> to (grid indices)
+        for (let i = 0; i <= nx; i++) {
+            for (let j = 0; j <= ny; j++) {
+                if (i < nx) { // horizontal edge (i,j)-(i+1,j): above=(i,j-1) below=(i,j)
+                    const below = inside(i, j), above = inside(i, j - 1);
+                    if (below && !above) { edges.set(k(i, j), [i + 1, j]); }
+                    else if (above && !below) { edges.set(k(i + 1, j), [i, j]); }
+                }
+                if (j < ny) { // vertical edge (i,j)-(i,j+1): left=(i-1,j) right=(i,j)
+                    const right = inside(i, j), left = inside(i - 1, j);
+                    if (right && !left) { edges.set(k(i, j + 1), [i, j]); }
+                    else if (left && !right) { edges.set(k(i, j), [i, j + 1]); }
+                }
+            }
+        }
+        const loops: { x: number; y: number }[][] = [];
+        const used = new Set<string>();
+        for (const start of edges.keys()) {
+            if (used.has(start)) { continue; }
+            const pts: [number, number][] = [];
+            let cur: string | undefined = start;
+            while (cur && !used.has(cur)) {
+                used.add(cur);
+                const to = edges.get(cur);
+                if (!to) { break; }
+                const [ci, cj] = cur.split(',').map(Number);
+                pts.push([ci, cj]);
+                cur = k(to[0], to[1]);
+            }
+            if (pts.length < 4) { continue; }
+            const poly: { x: number; y: number }[] = [];
+            const n = pts.length;
+            for (let p = 0; p < n; p++) {
+                const a = pts[(p - 1 + n) % n], b = pts[p], c = pts[(p + 1) % n];
+                const collinear = (a[0] === b[0] && b[0] === c[0]) || (a[1] === b[1] && b[1] === c[1]);
+                if (!collinear) { poly.push({ x: xs[b[0]], y: ys[b[1]] }); }
+            }
+            if (poly.length >= 4) { loops.push(poly); }
+        }
+        return loops;
+    }
+
+    // SVG path for a rectilinear loop with rounded corners. Convex corners round
+    // inward (cut the corner); concave/reflex corners round outward (the bulge
+    // at an inner L corner). Radius is clamped to half the shorter adjacent edge.
+    private roundedPath(poly: { x: number; y: number }[], radius: number): string {
+        const n = poly.length;
+        if (n < 3) { return ''; }
+        let area2 = 0;
+        for (let i = 0; i < n; i++) {
+            const a = poly[i], b = poly[(i + 1) % n];
+            area2 += a.x * b.y - b.x * a.y;
+        }
+        const orient = area2 >= 0 ? 1 : -1;
+        const pin: { x: number; y: number }[] = [];
+        const pout: { x: number; y: number }[] = [];
+        const sweep: number[] = [];
+        const rad: number[] = [];
+        for (let i = 0; i < n; i++) {
+            const prev = poly[(i - 1 + n) % n], v = poly[i], next = poly[(i + 1) % n];
+            const inX = v.x - prev.x, inY = v.y - prev.y;
+            const outX = next.x - v.x, outY = next.y - v.y;
+            const lenIn = Math.hypot(inX, inY) || 1, lenOut = Math.hypot(outX, outY) || 1;
+            const uinX = inX / lenIn, uinY = inY / lenIn;
+            const uoutX = outX / lenOut, uoutY = outY / lenOut;
+            const r = Math.max(0, Math.min(radius, lenIn / 2, lenOut / 2));
+            rad.push(r);
+            pin.push({ x: v.x - uinX * r, y: v.y - uinY * r });
+            pout.push({ x: v.x + uoutX * r, y: v.y + uoutY * r });
+            const turn = uinX * uoutY - uinY * uoutX;
+            sweep.push(Math.sign(turn) === orient ? 1 : 0);
+        }
+        const f = (p: { x: number; y: number }) => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
+        let d = `M ${f(pout[0])}`;
+        for (let step = 1; step <= n; step++) {
+            const i = step % n;
+            d += ` L ${f(pin[i])}`;
+            if (rad[i] > 0.5) {
+                d += ` A ${rad[i].toFixed(2)} ${rad[i].toFixed(2)} 0 0 ${sweep[i]} ${f(pout[i])}`;
+            } else {
+                d += ` L ${f(pout[i])}`;
+            }
+        }
+        return d + ' Z';
     }
 
     // True when nothing is playing and the queue is empty (idle). Drives the
@@ -641,6 +787,19 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         }
     }
 
+    // Like applyToTargets, but also pushes the patch to every frame linked to a
+    // target — so a linked group's border colour/width/rounding stays unified.
+    private applyLinked(patch: Partial<StreamItem>): void {
+        for (const id of this.targetIds()) {
+            this.streamLayoutService.updateItem(id, patch);
+            for (const mate of this.groupMatesOf(id)) {
+                if (mate.id !== id) {
+                    this.streamLayoutService.updateItem(mate.id, patch);
+                }
+            }
+        }
+    }
+
     // Styling fields carried by Copy/Paste — everything visual, but not the
     // element's identity, geometry, or content (id/type/x/y/w/h/text/title
     // text/history columns stay put).
@@ -709,7 +868,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     setCtxItemColor(value: string): void {
-        this.applyToTargets({ color: value });
+        this.applyLinked({ color: value });
     }
 
     setCtxItemSize(value: number): void {
@@ -751,7 +910,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     setCtxItemLed(useLedColor: boolean): void {
-        this.applyToTargets({ useLedColor });
+        this.applyLinked({ useLedColor });
     }
 
     setCtxItemText(text: string): void {
@@ -1163,7 +1322,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setBorderWidth(value: number): void {
         if (Number.isFinite(value)) {
-            this.applyToTargets({ borderWidth: this.clampWidth(value) });
+            this.applyLinked({ borderWidth: this.clampWidth(value) });
         }
     }
 
@@ -1175,7 +1334,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setCornerRadius(value: number): void {
         if (Number.isFinite(value)) {
-            this.applyToTargets({ cornerRadius: Math.max(0, Math.min(200, Math.round(value))) });
+            this.applyLinked({ cornerRadius: Math.max(0, Math.min(200, Math.round(value))) });
         }
     }
 

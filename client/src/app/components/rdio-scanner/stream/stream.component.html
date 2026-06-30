@@ -5,6 +5,13 @@
     (pointerdown)="onCanvasPointerDown($event)"
     (contextmenu)="onCanvasContext($event)">
 
+    <!-- Merged outline for touching link-mode frames (drawn behind the items). -->
+    <svg class="link-layer" *ngIf="linkOutlines.length">
+        <path *ngFor="let p of linkOutlines" [attr.d]="p.d" fill="none"
+            [attr.stroke]="p.color" [attr.stroke-width]="p.width"
+            stroke-linejoin="round" stroke-linecap="round"></path>
+    </svg>
+
     <div *ngFor="let item of layout.items; trackBy: trackItem" class="stream-item"
         [class.frame]="item.type === 'frame'"
         [class.big]="item.type === 'talkgroupName'"

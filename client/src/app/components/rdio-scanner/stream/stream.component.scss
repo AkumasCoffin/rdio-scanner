@@ -27,6 +27,18 @@
             repeating-linear-gradient(to right, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px));
     }
 
+    /* Merged outline for touching link-mode frames. Spans the whole canvas with
+       path coords in canvas pixels; never intercepts pointers. */
+    .link-layer {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+        pointer-events: none;
+        z-index: 0;
+    }
+
     &.move-mode {
         /* Frames become interactive while editing so they can be dragged /
            resized / right-clicked in their empty areas; they stay BEHIND
