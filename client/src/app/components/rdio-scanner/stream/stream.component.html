@@ -109,8 +109,9 @@
     </div>
 
     <!-- Shapable-border editing handles (edit mode): drag a corner to move it,
-         double-click to delete it, drag an edge dot to add a new bend. -->
-    <ng-container *ngIf="layout.moveMode">
+         double-click to delete it, drag an edge dot to add a new bend. Hidden
+         while a menu/dialog is open so they don't cover it. -->
+    <ng-container *ngIf="layout.moveMode && !ctxOpen && !confirm">
         <ng-container *ngFor="let item of shapeItems">
             <div class="edge-handle" *ngFor="let e of edgeMids(item); let i = index"
                 [style.left.px]="e.x" [style.top.px]="e.y"

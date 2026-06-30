@@ -432,13 +432,18 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         const wo = item.borderWidth;
         const wm = item.middleFill ? item.middleWidth : 0;
         const wi = item.centerFill ? item.innerWidth : 0;
+        // One radius schedule from the outer outline; each boundary at inset `o`
+        // uses radius (corner - o) so all bands share a corner centre and keep a
+        // uniform thickness through the corners.
+        const baseR = this.cornerRadii(abs, R);
+        const boundary = (o: number): string =>
+            this.roundedPath(this.offsetPolygon(abs, o), baseR.map((r) => Math.max(0, r - o)));
         const bands: { d: string; color: string }[] = [];
         const ring = (o1: number, o2: number, color: string): void => {
             if (o2 - o1 <= 0) {
                 return;
             }
-            const outer = this.roundedPath(this.offsetPolygon(abs, o1), Math.max(0, R - o1));
-            const inner = this.roundedPath(this.offsetPolygon(abs, o2), Math.max(0, R - o2));
+            const outer = boundary(o1), inner = boundary(o2);
             if (outer && inner) {
                 bands.push({ d: `${outer} ${inner}`, color });
             }
@@ -569,11 +574,28 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         });
     }
 
-    // SVG path for a closed polygon with rounded corners. The arc at each corner
-    // simply follows the direction the path turns there, so it works for any
-    // shape regardless of how the points were wound. Radius is clamped to half
-    // the shorter adjacent edge.
-    private roundedPath(poly: { x: number; y: number }[], radius: number): string {
+    // Per-corner rounding radius for a polygon: the requested radius, clamped to
+    // half the shorter adjacent edge, and 0 where the point sits (near) straight
+    // on its edge (not a real corner). Computed once on the outer outline so the
+    // concentric band boundaries can reuse it and stay truly concentric.
+    private cornerRadii(poly: { x: number; y: number }[], radius: number): number[] {
+        const n = poly.length;
+        const radii: number[] = [];
+        for (let i = 0; i < n; i++) {
+            const prev = poly[(i - 1 + n) % n], v = poly[i], next = poly[(i + 1) % n];
+            const inX = v.x - prev.x, inY = v.y - prev.y;
+            const outX = next.x - v.x, outY = next.y - v.y;
+            const lenIn = Math.hypot(inX, inY) || 1, lenOut = Math.hypot(outX, outY) || 1;
+            const turn = (inX / lenIn) * (outY / lenOut) - (inY / lenIn) * (outX / lenOut);
+            radii.push(Math.abs(turn) < 0.02 ? 0 : Math.max(0, Math.min(radius, lenIn / 2, lenOut / 2)));
+        }
+        return radii;
+    }
+
+    // SVG path for a closed polygon with a given per-corner radius. The arc at
+    // each corner follows the direction the path turns there, so it works for any
+    // winding. Pre-supplied radii keep concentric band boundaries concentric.
+    private roundedPath(poly: { x: number; y: number }[], radii: number[]): string {
         const n = poly.length;
         if (n < 3) { return ''; }
         const pin: { x: number; y: number }[] = [];
@@ -588,9 +610,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             const uinX = inX / lenIn, uinY = inY / lenIn;
             const uoutX = outX / lenOut, uoutY = outY / lenOut;
             const turn = uinX * uoutY - uinY * uoutX;
-            // A point that lies (near) straight on its edge isn't a real corner —
-            // don't round it, or it bulges into a semicircle on the flat edge.
-            const r = Math.abs(turn) < 0.02 ? 0 : Math.max(0, Math.min(radius, lenIn / 2, lenOut / 2));
+            const r = Math.max(0, radii[i] || 0);
             rad.push(r);
             pin.push({ x: v.x - uinX * r, y: v.y - uinY * r });
             pout.push({ x: v.x + uoutX * r, y: v.y + uoutY * r });
