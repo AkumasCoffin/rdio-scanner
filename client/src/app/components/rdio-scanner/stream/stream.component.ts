@@ -600,11 +600,13 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         let d = `M ${f(pout[0])}`;
         for (let step = 1; step <= n; step++) {
             const i = step % n;
-            d += ` L ${f(pin[i])}`;
             if (rad[i] > 0.5) {
-                d += ` A ${rad[i].toFixed(2)} ${rad[i].toFixed(2)} 0 0 ${sweep[i]} ${f(pout[i])}`;
+                d += ` L ${f(pin[i])} A ${rad[i].toFixed(2)} ${rad[i].toFixed(2)} 0 0 ${sweep[i]} ${f(pout[i])}`;
             } else {
-                d += ` L ${f(pout[i])}`;
+                // No rounding: go straight through the vertex. Emitting both pin
+                // and pout (which coincide) would make a zero-length segment that
+                // a round line-join renders as a stray disc on a flat edge.
+                d += ` L ${f(poly[i])}`;
             }
         }
         return d + ' Z';
