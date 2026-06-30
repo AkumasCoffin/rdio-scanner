@@ -18,7 +18,7 @@
  */
 
 import { DOCUMENT } from '@angular/common';
-import { ChangeDetectorRef, Component, ElementRef, Inject, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { AfterViewChecked, ChangeDetectorRef, Component, ElementRef, Inject, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { FormBuilder } from '@angular/forms';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { Subscription } from 'rxjs';
@@ -50,7 +50,7 @@ import { StreamLayoutService } from './stream-layout.service';
     styleUrls: ['./stream.component.scss'],
     templateUrl: './stream.component.html',
 })
-export class RdioScannerStreamComponent extends RdioScannerMainComponent implements OnDestroy, OnInit {
+export class RdioScannerStreamComponent extends RdioScannerMainComponent implements AfterViewChecked, OnDestroy, OnInit {
     layout: StreamLayout = this.streamLayoutService.getLayout();
 
     readonly itemTypes: ReadonlyArray<StreamItemType> = STREAM_ITEM_TYPES;
@@ -79,6 +79,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     @ViewChild('importFile') private importFile: ElementRef<HTMLInputElement> | undefined;
     @ViewChild('ctxMenu') private ctxMenuRef: ElementRef<HTMLElement> | undefined;
     @ViewChild('streamRoot') private streamRootRef: ElementRef<HTMLElement> | undefined;
+    @ViewChild('linkLayer') private linkLayerRef: ElementRef<SVGSVGElement> | undefined;
 
     private svc: RdioScannerService;
     private cdr: ChangeDetectorRef;
@@ -346,18 +347,20 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // The whole group shares one border colour/width (the top-left frame's).
     // Recomputed only when the frames' geometry/style changes.
     private linkSig = '';
+    private linkDirty = false;
     private linkPaths: { d: string; stroke: string; width: number; cap: string }[] = [];
     private linkGradients: { id: string; x1: number; y1: number; x2: number; y2: number; stops: { offset: number; color: string }[] }[] = [];
     private linkGroupOf = new Map<string, StreamItem[]>();
 
-    get linkOutlines(): { d: string; stroke: string; width: number; cap: string }[] {
+    // The merged outline/gradient is drawn imperatively (createElementNS) into
+    // the #linkLayer <svg> after each change — building SVG paint-server defs via
+    // Angular templates is brittle re: the SVG namespace, so we own it directly.
+    ngAfterViewChecked(): void {
         this.recomputeLinks();
-        return this.linkPaths;
-    }
-
-    get linkGrads(): { id: string; x1: number; y1: number; x2: number; y2: number; stops: { offset: number; color: string }[] }[] {
-        this.recomputeLinks();
-        return this.linkGradients;
+        if (this.linkDirty) {
+            this.linkDirty = false;
+            this.renderLinkLayer();
+        }
     }
 
     private isLinkGrouped(item: StreamItem): boolean {
@@ -384,6 +387,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             return;
         }
         this.linkSig = sig;
+        this.linkDirty = true;
         this.linkGroupOf = new Map();
         this.linkPaths = [];
         this.linkGradients = [];
@@ -440,8 +444,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     // Stroke for a group's outline: a solid colour when every frame shares one
-    // colour, otherwise a linear gradient that blends each frame's colour along
-    // the group's longer axis so the colours flow smoothly across the modules.
+    // colour, otherwise a linear gradient along the group's longer axis. Each
+    // module holds its own colour across its span and blends into its neighbour
+    // only across a short zone at the shared seam, so the colours link smoothly
+    // while every module still clearly shows its own colour.
     private linkStroke(grp: StreamItem[], index: number): string {
         const colors = grp.map((f) => this.itemColor(f));
         if (colors.every((c) => c === colors[0])) {
@@ -454,21 +460,74 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         const horizontal = (maxX - minX) >= (maxY - minY);
         const span = (horizontal ? maxX - minX : maxY - minY) || 1;
         const lo = horizontal ? minX : minY;
-        const stops = grp
+        const blend = Math.min(0.25, 24 / span); // half-width of the seam blend zone
+        const ordered = grp
             .map((f) => {
-                const center = horizontal ? f.x + f.w / 2 : f.y + f.h / 2;
-                return { offset: Math.max(0, Math.min(1, (center - lo) / span)), color: this.itemColor(f) };
+                const s = ((horizontal ? f.x : f.y) - lo) / span;
+                const e = ((horizontal ? f.x + f.w : f.y + f.h) - lo) / span;
+                return { s, e, color: this.itemColor(f) };
             })
-            .sort((a, b) => a.offset - b.offset);
-        // Anchor the ends so the outer edges take the extreme frames' colours.
-        stops[0] = { ...stops[0], offset: 0 };
-        stops[stops.length - 1] = { ...stops[stops.length - 1], offset: 1 };
+            .sort((a, b) => a.s - b.s);
+        const stops: { offset: number; color: string }[] = [];
+        ordered.forEach((m, i) => {
+            const from = i === 0 ? 0 : Math.min(m.s + blend, (m.s + m.e) / 2);
+            const to = i === ordered.length - 1 ? 1 : Math.max(m.e - blend, (m.s + m.e) / 2);
+            stops.push({ offset: Math.max(0, Math.min(1, from)), color: m.color });
+            stops.push({ offset: Math.max(0, Math.min(1, to)), color: m.color });
+        });
         const id = `link-grad-${index}`;
         const cy = (minY + maxY) / 2, cx = (minX + maxX) / 2;
         this.linkGradients.push(horizontal
             ? { id, x1: minX, y1: cy, x2: maxX, y2: cy, stops }
             : { id, x1: cx, y1: minY, x2: cx, y2: maxY, stops });
         return `url(#${id})`;
+    }
+
+    // Rebuild the #linkLayer SVG children directly so the gradient paint servers
+    // are guaranteed to live in the SVG namespace and resolve for the strokes.
+    private renderLinkLayer(): void {
+        const svg = this.linkLayerRef?.nativeElement;
+        if (!svg) {
+            return;
+        }
+        const NS = 'http://www.w3.org/2000/svg';
+        while (svg.firstChild) {
+            svg.removeChild(svg.firstChild);
+        }
+        svg.style.display = this.linkPaths.length ? '' : 'none';
+        if (!this.linkPaths.length) {
+            return;
+        }
+        if (this.linkGradients.length) {
+            const defs = this.document.createElementNS(NS, 'defs');
+            for (const grad of this.linkGradients) {
+                const lg = this.document.createElementNS(NS, 'linearGradient');
+                lg.setAttribute('id', grad.id);
+                lg.setAttribute('gradientUnits', 'userSpaceOnUse');
+                lg.setAttribute('x1', String(grad.x1));
+                lg.setAttribute('y1', String(grad.y1));
+                lg.setAttribute('x2', String(grad.x2));
+                lg.setAttribute('y2', String(grad.y2));
+                for (const s of grad.stops) {
+                    const stop = this.document.createElementNS(NS, 'stop');
+                    stop.setAttribute('offset', String(s.offset));
+                    stop.setAttribute('stop-color', s.color);
+                    lg.appendChild(stop);
+                }
+                defs.appendChild(lg);
+            }
+            svg.appendChild(defs);
+        }
+        for (const p of this.linkPaths) {
+            const path = this.document.createElementNS(NS, 'path');
+            path.setAttribute('d', p.d);
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke', p.stroke);
+            path.setAttribute('stroke-width', String(p.width));
+            path.setAttribute('stroke-linejoin', 'round');
+            path.setAttribute('stroke-linecap', p.cap);
+            svg.appendChild(path);
+        }
     }
 
     // The shared edge segment between two adjacent frames (for divider lines).
