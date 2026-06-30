@@ -17,24 +17,10 @@
  * ****************************************************************************
  */
 
-import { NgModule } from '@angular/core';
-import { RdioScannerModule } from '../../components/rdio-scanner';
-import { AppSharedModule } from '../../shared/shared.module';
-import { RdioScannerPageComponent } from './rdio-scanner.component';
-import { RdioScannerMainPageComponent } from './rdio-scanner-main.component';
-import { RdioScannerStreamPageComponent } from './rdio-scanner-stream.component';
-import { routes } from './rdio-scanner.routes';
+import { Component } from '@angular/core';
 
-@NgModule({
-    declarations: [
-        RdioScannerPageComponent,
-        RdioScannerMainPageComponent,
-        RdioScannerStreamPageComponent,
-    ],
-    exports: [RdioScannerPageComponent],
-    imports: [
-        RdioScannerModule,
-        AppSharedModule.forChild({routerRoutes: routes }),
-    ],
+@Component({
+    selector: 'rdio-scanner-stream-page',
+    template: '<rdio-scanner-stream></rdio-scanner-stream>',
 })
-export class RdioScannerPageModule { }
+export class RdioScannerStreamPageComponent { }

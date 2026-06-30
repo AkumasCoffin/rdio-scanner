@@ -34,6 +34,22 @@
   }
 }
 
+/* Floating entry point for the OBS stream-overlay settings. Sits in the
+   top-right of the main view, out of the way of the LCD. */
+.stream-settings-fab {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  opacity: 0.5;
+  color: var(--text-main);
+  transition: opacity 0.2s ease;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
 .panel {
   background-color: var(--bg-elevated);
   border-radius: var(--radius-lg);

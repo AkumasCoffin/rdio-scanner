@@ -49,6 +49,10 @@
         </div>
     </mat-sidenav>
     <mat-sidenav-content>
+        <button class="stream-settings-fab" mat-icon-button matTooltip="Stream overlay (OBS)"
+            aria-label="Stream overlay settings" (click)="openStreamSettings()">
+            <mat-icon>cast</mat-icon>
+        </button>
         <rdio-scanner-main
             (openSearchPanel)="scrollTop(scrollableSearch); searchPanel.open(); searchComponent.searchCalls()"
             (openSelectPanel)="scrollTop(scrollableSelect); selectPanel.open();"

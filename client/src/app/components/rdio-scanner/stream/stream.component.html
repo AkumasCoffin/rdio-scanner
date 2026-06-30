@@ -1,0 +1,143 @@
+<div class="stream-root" [class.move-mode]="layout.moveMode"
+    [style.background]="layout.bgColor" [style.color]="layout.textColor"
+    [style.--stream-grid]="layout.gridSize + 'px'">
+
+    <!-- Clock -->
+    <div class="stream-el" *ngIf="elVisible('clock')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('clock')" [style.top.px]="elY('clock')"
+        (pointerdown)="onDragStart('clock', $event)">
+        <span>{{ clock | date:timeFormat }}</span>
+    </div>
+
+    <!-- Listeners -->
+    <div class="stream-el" *ngIf="elVisible('listeners')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('listeners')" [style.top.px]="elY('listeners')"
+        (pointerdown)="onDragStart('listeners', $event)">
+        <span>Listeners: {{ listeners }}</span>
+    </div>
+
+    <!-- Queue -->
+    <div class="stream-el" *ngIf="elVisible('queue')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('queue')" [style.top.px]="elY('queue')"
+        (pointerdown)="onDragStart('queue', $event)">
+        <span>Queue: {{ callQueue }}</span>
+    </div>
+
+    <!-- Delay -->
+    <div class="stream-el small" *ngIf="elVisible('delay')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('delay')" [style.top.px]="elY('delay')"
+        (pointerdown)="onDragStart('delay', $event)">
+        <span>Delay: {{ queueDelayLabel || '0:00' }}<span *ngIf="delayRemovedLabel" class="delay-removed">
+                {{ delayRemovedLabel }}</span></span>
+    </div>
+
+    <!-- System -->
+    <div class="stream-el" *ngIf="elVisible('system')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('system')" [style.top.px]="elY('system')"
+        (pointerdown)="onDragStart('system', $event)">
+        <span>{{ callSystem }}</span>
+    </div>
+
+    <!-- Tag -->
+    <div class="stream-el" *ngIf="elVisible('tag')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('tag')" [style.top.px]="elY('tag')"
+        (pointerdown)="onDragStart('tag', $event)">
+        <span>{{ callTag }}</span>
+    </div>
+
+    <!-- Talkgroup -->
+    <div class="stream-el" *ngIf="elVisible('talkgroup')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('talkgroup')" [style.top.px]="elY('talkgroup')"
+        (pointerdown)="onDragStart('talkgroup', $event)">
+        <span>{{ callTalkgroup }}</span>
+    </div>
+
+    <!-- Call date -->
+    <div class="stream-el" *ngIf="elVisible('callDate')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('callDate')" [style.top.px]="elY('callDate')"
+        (pointerdown)="onDragStart('callDate', $event)">
+        <span>{{ callDate | date:'MM/dd' }}</span>
+    </div>
+
+    <!-- Call progress time -->
+    <div class="stream-el" *ngIf="elVisible('callProgress')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('callProgress')" [style.top.px]="elY('callProgress')"
+        (pointerdown)="onDragStart('callProgress', $event)">
+        <span>{{ callProgress | date:timeFormat }}</span>
+    </div>
+
+    <!-- Talkgroup name (big) -->
+    <div class="stream-el big" *ngIf="elVisible('talkgroupName')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('talkgroupName')" [style.top.px]="elY('talkgroupName')"
+        (pointerdown)="onDragStart('talkgroupName', $event)">
+        <span>{{ callTalkgroupName }}</span>
+    </div>
+
+    <!-- TGID -->
+    <div class="stream-el" *ngIf="elVisible('tgid')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('tgid')" [style.top.px]="elY('tgid')"
+        (pointerdown)="onDragStart('tgid', $event)">
+        <span>TGID: {{ callTalkgroupId || 0 }}</span>
+    </div>
+
+    <!-- UID -->
+    <div class="stream-el" *ngIf="elVisible('uid')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('uid')" [style.top.px]="elY('uid')"
+        (pointerdown)="onDragStart('uid', $event)">
+        <span *ngIf="callUnit">UID: {{ callUnit }}</span>
+    </div>
+
+    <!-- Avoid timer -->
+    <div class="stream-el small" *ngIf="elVisible('tempAvoid')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('tempAvoid')" [style.top.px]="elY('tempAvoid')"
+        (pointerdown)="onDragStart('tempAvoid', $event)">
+        <span *ngIf="tempAvoid">&#x23f2;&#xFE0E; {{ tempAvoid }}M</span>
+    </div>
+
+    <!-- Avoid flag -->
+    <div class="stream-el small flag" *ngIf="elVisible('avoid')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('avoid')" [style.top.px]="elY('avoid')"
+        (pointerdown)="onDragStart('avoid', $event)">
+        <span *ngIf="avoided">AVOID</span>
+    </div>
+
+    <!-- Patch flag -->
+    <div class="stream-el small flag" *ngIf="elVisible('patch')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('patch')" [style.top.px]="elY('patch')"
+        (pointerdown)="onDragStart('patch', $event)">
+        <span *ngIf="patched">PATCH</span>
+    </div>
+
+    <!-- Transcript -->
+    <div class="stream-el transcript" *ngIf="elVisible('transcript')" [class.movable]="layout.moveMode"
+        [style.left.px]="elX('transcript')" [style.top.px]="elY('transcript')"
+        (pointerdown)="onDragStart('transcript', $event)">
+        <div class="transcript-label">TRANSCRIPT</div>
+        <div class="transcript-text" *ngIf="displayCall?.transcript">{{ displayCall?.transcript }}</div>
+        <div class="transcript-text placeholder" *ngIf="!displayCall?.transcript">—</div>
+    </div>
+
+    <!-- Drag-mode badge -->
+    <div class="move-badge" *ngIf="layout.moveMode">
+        MOVE MODE — drag elements · hold Shift to snap to grid
+    </div>
+
+    <!-- Start / unlock overlay -->
+    <div class="stream-overlay" *ngIf="showOverlay">
+        <div class="overlay-card">
+            <ng-container *ngIf="auth; else startBtn">
+                <p class="overlay-title">Enter unlock code</p>
+                <form autocomplete="off" [formGroup]="authForm" (ngSubmit)="authenticate()">
+                    <input #password type="password" autocomplete="off" formControlName="password"
+                        placeholder="Unlock code" (blur)="authFocus()">
+                    <button type="submit">Unlock</button>
+                </form>
+            </ng-container>
+            <ng-template #startBtn>
+                <p class="overlay-title">Stream output</p>
+                <button type="button" class="start-button" (click)="startStream()">▶ Start Stream</button>
+                <p class="overlay-hint">Starts live audio for OBS capture. Control playback from the main page.</p>
+            </ng-template>
+        </div>
+    </div>
+</div>

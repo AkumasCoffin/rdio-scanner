@@ -65,13 +65,35 @@ enum WebsocketCommand {
     Version = 'VER',
 }
 
+// Messages exchanged over the stream-sync BroadcastChannel. 'request' asks the
+// leader to (re)broadcast; 'state' carries the leader's effective selection.
+interface StreamSyncMessage {
+    type?: string;
+    map?: { [key: number]: { [key: number]: boolean } };
+    autoJump?: boolean;
+    autoJumpThreshold?: number;
+}
+
 @Injectable()
 export class RdioScannerService implements OnDestroy {
     static LOCAL_STORAGE_KEY_LEGACY = 'rdio-scanner';
     static LOCAL_STORAGE_KEY_LFM = 'rdio-scanner-lfm';
     static LOCAL_STORAGE_KEY_PIN = 'rdio-scanner-pin';
+    // BroadcastChannel name used to live-sync the effective talkgroup
+    // selection / avoid / hold state + auto-jump from a "leader" window
+    // (the normal main page) to one or more "follower" windows (the /stream
+    // OBS page). See enableFollowerMode()/broadcastLivefeedState() below.
+    static STREAM_SYNC_CHANNEL = 'rdio-scanner-stream-sync';
 
     event = new EventEmitter<RdioScannerEvent>();
+
+    // Stream live-sync. A follower (the /stream page) opts in via
+    // enableFollowerMode(): it stops broadcasting its own state and instead
+    // applies whatever the leader broadcasts. Leaders broadcast their
+    // effective livefeed map + auto-jump whenever those change. Live Feed
+    // on/off is deliberately NOT synced — the stream owns its own playback.
+    private followerMode = false;
+    private syncChannel: BroadcastChannel | undefined;
 
     private transcriptResolvers = new Map<number, (text: string) => void>();
 
@@ -246,6 +268,8 @@ export class RdioScannerService implements OnDestroy {
         }
 
         this.openWebsocket();
+
+        this.initStreamSync();
     }
 
     authenticate(password: string): void {
@@ -430,6 +454,155 @@ export class RdioScannerService implements OnDestroy {
         this.closeWebsocket();
 
         this.stop();
+
+        try {
+            this.syncChannel?.close();
+        } catch (_) {
+            //
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Stream live-sync (leader/follower over BroadcastChannel)
+    // ---------------------------------------------------------------------
+
+    private initStreamSync(): void {
+        try {
+            if (typeof BroadcastChannel === 'undefined') {
+                return;
+            }
+
+            this.syncChannel = new BroadcastChannel(RdioScannerService.STREAM_SYNC_CHANNEL);
+
+            this.syncChannel.onmessage = (e: MessageEvent) => this.onStreamSyncMessage(e?.data);
+
+        } catch (_) {
+            // BroadcastChannel unavailable (old browser / SSR) — sync is a
+            // best-effort enhancement, so silently degrade.
+        }
+    }
+
+    // Called by the /stream page. Turns this service instance into a
+    // follower: it no longer broadcasts and starts applying leader state.
+    enableFollowerMode(): void {
+        this.followerMode = true;
+    }
+
+    // Restores leader behaviour — called when the /stream page is torn down so
+    // a same-tab navigation back to the main page resumes broadcasting.
+    disableFollowerMode(): void {
+        this.followerMode = false;
+    }
+
+    // Asks the leader window to (re)broadcast its current state — used by a
+    // freshly-opened /stream page to immediately pull holds/selection that
+    // were set before it opened (holds aren't persisted to localStorage).
+    requestSyncState(): void {
+        try {
+            this.syncChannel?.postMessage({ type: 'request' });
+        } catch (_) {
+            //
+        }
+    }
+
+    private onStreamSyncMessage(msg: StreamSyncMessage): void {
+        if (!msg || typeof msg !== 'object') {
+            return;
+        }
+
+        if (msg.type === 'request') {
+            // Only a leader answers a follower's request for current state.
+            if (!this.followerMode) {
+                this.broadcastLivefeedState();
+            }
+            return;
+        }
+
+        if (msg.type === 'state') {
+            // Only followers apply incoming state; leaders ignore it.
+            if (this.followerMode) {
+                this.applyFollowerState(msg);
+            }
+        }
+    }
+
+    // Reduces the in-memory livefeedMap to a plain {sys:{tg:active}} object —
+    // the same shape startLivefeed() sends to the server.
+    private buildActiveMap(): { [key: number]: { [key: number]: boolean } } {
+        return Object.keys(this.livefeedMap).reduce((sysMap: { [key: number]: { [key: number]: boolean } }, sys) => {
+            sysMap[+sys] = Object.keys(this.livefeedMap[+sys]).reduce((tgMap: { [key: number]: boolean }, tg) => {
+                tgMap[+tg] = this.livefeedMap[+sys][+tg].active;
+                return tgMap;
+            }, {});
+            return sysMap;
+        }, {});
+    }
+
+    // Broadcasts the leader's effective selection + auto-jump to followers.
+    // No-op on followers (they never lead) and when BroadcastChannel is
+    // unavailable. Note BroadcastChannel never echoes back to the sender, so
+    // a leader never receives its own state.
+    broadcastLivefeedState(): void {
+        if (this.followerMode || !this.syncChannel) {
+            return;
+        }
+
+        try {
+            this.syncChannel.postMessage({
+                type: 'state',
+                map: this.buildActiveMap(),
+                autoJump: this.autoJumpAhead,
+                autoJumpThreshold: this.autoJumpThresholdMin,
+            });
+        } catch (_) {
+            //
+        }
+    }
+
+    // Follower path: mirror the leader's talkgroup selection / avoid / hold
+    // result + auto-jump, then resubscribe so the server sends the same set
+    // of calls. Deliberately does not touch livefeedMode — the stream keeps
+    // playing regardless of whether the leader's Live Feed is on or off.
+    private applyFollowerState(msg: StreamSyncMessage): void {
+        if (typeof msg.autoJump === 'boolean') {
+            this.autoJumpAhead = msg.autoJump;
+            this.event.emit({ autoJumpAhead: this.autoJumpAhead });
+        }
+
+        if (typeof msg.autoJumpThreshold === 'number') {
+            this.autoJumpThresholdMin = msg.autoJumpThreshold;
+            this.event.emit({ autoJumpThreshold: this.autoJumpThresholdMin });
+        }
+
+        const incoming = msg.map || {};
+
+        Object.keys(incoming).forEach((sys) => {
+            Object.keys(incoming[+sys]).forEach((tg) => {
+                if (!this.livefeedMap[+sys]) {
+                    this.livefeedMap[+sys] = {};
+                }
+                if (!this.livefeedMap[+sys][+tg]) {
+                    this.livefeedMap[+sys][+tg] = { active: incoming[+sys][+tg] } as RdioScannerLivefeed;
+                } else {
+                    this.livefeedMap[+sys][+tg].active = incoming[+sys][+tg];
+                }
+            });
+        });
+
+        this.livefeedMapState = this.livefeedMap;
+
+        // Persist so a stream reload restores the last mirrored selection.
+        // saveLivefeedMap() also calls broadcastLivefeedState(), which is a
+        // no-op here because followerMode is set.
+        this.saveLivefeedMap();
+
+        this.rebuildCategories();
+
+        this.event.emit({ categories: this.categories, map: this.livefeedMap });
+
+        if (this.livefeedMode === RdioScannerLivefeedMode.Online) {
+            this.startLivefeed();
+        }
     }
 
     holdSystem(options?: { resubscribe?: boolean }): void {
@@ -483,6 +656,10 @@ export class RdioScannerService implements OnDestroy {
                 queue: this.callQueue.length,
                 queueTime: this.computeDelay(),
             });
+
+            // Mirror the hold result to /stream followers even when offline
+            // (online holds already broadcast via startLivefeed's resubscribe).
+            this.broadcastLivefeedState();
         }
     }
 
@@ -535,6 +712,10 @@ export class RdioScannerService implements OnDestroy {
                 queue: this.callQueue.length,
                 queueTime: this.computeDelay(),
             });
+
+            // Mirror the hold result to /stream followers even when offline
+            // (online holds already broadcast via startLivefeed's resubscribe).
+            this.broadcastLivefeedState();
         }
     }
 
@@ -739,6 +920,9 @@ export class RdioScannerService implements OnDestroy {
         } catch (e) {
             // Ignore storage errors
         }
+
+        // Keep /stream followers' auto-jump in step. No-op on followers.
+        this.broadcastLivefeedState();
     }
 
     // computeQueueTime sums the cached durations of every call currently in the
@@ -1495,6 +1679,9 @@ export class RdioScannerService implements OnDestroy {
         this.event.emit({ livefeedMode: this.livefeedMode });
 
         this.sendtoWebsocket(WebsocketCommand.LivefeedMap, lfm);
+
+        // Mirror the freshly-subscribed selection to any /stream followers.
+        this.broadcastLivefeedState();
     }
 
     stop(options?: { emit?: boolean }): void {
@@ -2231,6 +2418,10 @@ export class RdioScannerService implements OnDestroy {
         }, {});
 
         window?.localStorage?.setItem(`${RdioScannerService.LOCAL_STORAGE_KEY_LFM}-${this.instanceId}`, JSON.stringify(lfm));
+
+        // Covers selection/avoid changes made while offline (no resubscribe,
+        // so startLivefeed's broadcast wouldn't fire). No-op on followers.
+        this.broadcastLivefeedState();
     }
 
     private sendtoWebsocket(command: string, payload?: unknown, flags?: string): void {

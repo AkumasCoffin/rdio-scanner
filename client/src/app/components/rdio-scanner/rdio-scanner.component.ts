@@ -18,6 +18,7 @@
  */
 
 import { AfterViewInit, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { MatDialog } from '@angular/material/dialog';
 import { MatSidenav } from '@angular/material/sidenav';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { timer } from 'rxjs';
@@ -26,6 +27,7 @@ import { RdioScannerService } from './rdio-scanner.service';
 import { RdioScannerNativeComponent } from './native/native.component';
 import { RdioScannerPublicStatsComponent } from './stats/public-stats.component';
 import { RdioScannerSearchComponent } from './search/search.component';
+import { RdioScannerStreamSettingsComponent } from './stream/stream-settings.component';
 
 @Component({
     selector: 'rdio-scanner',
@@ -50,10 +52,18 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
     @ViewChild('scrollableSearch') private scrollableSearch: ElementRef | undefined;
 
     constructor(
+        private matDialog: MatDialog,
         private matSnackBar: MatSnackBar,
         private ngElementRef: ElementRef,
         private rdioScannerService: RdioScannerService,
     ) { }
+
+    openStreamSettings(): void {
+        this.matDialog.open(RdioScannerStreamSettingsComponent, {
+            autoFocus: false,
+            panelClass: 'rdio-scanner-stream-settings-dialog',
+        });
+    }
 
     @HostListener('window:beforeunload', ['$event'])
     exitNotification(event: BeforeUnloadEvent): void {

@@ -19,6 +19,7 @@
 
 import { Routes } from '@angular/router';
 import { RdioScannerMainPageComponent } from './rdio-scanner-main.component';
+import { RdioScannerStreamPageComponent } from './rdio-scanner-stream.component';
 import { RdioScannerPageComponent } from './rdio-scanner.component';
 
 export const routes: Routes = [
@@ -29,6 +30,10 @@ export const routes: Routes = [
             {
                 component: RdioScannerMainPageComponent,
                 path: '',
+            },
+            {
+                component: RdioScannerStreamPageComponent,
+                path: 'stream',
             },
             {
                 loadChildren: () => import('./admin/admin.module').then((module) => module.RdioScannerAdminPageModule),

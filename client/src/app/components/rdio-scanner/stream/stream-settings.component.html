@@ -1,0 +1,66 @@
+<div class="stream-settings">
+    <div class="header">
+        <h2>Stream Overlay</h2>
+        <button mat-icon-button mat-dialog-close aria-label="Close">
+            <mat-icon>close</mat-icon>
+        </button>
+    </div>
+
+    <div class="body" mat-dialog-content>
+        <p class="hint">
+            Opens an OBS-friendly LCD + transcript page that mirrors this page's talkgroup selection,
+            avoid, hold and auto-jump. Key out the background color in OBS.
+        </p>
+
+        <button mat-stroked-button class="open-btn" (click)="openStreamWindow()">
+            <mat-icon>open_in_new</mat-icon>
+            Open /stream window
+        </button>
+
+        <div class="section">
+            <div class="row color-row">
+                <label for="stream-text-color">Text color</label>
+                <input id="stream-text-color" type="color" [value]="layout.textColor"
+                    (input)="setTextColor($any($event.target).value)">
+            </div>
+            <div class="row color-row">
+                <label for="stream-bg-color">Background color</label>
+                <input id="stream-bg-color" type="color" [value]="layout.bgColor"
+                    (input)="setBgColor($any($event.target).value)">
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="row">
+                <mat-slide-toggle [checked]="layout.moveMode"
+                    (change)="setMoveMode($event.checked)">
+                    Move mode (drag elements on /stream)
+                </mat-slide-toggle>
+            </div>
+            <div class="row grid-row" [class.disabled]="!layout.moveMode">
+                <label for="stream-grid">Grid snap (px)</label>
+                <input id="stream-grid" type="number" min="2" max="200" [value]="layout.gridSize"
+                    (change)="setGridSize($any($event.target).valueAsNumber)">
+                <span class="grid-note">Hold Shift while dragging to snap</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Elements</div>
+            <div class="elements">
+                <mat-checkbox *ngFor="let el of elements" [checked]="isVisible(el.key)"
+                    (change)="toggleVisible(el.key, $event.checked)">
+                    {{ el.label }}
+                </mat-checkbox>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer" mat-dialog-actions>
+        <button mat-stroked-button color="warn" (click)="reset()">
+            <mat-icon>restart_alt</mat-icon>
+            Reset layout
+        </button>
+        <button mat-button mat-dialog-close>Done</button>
+    </div>
+</div>
