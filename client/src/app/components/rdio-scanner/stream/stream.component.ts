@@ -708,6 +708,14 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return this.layout.items.find((i) => i.id === this.gestureId) ?? null;
     }
 
+    // The single item currently being moved (for the live position readout).
+    get movingItem(): StreamItem | null {
+        if (this.gestureMode !== 'move' || !this.gestureId || this.moveTargets.length !== 1) {
+            return null;
+        }
+        return this.layout.items.find((i) => i.id === this.gestureId) ?? null;
+    }
+
     // Convert a viewport (client) point to canvas-local coordinates — the same
     // space items are positioned in. Items / the rubber-band are absolutely
     // positioned within .stream-root, which is normally at (0,0) but this keeps
@@ -849,10 +857,16 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         // perpendicular axis (overlapping elements like frames have 0 gap and
         // always qualify), so it doesn't snap to things across the screen.
         const near = 130;
+        // Text sits vertically centered in its box, so for non-frame items
+        // prefer center-to-center alignment over edge alignment by discounting
+        // its match distance.
+        const dragged = this.layout.items.find((i) => i.id === id);
+        const preferCenter = !!dragged && dragged.type !== 'frame';
+        const centerBonus = 5;
         const movingIds = new Set(this.moveTargets.map((t) => t.id));
 
-        let bestDX = threshold + 1;
-        let bestDY = threshold + 1;
+        let bestScoreX = Infinity;
+        let bestScoreY = Infinity;
         let snapX = x;
         let snapY = y;
         let guideX: number | null = null;
@@ -872,13 +886,17 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             // Align vertical edges only when the two are vertically close.
             if (vSep <= near) {
                 const oV = [o.x, o.x + o.w / 2, o.x + o.w];
-                for (const m of myV) {
-                    for (const v of oV) {
-                        const d = Math.abs(m - v);
-                        if (d < bestDX) {
-                            bestDX = d;
-                            snapX = x + (v - m);
-                            guideX = v;
+                for (let mi = 0; mi < 3; mi++) {
+                    for (let vi = 0; vi < 3; vi++) {
+                        const d = Math.abs(myV[mi] - oV[vi]);
+                        if (d > threshold) {
+                            continue;
+                        }
+                        const score = d - (preferCenter && mi === 1 && vi === 1 ? centerBonus : 0);
+                        if (score < bestScoreX) {
+                            bestScoreX = score;
+                            snapX = x + (oV[vi] - myV[mi]);
+                            guideX = oV[vi];
                         }
                     }
                 }
@@ -887,13 +905,17 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             // Align horizontal edges only when horizontally close.
             if (hSep <= near) {
                 const oH = [o.y, o.y + o.h / 2, o.y + o.h];
-                for (const m of myH) {
-                    for (const v of oH) {
-                        const d = Math.abs(m - v);
-                        if (d < bestDY) {
-                            bestDY = d;
-                            snapY = y + (v - m);
-                            guideY = v;
+                for (let mi = 0; mi < 3; mi++) {
+                    for (let vi = 0; vi < 3; vi++) {
+                        const d = Math.abs(myH[mi] - oH[vi]);
+                        if (d > threshold) {
+                            continue;
+                        }
+                        const score = d - (preferCenter && mi === 1 && vi === 1 ? centerBonus : 0);
+                        if (score < bestScoreY) {
+                            bestScoreY = score;
+                            snapY = y + (oH[vi] - myH[mi]);
+                            guideY = oH[vi];
                         }
                     }
                 }

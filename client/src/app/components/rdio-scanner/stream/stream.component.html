@@ -107,6 +107,11 @@
         <div class="dim dim-h" [style.left.px]="ri.x + ri.w" [style.top.px]="ri.y + ri.h / 2">{{ ri.h }} px</div>
     </ng-container>
 
+    <!-- Live position while moving -->
+    <div class="dim dim-pos" *ngIf="movingItem as mi" [style.left.px]="mi.x" [style.top.px]="mi.y">
+        {{ mi.x }}, {{ mi.y }} px
+    </div>
+
     <!-- Edit-mode hint -->
     <div class="move-badge" *ngIf="layout.moveMode">
         EDIT MODE — drag to move · corner to resize · right-click to edit · Ctrl+click / Ctrl+drag to multi-select

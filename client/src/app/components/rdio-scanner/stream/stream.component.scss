@@ -237,6 +237,10 @@
     &.dim-h {
         transform: translate(6px, -50%);
     }
+
+    &.dim-pos {
+        transform: translate(0, -130%);
+    }
 }
 
 /* Alignment guides shown while dragging an element near another's edge. */
