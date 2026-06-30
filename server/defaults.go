@@ -59,6 +59,8 @@ type DefaultOptions struct {
 	maxClients                  uint
 	playbackGoesLive            bool
 	pruneDays                   uint
+	logPruneDays                uint
+	logPruneCount               uint
 	searchPatchedTalkgroups     bool
 	showListenersCount          bool
 	sortTalkgroups              bool
@@ -114,6 +116,8 @@ var defaults Defaults = Defaults{
 		maxClients:                  200,
 		playbackGoesLive:            false,
 		pruneDays:                   7,
+		logPruneDays:                7,
+		logPruneCount:               250000,
 		searchPatchedTalkgroups:     false,
 		showListenersCount:          false,
 		sortTalkgroups:              false,

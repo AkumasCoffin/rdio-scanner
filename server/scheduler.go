@@ -38,18 +38,38 @@ func NewScheduler(controller *Controller) *Scheduler {
 }
 
 func (scheduler *Scheduler) pruneDatabase() error {
-	if scheduler.Controller.Options.PruneDays == 0 {
+	opts := scheduler.Controller.Options
+	db := scheduler.Controller.Database
+
+	// Calls and logs prune independently. LogPruneDays lets logs be purged on
+	// their own (default 7-day) schedule even when call retention is long or
+	// disabled (PruneDays == 0) — otherwise a long call-retention setting would
+	// also pin the high-volume logs table. Either being 0 disables only that
+	// side; both 0 = nothing to do.
+	if opts.PruneDays == 0 && opts.LogPruneDays == 0 && opts.LogPruneCount == 0 {
 		return nil
 	}
 
 	scheduler.Controller.Logs.LogEvent(LogLevelInfo, "database pruning")
 
-	if err := scheduler.Controller.Calls.Prune(scheduler.Controller.Database, scheduler.Controller.Options.PruneDays); err != nil {
-		return err
+	if opts.PruneDays > 0 {
+		if err := scheduler.Controller.Calls.Prune(db, opts.PruneDays); err != nil {
+			return err
+		}
 	}
 
-	if err := scheduler.Controller.Logs.Prune(scheduler.Controller.Database, scheduler.Controller.Options.PruneDays); err != nil {
-		return err
+	if opts.LogPruneDays > 0 {
+		if err := scheduler.Controller.Logs.Prune(db, opts.LogPruneDays); err != nil {
+			return err
+		}
+	}
+
+	// Hard row cap, applied after the time-based prune so it bounds the table
+	// even when generation outpaces day-based retention.
+	if opts.LogPruneCount > 0 {
+		if err := scheduler.Controller.Logs.PruneToCount(db, opts.LogPruneCount); err != nil {
+			return err
+		}
 	}
 
 	return nil

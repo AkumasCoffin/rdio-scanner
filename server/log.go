@@ -93,6 +93,31 @@ func (logs *Logs) Prune(db *Database, pruneDays uint) error {
 	return err
 }
 
+// PruneToCount enforces a hard cap on the number of log rows, keeping only the
+// newest maxRows by _id (autoincrement, so chronological). This bounds the
+// table regardless of the time-based retention or the log generation rate — a
+// burst (e.g. a bot flood faster than the day-based prune can react) can't grow
+// the table without limit. maxRows == 0 disables the cap.
+//
+// The threshold (_id of the oldest row we keep) is found via OFFSET on the
+// primary-key index, then everything older is deleted in one statement. The
+// nested derived table (`tmp`) is required so MySQL doesn't reject deleting
+// from a table referenced in its own subquery (error 1093); Postgres/SQLite
+// accept it too.
+func (logs *Logs) PruneToCount(db *Database, maxRows uint) error {
+	if maxRows == 0 {
+		return nil
+	}
+
+	logs.mutex.Lock()
+	defer logs.mutex.Unlock()
+
+	query := fmt.Sprintf("delete from `rdioScannerLogs` where `_id` < (select `x` from (select `_id` as `x` from `rdioScannerLogs` order by `_id` desc limit 1 offset %d) as `tmp`)", maxRows-1)
+	_, err := db.Exec(query)
+
+	return err
+}
+
 // logCountCap bounds the admin logs count(*) so the query stays fast on very
 // large or bloated tables. When the real row count exceeds this, the paginator
 // reports the cap; recent logs still page correctly and filters narrow further.

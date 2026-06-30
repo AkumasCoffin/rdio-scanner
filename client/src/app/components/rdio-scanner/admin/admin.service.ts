@@ -143,6 +143,8 @@ export interface Options {
     maxClients?: number;
     playbackGoesLive?: boolean;
     pruneDays?: number;
+    logPruneDays?: number;
+    logPruneCount?: number;
     searchPatchedTalkgroups?: boolean;
     showListenersCount?: boolean;
     sortTalkgroups?: boolean;
@@ -651,6 +653,8 @@ export class RdioScannerAdminService implements OnDestroy {
             maxClients: [options?.maxClients, [Validators.required, Validators.min(1)]],
             playbackGoesLive: [options?.playbackGoesLive],
             pruneDays: [options?.pruneDays, [Validators.required, Validators.min(0)]],
+            logPruneDays: [options?.logPruneDays, [Validators.min(0)]],
+            logPruneCount: [options?.logPruneCount, [Validators.min(0)]],
 			searchPatchedTalkgroups: [options?.searchPatchedTalkgroups],
 			showListenersCount: [options?.showListenersCount],
             sortTalkgroups: [options?.sortTalkgroups],

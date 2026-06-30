@@ -37,6 +37,8 @@ type Options struct {
 	MaxClients                  uint   `json:"maxClients"`
 	PlaybackGoesLive            bool   `json:"playbackGoesLive"`
 	PruneDays                   uint   `json:"pruneDays"`
+	LogPruneDays                uint   `json:"logPruneDays"`
+	LogPruneCount               uint   `json:"logPruneCount"`
 	SearchPatchedTalkgroups     bool   `json:"searchPatchedTalkgroups"`
 	ShowListenersCount          bool   `json:"showListenersCount"`
 	SortTalkgroups              bool   `json:"sortTalkgroups"`
@@ -149,6 +151,8 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	setUint("maxClients", &options.MaxClients)
 	setBool("playbackGoesLive", &options.PlaybackGoesLive)
 	setUint("pruneDays", &options.PruneDays)
+	setUint("logPruneDays", &options.LogPruneDays)
+	setUint("logPruneCount", &options.LogPruneCount)
 	setBool("searchPatchedTalkgroups", &options.SearchPatchedTalkgroups)
 	setBool("showListenersCount", &options.ShowListenersCount)
 	setBool("sortTalkgroups", &options.SortTalkgroups)
@@ -200,6 +204,8 @@ func (options *Options) optionKeyValuePairs() []struct {
 		{"maxClients", options.MaxClients},
 		{"playbackGoesLive", options.PlaybackGoesLive},
 		{"pruneDays", options.PruneDays},
+		{"logPruneDays", options.LogPruneDays},
+		{"logPruneCount", options.LogPruneCount},
 		{"searchPatchedTalkgroups", options.SearchPatchedTalkgroups},
 		{"showListenersCount", options.ShowListenersCount},
 		{"sortTalkgroups", options.SortTalkgroups},
@@ -250,6 +256,8 @@ func (options *Options) Read(db *Database) error {
 	options.MaxClients = defaults.options.maxClients
 	options.PlaybackGoesLive = defaults.options.playbackGoesLive
 	options.PruneDays = defaults.options.pruneDays
+	options.LogPruneDays = defaults.options.logPruneDays
+	options.LogPruneCount = defaults.options.logPruneCount
 	options.SearchPatchedTalkgroups = defaults.options.searchPatchedTalkgroups
 	options.ShowListenersCount = defaults.options.showListenersCount
 	options.SortTalkgroups = defaults.options.sortTalkgroups
@@ -329,6 +337,8 @@ func (options *Options) Read(db *Database) error {
 		applyUint("maxClients", &options.MaxClients)
 		applyBool("playbackGoesLive", &options.PlaybackGoesLive)
 		applyUint("pruneDays", &options.PruneDays)
+		applyUint("logPruneDays", &options.LogPruneDays)
+		applyUint("logPruneCount", &options.LogPruneCount)
 		applyBool("searchPatchedTalkgroups", &options.SearchPatchedTalkgroups)
 		applyBool("showListenersCount", &options.ShowListenersCount)
 		applyBool("sortTalkgroups", &options.SortTalkgroups)

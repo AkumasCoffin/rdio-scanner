@@ -160,6 +160,34 @@
     </div>
     <div class="row">
         <p>
+            <span class="mat-body">Log Prune Days</span><br>
+            <span class="mat-caption">Prune the event logs older than the specified number of days, independently of
+                Prune Days above. Useful for keeping calls long-term while not letting the logs table grow unbounded.
+                Leave blank or 0 to disable. Defaults to 7.</span>
+        </p>
+        <mat-form-field>
+            <input type="number" min="0" step="1" matInput formControlName="logPruneDays">
+            <mat-error *ngIf="form?.get('logPruneDays')?.hasError('min')">
+                Log prune days is invalid
+            </mat-error>
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Log Prune Count</span><br>
+            <span class="mat-caption">Hard cap on the number of event-log rows kept (newest first), enforced hourly
+                on top of Log Prune Days. Bounds the logs table even during a burst that outpaces day-based pruning.
+                Leave blank or 0 to disable. Defaults to 250000.</span>
+        </p>
+        <mat-form-field>
+            <input type="number" min="0" step="1" matInput formControlName="logPruneCount">
+            <mat-error *ngIf="form?.get('logPruneCount')?.hasError('min')">
+                Log prune count is invalid
+            </mat-error>
+        </mat-form-field>
+    </div>
+    <div class="row">
+        <p>
             <span class="mat-body">Search Patched Talkgroups</span><br>
             <span class="mat-caption">Search for patched talkgroups when using the search panel. Be aware this has a
                 negative impact on search response time.</span>
