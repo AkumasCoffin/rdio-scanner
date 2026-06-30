@@ -17,7 +17,8 @@
  * ****************************************************************************
  */
 
-import { ChangeDetectorRef, Component, ElementRef, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
+import { ChangeDetectorRef, Component, ElementRef, Inject, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { FormBuilder } from '@angular/forms';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { Subscription } from 'rxjs';
@@ -84,12 +85,18 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private boundUp = () => this.onGestureEnd();
     private boundDocClick = () => this.closeContext();
 
+    // Manifest swap so installing /stream as a PWA opens /stream, not the
+    // main page.
+    private manifestLink: HTMLLinkElement | null = null;
+    private prevManifestHref: string | null = null;
+
     constructor(
         private streamLayoutService: StreamLayoutService,
         rdioScannerService: RdioScannerService,
         matSnackBar: MatSnackBar,
         ngChangeDetectorRef: ChangeDetectorRef,
         ngFormBuilder: FormBuilder,
+        @Inject(DOCUMENT) private document: Document,
     ) {
         super(rdioScannerService, matSnackBar, ngChangeDetectorRef, ngFormBuilder);
         this.svc = rdioScannerService;
@@ -112,6 +119,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.svc.requestSyncState();
 
         document.addEventListener('click', this.boundDocClick);
+
+        // Point the PWA manifest at the stream-specific one so "Install app"
+        // from this page yields an app that launches /stream.
+        this.useStreamManifest();
     }
 
     override ngOnDestroy(): void {
@@ -119,8 +130,26 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.streamEventSub?.unsubscribe();
         this.detachGestureListeners();
         document.removeEventListener('click', this.boundDocClick);
+        this.restoreManifest();
         this.svc.disableFollowerMode();
         super.ngOnDestroy();
+    }
+
+    private useStreamManifest(): void {
+        const link = this.document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null;
+        if (link) {
+            this.manifestLink = link;
+            this.prevManifestHref = link.getAttribute('href');
+            link.setAttribute('href', 'stream.webmanifest');
+        }
+    }
+
+    private restoreManifest(): void {
+        if (this.manifestLink && this.prevManifestHref !== null) {
+            this.manifestLink.setAttribute('href', this.prevManifestHref);
+            this.manifestLink = null;
+            this.prevManifestHref = null;
+        }
     }
 
     trackItem(_index: number, item: StreamItem): string {
