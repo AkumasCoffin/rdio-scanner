@@ -69,6 +69,9 @@ type Options struct {
 	ShowRetranscribeButton      bool   `json:"showRetranscribeButton"`
 	UmamiUrl                    string `json:"umamiUrl"`
 	UmamiWebsiteId              string `json:"umamiWebsiteId"`
+	// UpdateUrl points the admin auto-updater at a GitHub repo
+	// (https://github.com/owner/repo). Empty = use DefaultUpdateRepo.
+	UpdateUrl                   string `json:"updateUrl"`
 	adminPassword               string
 	adminPasswordNeedChange     bool
 	mutex                       sync.Mutex
@@ -177,6 +180,7 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	setBool("showRetranscribeButton", &options.ShowRetranscribeButton)
 	setStr("umamiUrl", &options.UmamiUrl)
 	setStr("umamiWebsiteId", &options.UmamiWebsiteId)
+	setStr("updateUrl", &options.UpdateUrl)
 
 	return options
 }
@@ -230,6 +234,7 @@ func (options *Options) optionKeyValuePairs() []struct {
 		{"showRetranscribeButton", options.ShowRetranscribeButton},
 		{"umamiUrl", options.UmamiUrl},
 		{"umamiWebsiteId", options.UmamiWebsiteId},
+		{"updateUrl", options.UpdateUrl},
 	}
 }
 
@@ -363,6 +368,7 @@ func (options *Options) Read(db *Database) error {
 		applyBool("showRetranscribeButton", &options.ShowRetranscribeButton)
 		applyStr("umamiUrl", &options.UmamiUrl)
 		applyStr("umamiWebsiteId", &options.UmamiWebsiteId)
+		applyStr("updateUrl", &options.UpdateUrl)
 	}
 
 	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'secret'").Scan(&s)

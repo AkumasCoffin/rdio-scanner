@@ -119,6 +119,14 @@ func main() {
 
 	http.HandleFunc("/api/admin/transcribe", controller.Admin.TranscribeHandler)
 
+	http.HandleFunc("/api/admin/updates", gzipHandler(controller.Admin.UpdatesHandler))
+
+	http.HandleFunc("/api/admin/update/download", controller.Admin.UpdateDownloadHandler)
+
+	http.HandleFunc("/api/admin/update/apply", controller.Admin.UpdateApplyHandler)
+
+	http.HandleFunc("/api/admin/update/cancel", controller.Admin.UpdateCancelHandler)
+
 	http.HandleFunc("/api/admin/stats/talkgroup-units", gzipHandler(controller.Stats.TalkgroupUnitsHandler))
 
 	http.HandleFunc("/api/stats", gzipHandler(controller.Stats.PublicHandler))
