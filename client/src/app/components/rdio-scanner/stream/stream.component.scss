@@ -472,6 +472,60 @@
     }
 }
 
+/* In-app confirm dialog (replaces window.confirm). */
+.stream-confirm {
+    position: absolute;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 23, 42, 0.55);
+
+    .confirm-card {
+        min-width: 280px;
+        max-width: 360px;
+        padding: 20px 22px;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        border-radius: 12px;
+        background: #0f172a;
+        color: #e2e8f0;
+        font-family: 'Roboto', sans-serif;
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    .confirm-msg {
+        margin: 0 0 18px;
+        font-size: 14px;
+        line-height: 1.4;
+    }
+
+    .confirm-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+
+        button {
+            cursor: pointer;
+            border: 0;
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .cancel {
+            background: rgba(148, 163, 184, 0.2);
+            color: #e2e8f0;
+        }
+
+        .ok {
+            background: #ef4444;
+            color: #fff;
+        }
+    }
+}
+
 /* Start / unlock overlay — its own dark scrim, independent of the keyable
    stream colors, so it never shows up in the captured output once dismissed. */
 .stream-overlay {

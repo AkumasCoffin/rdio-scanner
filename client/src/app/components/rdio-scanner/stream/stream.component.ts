@@ -67,6 +67,9 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private addX = 40;
     private addY = 40;
 
+    // In-app confirm dialog (instead of window.confirm).
+    confirm: { message: string; action: () => void } | null = null;
+
     @ViewChild('importFile') private importFile: ElementRef<HTMLInputElement> | undefined;
     @ViewChild('ctxMenu') private ctxMenuRef: ElementRef<HTMLElement> | undefined;
     @ViewChild('streamRoot') private streamRootRef: ElementRef<HTMLElement> | undefined;
@@ -456,11 +459,33 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     removeCtxItem(): void {
         const ids = this.targetIds();
-        if (ids.length && window.confirm(`Remove ${ids.length} element${ids.length > 1 ? 's' : ''}?`)) {
+        this.closeContext();
+        if (!ids.length) {
+            return;
+        }
+        this.askConfirm(`Remove ${ids.length} element${ids.length > 1 ? 's' : ''}?`, () => {
             ids.forEach((id) => this.streamLayoutService.removeItem(id));
             this.selectedIds.clear();
+        });
+    }
+
+    private askConfirm(message: string, action: () => void): void {
+        this.confirm = { message, action };
+        this.cdr.detectChanges();
+    }
+
+    confirmYes(): void {
+        const action = this.confirm?.action;
+        this.confirm = null;
+        if (action) {
+            action();
         }
-        this.closeContext();
+        this.cdr.detectChanges();
+    }
+
+    confirmNo(): void {
+        this.confirm = null;
+        this.cdr.detectChanges();
     }
 
     setCtxItemColor(value: string): void {
@@ -551,10 +576,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     resetLayout(): void {
-        if (window.confirm('Reset the entire layout to defaults? This removes all your changes.')) {
-            this.streamLayoutService.reset();
-        }
         this.closeContext();
+        this.askConfirm('Reset the entire layout to defaults? This removes all your changes.', () => {
+            this.streamLayoutService.reset();
+        });
     }
 
     exportConfig(): void {

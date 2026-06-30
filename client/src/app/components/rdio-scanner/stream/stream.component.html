@@ -237,6 +237,18 @@
 
     <input #importFile type="file" accept="application/json,.json" hidden (change)="onImportFile($event)">
 
+    <!-- In-app confirm dialog -->
+    <div class="stream-confirm" *ngIf="confirm" (pointerdown)="$event.stopPropagation()"
+        (click)="confirmNo()">
+        <div class="confirm-card" (click)="$event.stopPropagation()">
+            <p class="confirm-msg">{{ confirm.message }}</p>
+            <div class="confirm-actions">
+                <button type="button" class="cancel" (click)="confirmNo()">Cancel</button>
+                <button type="button" class="ok" (click)="confirmYes()">Confirm</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Start / unlock overlay -->
     <div class="stream-overlay" *ngIf="showOverlay">
         <div class="overlay-card">
