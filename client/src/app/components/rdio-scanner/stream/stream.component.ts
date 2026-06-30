@@ -285,6 +285,32 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return item.titleColor;
     }
 
+    middleColorOf(item: StreamItem): string {
+        if (item.middleUseLed) {
+            return this.ledColor() ?? item.middleColor;
+        }
+        return item.middleColor;
+    }
+
+    // Builds the inset box-shadow for a frame's middle + inner bands (the outer
+    // band is the CSS border). Each enabled band is stacked inward.
+    frameShadow(item: StreamItem): string | null {
+        if (item.type !== 'frame') {
+            return null;
+        }
+        const parts: string[] = [];
+        let offset = 0;
+        if (item.middleFill) {
+            parts.push(`inset 0 0 0 ${offset + item.middleWidth}px ${this.middleColorOf(item)}`);
+            offset += item.middleWidth;
+        }
+        if (item.centerFill) {
+            parts.push(`inset 0 0 0 ${offset + item.innerWidth}px ${this.innerColor(item)}`);
+            offset += item.innerWidth;
+        }
+        return parts.length ? parts.join(', ') : null;
+    }
+
     // Whether a conditionally-empty element currently has a value to show — so
     // its title isn't shown standing alone when there's nothing after it.
     hasContent(item: StreamItem): boolean {
@@ -592,6 +618,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setCtxItemTitleEnabled(titleEnabled: boolean): void {
         this.applyToTargets({ titleEnabled });
+        this.refreshCtxItem();
     }
 
     setCtxItemTitleColor(titleColor: string): void {
@@ -969,14 +996,40 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.applyToTargets({ histLineColor });
     }
 
+    // Re-point ctxItem at the freshly-updated item so menu controls gated on a
+    // just-toggled field (e.g. inner/middle band, title) show/hide live.
+    private refreshCtxItem(): void {
+        if (this.ctxItem) {
+            const id = this.ctxItem.id;
+            this.ctxItem = this.layout.items.find((i) => i.id === id) ?? this.ctxItem;
+        }
+    }
+
+    private clampWidth(value: number): number {
+        return Math.max(0, Math.min(40, Math.round(value)));
+    }
+
     setBorderWidth(value: number): void {
         if (Number.isFinite(value)) {
-            this.applyToTargets({ borderWidth: Math.max(0, Math.min(40, Math.round(value))) });
+            this.applyToTargets({ borderWidth: this.clampWidth(value) });
+        }
+    }
+
+    setInnerWidth(value: number): void {
+        if (Number.isFinite(value)) {
+            this.applyToTargets({ innerWidth: this.clampWidth(value) });
+        }
+    }
+
+    setCornerRadius(value: number): void {
+        if (Number.isFinite(value)) {
+            this.applyToTargets({ cornerRadius: Math.max(0, Math.min(200, Math.round(value))) });
         }
     }
 
     setCenterFill(centerFill: boolean): void {
         this.applyToTargets({ centerFill });
+        this.refreshCtxItem();
     }
 
     setCenterColor(centerColor: string): void {
@@ -985,6 +1038,25 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setCenterUseLed(centerUseLed: boolean): void {
         this.applyToTargets({ centerUseLed });
+    }
+
+    setMiddleFill(middleFill: boolean): void {
+        this.applyToTargets({ middleFill });
+        this.refreshCtxItem();
+    }
+
+    setMiddleWidth(value: number): void {
+        if (Number.isFinite(value)) {
+            this.applyToTargets({ middleWidth: this.clampWidth(value) });
+        }
+    }
+
+    setMiddleColor(middleColor: string): void {
+        this.applyToTargets({ middleColor });
+    }
+
+    setMiddleUseLed(middleUseLed: boolean): void {
+        this.applyToTargets({ middleUseLed });
     }
 
     private detachGestureListeners(): void {

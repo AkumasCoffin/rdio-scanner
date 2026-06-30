@@ -344,6 +344,11 @@
             cursor: pointer;
         }
 
+        input[type="range"] {
+            width: 100px;
+            cursor: pointer;
+        }
+
         input[type="text"],
         textarea {
             width: 120px;

@@ -115,9 +115,15 @@ export class StreamLayoutService implements OnDestroy {
             histLineWidth: 1,
             histLineColor: '#888888',
             borderWidth: 2,
+            innerWidth: 2,
+            cornerRadius: 6,
             centerFill: false,
             centerColor: '#000000',
             centerUseLed: false,
+            middleFill: false,
+            middleWidth: 2,
+            middleColor: '#888888',
+            middleUseLed: false,
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
         this.commit(true);
@@ -283,9 +289,15 @@ export class StreamLayoutService implements OnDestroy {
             histLineWidth: typeof r.histLineWidth === 'number' ? r.histLineWidth : 1,
             histLineColor: typeof r.histLineColor === 'string' ? r.histLineColor : '#888888',
             borderWidth: typeof r.borderWidth === 'number' ? r.borderWidth : 2,
+            innerWidth: typeof r.innerWidth === 'number' ? r.innerWidth : 2,
+            cornerRadius: typeof r.cornerRadius === 'number' ? r.cornerRadius : 6,
             centerFill: typeof r.centerFill === 'boolean' ? r.centerFill : false,
             centerColor: typeof r.centerColor === 'string' ? r.centerColor : '#000000',
             centerUseLed: typeof r.centerUseLed === 'boolean' ? r.centerUseLed : false,
+            middleFill: typeof r.middleFill === 'boolean' ? r.middleFill : false,
+            middleWidth: typeof r.middleWidth === 'number' ? r.middleWidth : 2,
+            middleColor: typeof r.middleColor === 'string' ? r.middleColor : '#888888',
+            middleUseLed: typeof r.middleUseLed === 'boolean' ? r.middleUseLed : false,
         };
     }
 

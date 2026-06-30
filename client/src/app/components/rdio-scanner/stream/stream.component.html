@@ -20,7 +20,8 @@
         [style.width.px]="item.w" [style.height.px]="item.h"
         [style.color]="itemColor(item)" [style.borderColor]="itemColor(item)"
         [style.border-width.px]="item.type === 'frame' ? item.borderWidth : null"
-        [style.box-shadow]="item.type === 'frame' && item.centerFill ? ('inset 0 0 0 ' + item.borderWidth + 'px ' + innerColor(item)) : null"
+        [style.border-radius.px]="item.type === 'frame' ? item.cornerRadius : null"
+        [style.box-shadow]="frameShadow(item)"
         [style.font-size.px]="item.fontSize" [style.font-family]="item.fontFamily || null"
         [style.font-weight]="item.bold ? 700 : 400"
         (pointerdown)="onDragStart(item, $event)"
@@ -143,23 +144,61 @@
                         (input)="setBorderWidth($any($event.target).valueAsNumber)">
                 </label>
                 <label class="ctx-row">
+                    <span>Corner rounding</span>
+                    <input type="range" min="0" max="60" [value]="ctxItem.cornerRadius"
+                        (input)="setCornerRadius($any($event.target).valueAsNumber)">
+                </label>
+
+                <div class="ctx-sep"></div>
+                <label class="ctx-row">
+                    <span>Middle border</span>
+                    <input type="checkbox" [checked]="ctxItem.middleFill"
+                        (change)="setMiddleFill($any($event.target).checked)">
+                </label>
+                <ng-container *ngIf="ctxItem.middleFill">
+                    <label class="ctx-row">
+                        <span>Middle thickness</span>
+                        <input type="number" min="0" max="40" [value]="ctxItem.middleWidth"
+                            (input)="setMiddleWidth($any($event.target).valueAsNumber)">
+                    </label>
+                    <label class="ctx-row">
+                        <span>Middle color</span>
+                        <input type="color" [value]="ctxItem.middleColor"
+                            (input)="setMiddleColor($any($event.target).value)">
+                    </label>
+                    <label class="ctx-row">
+                        <span>Middle: match LCD color</span>
+                        <input type="checkbox" [checked]="ctxItem.middleUseLed"
+                            (change)="setMiddleUseLed($any($event.target).checked)">
+                    </label>
+                </ng-container>
+
+                <div class="ctx-sep"></div>
+                <label class="ctx-row">
                     <span>Inner border</span>
                     <input type="checkbox" [checked]="ctxItem.centerFill"
                         (change)="setCenterFill($any($event.target).checked)">
                 </label>
-                <label class="ctx-row" *ngIf="ctxItem.centerFill">
-                    <span>Inner color</span>
-                    <input type="color" [value]="ctxItem.centerColor"
-                        (input)="setCenterColor($any($event.target).value)">
-                </label>
-                <label class="ctx-row" *ngIf="ctxItem.centerFill">
-                    <span>Inner: match call color</span>
-                    <input type="checkbox" [checked]="ctxItem.centerUseLed"
-                        (change)="setCenterUseLed($any($event.target).checked)">
-                </label>
+                <ng-container *ngIf="ctxItem.centerFill">
+                    <label class="ctx-row">
+                        <span>Inner thickness</span>
+                        <input type="number" min="0" max="40" [value]="ctxItem.innerWidth"
+                            (input)="setInnerWidth($any($event.target).valueAsNumber)">
+                    </label>
+                    <label class="ctx-row">
+                        <span>Inner color</span>
+                        <input type="color" [value]="ctxItem.centerColor"
+                            (input)="setCenterColor($any($event.target).value)">
+                    </label>
+                    <label class="ctx-row">
+                        <span>Inner: match LCD color</span>
+                        <input type="checkbox" [checked]="ctxItem.centerUseLed"
+                            (change)="setCenterUseLed($any($event.target).checked)">
+                    </label>
+                </ng-container>
             </ng-container>
             <label class="ctx-row" *ngIf="ctxItem.type !== 'history'">
-                <span>{{ ctxItem.type === 'frame' ? 'Outline: match call color' : 'Match call color' }}</span>
+                <span>{{ ctxItem.type === 'frame' ? 'Outline: match LCD color' : 'Match LCD color' }}</span>
                 <input type="checkbox" [checked]="ctxItem.useLedColor"
                     (change)="setCtxItemLed($any($event.target).checked)">
             </label>
@@ -262,7 +301,7 @@
                 </label>
                 <ng-container *ngIf="ctxItem.titleEnabled">
                     <label class="ctx-row">
-                        <span>Match call color</span>
+                        <span>Match LCD color</span>
                         <input type="checkbox" [checked]="ctxItem.titleUseLed"
                             (change)="setCtxItemTitleUseLed($any($event.target).checked)">
                     </label>

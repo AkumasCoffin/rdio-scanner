@@ -63,13 +63,21 @@ export interface StreamItem {
     histColLines: boolean;
     histLineWidth: number;
     histLineColor: string;
-    // Border frame (frame type only): outline width, and an optional filled
-    // center. The outline color is the item's `color`.
+    // Border frame (frame type only): outline width + inner band width, an
+    // optional inner band, and corner rounding. The outline color is the
+    // item's `color`; the inner band color is `centerColor`.
     borderWidth: number;
+    innerWidth: number;
+    cornerRadius: number;
     centerFill: boolean;
     centerColor: string;
     // Inner border colour follows the playing talkgroup's LCD/LED colour.
     centerUseLed: boolean;
+    // Optional middle band between the outline and the inner band.
+    middleFill: boolean;
+    middleWidth: number;
+    middleColor: string;
+    middleUseLed: boolean;
 }
 
 // One column of the history table — toggleable, retitleable, with its own text
@@ -231,7 +239,8 @@ export function defaultStreamLayout(): StreamLayout {
             titleUseLed: false, titleFontSize: 18, titleFontFamily: '',
             useLedColor: false, align: 'left', autoScroll: true, historyCols: [],
             histRowLines: true, histColLines: false, histLineWidth: 1, histLineColor: '#888888',
-            borderWidth: 2, centerFill: false, centerColor: '#000000', centerUseLed: false,
+            borderWidth: 2, innerWidth: 2, cornerRadius: 6, centerFill: false, centerColor: '#000000', centerUseLed: false,
+            middleFill: false, middleWidth: 2, middleColor: '#888888', middleUseLed: false,
         });
 
     const el = (type: string, x: number, y: number, w: number, h: number): StreamItem =>
@@ -257,9 +266,15 @@ export function defaultStreamLayout(): StreamLayout {
             histLineWidth: 1,
             histLineColor: '#888888',
             borderWidth: 2,
+            innerWidth: 2,
+            cornerRadius: 6,
             centerFill: false,
             centerColor: '#000000',
             centerUseLed: false,
+            middleFill: false,
+            middleWidth: 2,
+            middleColor: '#888888',
+            middleUseLed: false,
         });
 
     return {
