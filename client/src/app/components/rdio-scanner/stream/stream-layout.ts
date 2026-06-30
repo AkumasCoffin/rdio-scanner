@@ -32,10 +32,13 @@ export interface StreamItem {
     w: number;
     h: number;
     color: string;
-    // Text size (px) and font family. Empty fontFamily inherits the page's
-    // default monospace font. Ignored for the 'frame' type.
+    // Text size (px), font family and bold. Empty fontFamily inherits the
+    // page's default monospace font. Ignored for the 'frame' type.
     fontSize: number;
     fontFamily: string;
+    bold: boolean;
+    // Free text for the 'text' (custom text box) type; unused otherwise.
+    text: string;
 }
 
 export interface StreamLayout {
@@ -67,6 +70,7 @@ export interface StreamItemType {
 }
 
 export const STREAM_ITEM_TYPES: ReadonlyArray<StreamItemType> = [
+    { type: 'text', label: 'Custom Text', w: 200, h: 32, fontSize: 18 },
     { type: 'clock', label: 'Time', w: 130, h: 28, fontSize: 18 },
     { type: 'callProgress', label: 'Call Time', w: 180, h: 28, fontSize: 18 },
     { type: 'listeners', label: 'Listeners', w: 150, h: 28, fontSize: 18 },
@@ -87,8 +91,20 @@ export const STREAM_ITEM_TYPES: ReadonlyArray<StreamItemType> = [
 ];
 
 // Font choices offered in the context menu. '' = the page default (monospace).
+// The "radio / display" group are Google Fonts loaded only on the /stream page
+// (they fall back to a generic family if offline).
 export const STREAM_FONTS: ReadonlyArray<{ value: string; label: string }> = [
     { value: '', label: 'Default (mono)' },
+    // Cool radio / scanner display fonts.
+    { value: '"Orbitron", sans-serif', label: '★ Orbitron' },
+    { value: '"Audiowide", sans-serif', label: '★ Audiowide' },
+    { value: '"Share Tech Mono", monospace', label: '★ Share Tech Mono' },
+    { value: '"VT323", monospace', label: '★ VT323 (CRT)' },
+    { value: '"Wallpoet", sans-serif', label: '★ Wallpoet (LED)' },
+    { value: '"Major Mono Display", monospace', label: '★ Major Mono' },
+    { value: '"Chakra Petch", sans-serif', label: '★ Chakra Petch' },
+    { value: '"Teko", sans-serif', label: '★ Teko' },
+    // Standard fonts.
     { value: 'Roboto, sans-serif', label: 'Roboto' },
     { value: 'Arial, sans-serif', label: 'Arial' },
     { value: 'Verdana, sans-serif', label: 'Verdana' },
@@ -100,6 +116,11 @@ export const STREAM_FONTS: ReadonlyArray<{ value: string; label: string }> = [
     { value: '"Courier New", monospace', label: 'Courier New' },
     { value: 'Consolas, monospace', label: 'Consolas' },
 ];
+
+// Google Fonts stylesheet URL for the radio/display fonts above. Injected only
+// while the /stream page is open.
+export const STREAM_FONTS_HREF =
+    'https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Audiowide&family=Share+Tech+Mono&family=VT323&family=Wallpoet&family=Major+Mono+Display&family=Chakra+Petch:wght@400;700&family=Teko:wght@400;700&display=swap';
 
 export function streamItemTypeDef(type: string): StreamItemType | undefined {
     return STREAM_ITEM_TYPES.find((t) => t.type === type);
@@ -117,7 +138,7 @@ export const STREAM_LAYOUT_CHANNEL = 'rdio-scanner-stream-layout';
 // transcript spaced below. Stable ids so resets are deterministic.
 export function defaultStreamLayout(): StreamLayout {
     const frame = (id: string, x: number, y: number, w: number, h: number): StreamItem =>
-        ({ id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR, fontSize: 18, fontFamily: '' });
+        ({ id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR, fontSize: 18, fontFamily: '', bold: true, text: '' });
 
     const el = (type: string, x: number, y: number, w: number, h: number): StreamItem =>
         ({
@@ -125,6 +146,8 @@ export function defaultStreamLayout(): StreamLayout {
             color: STREAM_DEFAULT_TEXT_COLOR,
             fontSize: streamItemTypeDef(type)?.fontSize ?? 18,
             fontFamily: '',
+            bold: true,
+            text: '',
         });
 
     return {

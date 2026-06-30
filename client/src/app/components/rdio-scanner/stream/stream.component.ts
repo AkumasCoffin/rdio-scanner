@@ -30,6 +30,7 @@ import {
     StreamItemType,
     StreamLayout,
     STREAM_FONTS,
+    STREAM_FONTS_HREF,
     STREAM_ITEM_TYPES,
     streamItemLabel,
 } from './stream-layout';
@@ -123,6 +124,21 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         // Point the PWA manifest at the stream-specific one so "Install app"
         // from this page yields an app that launches /stream.
         this.useStreamManifest();
+
+        // Load the cool radio/display fonts (only on this page).
+        this.loadStreamFonts();
+    }
+
+    private loadStreamFonts(): void {
+        const id = 'rdio-stream-fonts';
+        if (this.document.getElementById(id)) {
+            return;
+        }
+        const link = this.document.createElement('link');
+        link.id = id;
+        link.rel = 'stylesheet';
+        link.href = STREAM_FONTS_HREF;
+        this.document.head.appendChild(link);
     }
 
     override ngOnDestroy(): void {
@@ -249,6 +265,18 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     setCtxItemFont(value: string): void {
         if (this.ctxItem) {
             this.streamLayoutService.updateItem(this.ctxItem.id, { fontFamily: value });
+        }
+    }
+
+    setCtxItemBold(bold: boolean): void {
+        if (this.ctxItem) {
+            this.streamLayoutService.updateItem(this.ctxItem.id, { bold });
+        }
+    }
+
+    setCtxItemText(text: string): void {
+        if (this.ctxItem) {
+            this.streamLayoutService.updateItem(this.ctxItem.id, { text });
         }
     }
 

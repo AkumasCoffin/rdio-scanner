@@ -24,14 +24,16 @@
             repeating-linear-gradient(90deg, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px));
 
         /* Frames become interactive while editing so they can be dragged /
-           resized / right-clicked; they stay behind elements so elements take
-           click priority. Hovering any item lifts it (and its resize handle)
-           to the front. */
+           resized / right-clicked in their empty areas; they stay BEHIND
+           elements (lower z-index) so elements on top are always grabbable. */
         .stream-item.frame {
             pointer-events: auto;
         }
 
-        .stream-item.movable:hover {
+        /* Hover-raise lifts an element (and its resize handle) to the front so
+           handles never hide behind a neighbour. Frames are excluded — raising
+           a frame would cover the elements inside it and block grabbing them. */
+        .stream-item.movable:hover:not(.frame) {
             z-index: 1000;
         }
     }
@@ -50,26 +52,14 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: clip;
-        /* Font size + family come from the item's inline style (set per item in
-           the context menu) and are inherited here. */
+        /* Font size / family / weight come from the item's inline style (set
+           per item in the context menu) and are inherited here. */
         font-size: inherit;
         font-family: inherit;
-    }
-
-    &.big .item-content {
-        font-weight: 700;
-    }
-
-    &.small .item-content {
-        font-weight: 600;
-    }
-
-    .delay-removed {
-        font-weight: 800;
+        font-weight: inherit;
     }
 
     &.flag .flag-text {
-        font-weight: 700;
         letter-spacing: 0.05em;
     }
 
@@ -217,6 +207,26 @@
             color: #e2e8f0;
             font-size: 12px;
             cursor: pointer;
+        }
+
+        input[type="text"] {
+            width: 120px;
+            padding: 3px 6px;
+            border: 1px solid rgba(148, 163, 184, 0.4);
+            border-radius: 6px;
+            background: rgba(2, 6, 23, 0.5);
+            color: #e2e8f0;
+            font-size: 12px;
+        }
+    }
+
+    /* Custom-text row stacks its wider input below the label. */
+    .ctx-text {
+        flex-wrap: wrap;
+
+        input[type="text"] {
+            flex-basis: 100%;
+            width: auto;
         }
     }
 

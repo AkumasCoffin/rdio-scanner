@@ -95,6 +95,8 @@ export class StreamLayoutService implements OnDestroy {
             color: type === 'frame' ? STREAM_DEFAULT_BORDER_COLOR : STREAM_DEFAULT_TEXT_COLOR,
             fontSize: def.fontSize,
             fontFamily: '',
+            bold: true,
+            text: type === 'text' ? 'Text' : '',
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
         this.commit(true);
@@ -243,6 +245,8 @@ export class StreamLayoutService implements OnDestroy {
                 : (isFrame ? STREAM_DEFAULT_BORDER_COLOR : STREAM_DEFAULT_TEXT_COLOR),
             fontSize: typeof r.fontSize === 'number' ? r.fontSize : def.fontSize,
             fontFamily: typeof r.fontFamily === 'string' ? r.fontFamily : '',
+            bold: typeof r.bold === 'boolean' ? r.bold : true,
+            text: typeof r.text === 'string' ? r.text : '',
         };
     }
 }

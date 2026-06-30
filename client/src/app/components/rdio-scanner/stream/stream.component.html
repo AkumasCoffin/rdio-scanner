@@ -14,10 +14,12 @@
         [style.width.px]="item.w" [style.height.px]="item.h"
         [style.color]="item.color" [style.borderColor]="item.color"
         [style.font-size.px]="item.fontSize" [style.font-family]="item.fontFamily || null"
+        [style.font-weight]="item.bold ? 700 : 400"
         (pointerdown)="onDragStart(item, $event)"
         (contextmenu)="onItemContext(item, $event)">
 
         <div class="item-content" [ngSwitch]="item.type">
+            <span *ngSwitchCase="'text'">{{ item.text }}</span>
             <span *ngSwitchCase="'clock'">Time: {{ clock | date:timeFormat }}</span>
             <span *ngSwitchCase="'callProgress'">Call Time: {{ callProgress | date:timeFormat }}</span>
             <span *ngSwitchCase="'listeners'">Listeners: {{ listeners }}</span>
@@ -57,6 +59,11 @@
 
         <ng-container *ngIf="ctxItem">
             <div class="ctx-head">{{ itemLabel(ctxItem.type) }}</div>
+            <label class="ctx-row ctx-text" *ngIf="ctxItem.type === 'text'">
+                <span>Text</span>
+                <input type="text" [value]="ctxItem.text"
+                    (input)="setCtxItemText($any($event.target).value)" placeholder="Custom text">
+            </label>
             <label class="ctx-row">
                 <span>{{ ctxItem.type === 'frame' ? 'Border color' : 'Text color' }}</span>
                 <input type="color" [value]="ctxItem.color" (input)="setCtxItemColor($any($event.target).value)">
@@ -72,6 +79,11 @@
                     <select [value]="ctxItem.fontFamily" (change)="setCtxItemFont($any($event.target).value)">
                         <option *ngFor="let f of fonts" [value]="f.value">{{ f.label }}</option>
                     </select>
+                </label>
+                <label class="ctx-row">
+                    <span>Bold</span>
+                    <input type="checkbox" [checked]="ctxItem.bold"
+                        (change)="setCtxItemBold($any($event.target).checked)">
                 </label>
             </ng-container>
             <button class="ctx-btn danger" (click)="removeCtxItem()">

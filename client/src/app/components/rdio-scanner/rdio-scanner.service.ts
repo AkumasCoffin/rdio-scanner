@@ -400,6 +400,15 @@ export class RdioScannerService implements OnDestroy {
 
             const seq = this.config.keypadBeeps && this.config.keypadBeeps[style];
 
+            // While this page is acting as a remote control for an open /stream
+            // window, suppress keypad beeps — the buttons are driving the stream,
+            // not this page, so the feedback tones are just noise.
+            if (this.streamOpenState) {
+                resolve();
+
+                return;
+            }
+
             if (!context || !seq) {
                 resolve();
 
