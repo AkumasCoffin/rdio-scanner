@@ -166,6 +166,27 @@ export class RdioScannerService implements OnDestroy {
     private callPrevious: RdioScannerCall | undefined;
     private callQueue: RdioScannerCall[] = [];
 
+    // Cache of decoded call durations (id -> seconds), used to compute the
+    // combined "queue delay" shown on the LCD. Filled lazily by decoding each
+    // queued call's audio once. Bounded — pruned if it grows past 512 entries.
+    private callDurations = new Map<number, number>();
+    // Dedicated context for duration decoding. Falls back to this when the
+    // playback audioContext doesn't exist yet (cold page, pre-gesture). A
+    // BaseAudioContext can decodeAudioData while suspended, so no gesture is
+    // needed just to measure durations.
+    private decodeContext: AudioContext | undefined;
+
+    // User toggle: when on, the live-feed queue auto-jumps ahead (drops the
+    // oldest queued calls) whenever the combined queue delay exceeds the
+    // threshold, keeping a buffer no longer than the threshold so a listener
+    // who fell behind catches back up toward live. The threshold is
+    // user-adjustable (1-10 minutes) via the LCD slider.
+    private autoJumpAhead = false;
+    private autoJumpThresholdMin = RdioScannerService.QUEUE_AUTO_JUMP_DEFAULT_MIN;
+    private static readonly QUEUE_AUTO_JUMP_DEFAULT_MIN = 5;
+    private static readonly QUEUE_AUTO_JUMP_MIN_MIN = 1;
+    private static readonly QUEUE_AUTO_JUMP_MAX_MIN = 10;
+
     private categories: RdioScannerCategory[] = [];
 
     private config: RdioScannerConfig = {
@@ -202,6 +223,7 @@ export class RdioScannerService implements OnDestroy {
         @Inject(DOCUMENT) private document: Document,
     ) {
         this.loadVolumeSettings();
+        this.loadAutoJumpSetting();
         this.bootstrapAudio();
 
         this.initializeInstanceId();
@@ -319,6 +341,7 @@ export class RdioScannerService implements OnDestroy {
             holdTg: false,
             map: this.livefeedMap,
             queue: this.callQueue.length,
+            queueTime: this.computeDelay(),
         });
     }
 
@@ -458,6 +481,7 @@ export class RdioScannerService implements OnDestroy {
                 holdTg: false,
                 map: this.livefeedMap,
                 queue: this.callQueue.length,
+                queueTime: this.computeDelay(),
             });
         }
     }
@@ -509,6 +533,7 @@ export class RdioScannerService implements OnDestroy {
                 holdTg: !!this.livefeedMapPriorToHoldTalkgroup,
                 map: this.livefeedMap,
                 queue: this.callQueue.length,
+                queueTime: this.computeDelay(),
             });
         }
     }
@@ -642,6 +667,278 @@ export class RdioScannerService implements OnDestroy {
         return this.muted;
     }
 
+    setAutoJumpAhead(enabled: boolean): void {
+        this.autoJumpAhead = enabled;
+        this.saveAutoJumpSetting();
+
+        if (enabled) {
+            this.maybeAutoJumpAhead();
+        }
+
+        this.event.emit({
+            autoJumpAhead: this.autoJumpAhead,
+            autoJumpThreshold: this.autoJumpThresholdMin,
+            queue: this.livefeedMode === RdioScannerLivefeedMode.Playback
+                ? this.getPlaybackQueueCount()
+                : this.callQueue.length,
+            queueTime: this.computeDelay(),
+        });
+    }
+
+    isAutoJumpAhead(): boolean {
+        return this.autoJumpAhead;
+    }
+
+    setAutoJumpThresholdMinutes(minutes: number): void {
+        const clamped = Math.max(
+            RdioScannerService.QUEUE_AUTO_JUMP_MIN_MIN,
+            Math.min(RdioScannerService.QUEUE_AUTO_JUMP_MAX_MIN, Math.round(minutes)),
+        );
+
+        this.autoJumpThresholdMin = clamped;
+        this.saveAutoJumpSetting();
+
+        // A lower threshold may now put us over the line — re-evaluate.
+        this.maybeAutoJumpAhead();
+
+        this.event.emit({
+            autoJumpAhead: this.autoJumpAhead,
+            autoJumpThreshold: this.autoJumpThresholdMin,
+            queue: this.livefeedMode === RdioScannerLivefeedMode.Playback
+                ? this.getPlaybackQueueCount()
+                : this.callQueue.length,
+            queueTime: this.computeDelay(),
+        });
+    }
+
+    getAutoJumpThresholdMinutes(): number {
+        return this.autoJumpThresholdMin;
+    }
+
+    private loadAutoJumpSetting(): void {
+        try {
+            this.autoJumpAhead = window?.localStorage?.getItem('rdio-scanner-auto-jump') === '1';
+
+            const storedThreshold = window?.localStorage?.getItem('rdio-scanner-auto-jump-threshold');
+            const parsed = storedThreshold != null ? parseInt(storedThreshold, 10) : NaN;
+            if (!isNaN(parsed)) {
+                this.autoJumpThresholdMin = Math.max(
+                    RdioScannerService.QUEUE_AUTO_JUMP_MIN_MIN,
+                    Math.min(RdioScannerService.QUEUE_AUTO_JUMP_MAX_MIN, parsed),
+                );
+            }
+        } catch (e) {
+            // Ignore storage errors
+        }
+    }
+
+    private saveAutoJumpSetting(): void {
+        try {
+            window?.localStorage?.setItem('rdio-scanner-auto-jump', this.autoJumpAhead ? '1' : '0');
+            window?.localStorage?.setItem('rdio-scanner-auto-jump-threshold', `${this.autoJumpThresholdMin}`);
+        } catch (e) {
+            // Ignore storage errors
+        }
+    }
+
+    // computeQueueTime sums the cached durations of every call currently in the
+    // live-feed queue. Calls whose duration isn't cached yet are kicked off for
+    // a lazy decode (and counted as 0 until it lands), so the total only ever
+    // under-reports transiently and self-corrects once decodes complete.
+    private computeQueueTime(): number {
+        let total = 0;
+
+        for (const call of this.callQueue) {
+            if (!call?.id) {
+                continue;
+            }
+
+            const duration = this.callDurations.get(call.id);
+
+            if (duration != null) {
+                total += duration;
+            } else {
+                this.ensureCallDuration(call);
+            }
+        }
+
+        return total;
+    }
+
+    // remainingCurrentCallSec returns how much of the currently-playing call is
+    // left to play (0 when nothing is playing or its length isn't known yet).
+    // Before the first playback tick sets audioSourceStartTime we treat the
+    // position as 0, so a call that just started counts as its full length
+    // rather than blipping in a beat late.
+    private remainingCurrentCallSec(): number {
+        if (!this.call?.id || !this.audioContext) {
+            return 0;
+        }
+
+        const duration = this.callDurations.get(this.call.id);
+        if (duration == null || duration <= 0) {
+            return 0;
+        }
+
+        const position = isNaN(this.audioSourceStartTime)
+            ? 0
+            : this.audioContext.currentTime - this.audioSourceStartTime;
+
+        return Math.max(0, duration - position);
+    }
+
+    // computeDelay is the full "how far behind live" figure shown on the LCD:
+    // the combined length of everything queued plus whatever's left of the call
+    // playing right now. It ticks down second-by-second as the current call
+    // plays (driven by the playback time emits) and stays continuous across call
+    // boundaries — when a call ends, the queue shrinks by that call's length at
+    // the same instant the next call's remaining time takes its place.
+    private computeDelay(): number {
+        return this.computeQueueTime() + this.remainingCurrentCallSec();
+    }
+
+    // ensureCallDuration decodes a queued call's audio once to learn its length
+    // in seconds, caching the result. Re-emits the queue state when the decode
+    // lands so the LCD delay updates and auto-jump can re-evaluate.
+    private ensureCallDuration(call: RdioScannerCall | undefined): void {
+        if (!call?.id || !call.audio?.data?.length || this.callDurations.has(call.id)) {
+            return;
+        }
+
+        const ctx = this.getDecodeContext();
+        if (!ctx) {
+            return;
+        }
+
+        // Reserve the slot up-front so a second decode isn't kicked off for the
+        // same call before this one resolves.
+        this.callDurations.set(call.id, 0);
+
+        // Bound memory: when the cache gets large, drop everything not in the
+        // current queue, then re-reserve this call's slot.
+        if (this.callDurations.size > 512) {
+            const keep = new Set(this.callQueue.map((c) => c.id));
+            for (const id of Array.from(this.callDurations.keys())) {
+                if (!keep.has(id)) {
+                    this.callDurations.delete(id);
+                }
+            }
+            this.callDurations.set(call.id, 0);
+        }
+
+        const id = call.id;
+        const data = call.audio.data;
+        const arrayBuffer = new ArrayBuffer(data.length);
+        const arrayBufferView = new Uint8Array(arrayBuffer);
+
+        for (let i = 0; i < data.length; i++) {
+            arrayBufferView[i] = data[i];
+        }
+
+        ctx.decodeAudioData(arrayBuffer, (buffer) => {
+            this.callDurations.set(id, buffer.duration || 0);
+            this.maybeAutoJumpAhead();
+            this.emitQueueChange();
+        }, () => {
+            // Decode failed — leave the placeholder 0. Unknown durations just
+            // don't contribute to the displayed delay.
+        });
+    }
+
+    private getDecodeContext(): BaseAudioContext | undefined {
+        if (this.audioContext) {
+            return this.audioContext;
+        }
+
+        if (!this.decodeContext) {
+            try {
+                this.decodeContext = new (window.AudioContext || window.webkitAudioContext)();
+            } catch (e) {
+                return undefined;
+            }
+        }
+
+        return this.decodeContext;
+    }
+
+    // maybeAutoJumpAhead keeps the live-feed queue within a buffer: it drops the
+    // oldest queued calls (front of the FIFO) until the combined queue delay is
+    // back under the user-set threshold, so a listener who fell behind catches
+    // up toward live without skipping straight to the newest call. Only acts
+    // when the user toggle is on and we're in live (Online) mode; the
+    // currently-playing call is left untouched.
+    private maybeAutoJumpAhead(): void {
+        if (!this.autoJumpAhead || this.livefeedMode !== RdioScannerLivefeedMode.Online) {
+            return;
+        }
+
+        // Temporarily suspended while a hold (system or talkgroup) is active —
+        // holding means the listener is deliberately staying on a conversation,
+        // so don't jump them ahead. Resumes on the next call once the hold is
+        // released. The LCD button shows yellow while in this state.
+        if (this.isHoldActive()) {
+            return;
+        }
+
+        const threshold = this.autoJumpThresholdMin * 60;
+        const before = this.computeQueueTime();
+        let trimmed = false;
+
+        while (this.callQueue.length > 0 && this.computeDelay() > threshold) {
+            const dropped = this.callQueue.shift();
+            if (dropped?.id) {
+                this.callDurations.delete(dropped.id);
+            }
+            trimmed = true;
+        }
+
+        if (!trimmed) {
+            return;
+        }
+
+        // How much delay we just shed — broadcast it so the LCD can flash a
+        // "-m:ss" next to the (instantly updated) new delay.
+        const removed = Math.max(0, before - this.computeQueueTime());
+
+        // If we trimmed the backlog while nothing was actively playing — the
+        // toggle was flipped between calls, or playback had stalled while the
+        // queue piled up (which is the only way to get minutes behind on a
+        // live feed in the first place) — restart playback so the kept calls
+        // actually play instead of sitting silently in the queue.
+        if (
+            !this.call &&
+            !this.audioSource &&
+            !this.livefeedPaused &&
+            !this.skipDelay &&
+            this.callQueue.length > 0
+        ) {
+            this.play();
+        }
+
+        // Always Online here (guarded above), so the queue count is the live
+        // callQueue length.
+        this.event.emit({
+            queue: this.callQueue.length,
+            queueTime: this.computeDelay(),
+            queueJumped: removed,
+        });
+    }
+
+    // A system or talkgroup hold is active when its pre-hold livefeed map has
+    // been stashed away (the same signal the holdSys/holdTg events derive from).
+    private isHoldActive(): boolean {
+        return !!this.livefeedMapPriorToHoldSystem || !!this.livefeedMapPriorToHoldTalkgroup;
+    }
+
+    private emitQueueChange(): void {
+        this.event.emit({
+            queue: this.livefeedMode === RdioScannerLivefeedMode.Playback
+                ? this.getPlaybackQueueCount()
+                : this.callQueue.length,
+            queueTime: this.computeDelay(),
+        });
+    }
+
     // Maximum gain value to prevent audio from being too loud
     // Slider at 100% = 0.575 actual gain (~58% of max browser volume, ~15% louder than before)
     private static readonly MAX_GAIN = 0.575;
@@ -753,6 +1050,7 @@ export class RdioScannerService implements OnDestroy {
             categories: this.categories,
             map: this.livefeedMap,
             queue: this.callQueue.length,
+            queueTime: this.computeDelay(),
         });
     }
 
@@ -819,7 +1117,7 @@ export class RdioScannerService implements OnDestroy {
         const queue = this.livefeedMode === RdioScannerLivefeedMode.Playback
             ? this.getPlaybackQueueCount()
             : this.callQueue.length;
-        this.event.emit({ call: this.call, queue });
+        this.event.emit({ call: this.call, queue, queueTime: this.computeDelay() });
 
         this.beginAudioPlayback();
     }
@@ -856,6 +1154,12 @@ export class RdioScannerService implements OnDestroy {
             this.audioSource = this.audioContext.createBufferSource();
             this.audioSource.buffer = buffer;
 
+            // Cache the now-known length of the call we're about to play so the
+            // delay readout can include its remaining time and tick it down.
+            if (this.call?.id) {
+                this.callDurations.set(this.call.id, buffer.duration || 0);
+            }
+
             if (!this.gainNode) {
                 this.gainNode = this.audioContext.createGain();
                 this.gainNode.connect(this.audioContext.destination);
@@ -871,7 +1175,7 @@ export class RdioScannerService implements OnDestroy {
                 : 0;
             this.audioSource.start(this.audioContext.currentTime + alertDuration);
 
-            this.event.emit({ call: this.call, queue });
+            this.event.emit({ call: this.call, queue, queueTime: this.computeDelay() });
 
             interval(500).pipe(takeWhile(() => !!this.call)).subscribe(() => {
                 if (this.audioContext && !isNaN(this.audioContext.currentTime)) {
@@ -880,7 +1184,10 @@ export class RdioScannerService implements OnDestroy {
                     }
 
                     if (!this.livefeedPaused) {
-                        this.event.emit({ time: this.audioContext.currentTime - this.audioSourceStartTime });
+                        this.event.emit({
+                            time: this.audioContext.currentTime - this.audioSourceStartTime,
+                            queueTime: this.computeDelay(),
+                        });
                     }
                 }
             });
@@ -889,7 +1196,7 @@ export class RdioScannerService implements OnDestroy {
                 return;
             }
 
-            this.event.emit({ call: this.call, queue });
+            this.event.emit({ call: this.call, queue, queueTime: this.computeDelay() });
 
             this.skip({ delay: false });
         });
@@ -1035,9 +1342,12 @@ export class RdioScannerService implements OnDestroy {
         } else {
             this.callQueue.push(call);
         }
+        this.ensureCallDuration(call);
+        this.maybeAutoJumpAhead();
         if (this.audioSource || this.call || this.livefeedPaused || this.skipDelay) {
             this.event.emit({
                 queue: this.livefeedMode === RdioScannerLivefeedMode.Online ? this.callQueue.length : this.getPlaybackQueueCount(),
+                queueTime: this.computeDelay(),
             });
         } else {
             this.play();
@@ -1080,9 +1390,13 @@ export class RdioScannerService implements OnDestroy {
             this.callQueue.push(call);
         }
 
+        this.ensureCallDuration(call);
+        this.maybeAutoJumpAhead();
+
         if (this.audioSource || this.call || this.livefeedPaused || this.skipDelay) {
             this.event.emit({
                 queue: this.livefeedMode === RdioScannerLivefeedMode.Online ? this.callQueue.length : this.getPlaybackQueueCount(),
+                queueTime: this.computeDelay(),
             });
 
         } else {
@@ -1287,6 +1601,7 @@ export class RdioScannerService implements OnDestroy {
                 holdTg: false,
                 map: this.livefeedMap,
                 queue: this.callQueue.length,
+                queueTime: this.computeDelay(),
             });
         }
     }

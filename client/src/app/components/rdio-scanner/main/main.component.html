@@ -14,10 +14,13 @@
             <span>L: {{ listeners }}</span>
         </div>
         <div>
-            <span>Q: {{ callQueue }}</span>
+            <span>Queue: {{ callQueue }}</span>
         </div>
     </div>
-    <div class="row small"></div>
+    <div class="row small right">
+        <span *ngIf="queueDelayLabel" class="queue-delay">Delay: {{ queueDelayLabel }}<span
+                *ngIf="delayRemovedLabel" class="delay-removed"> {{ delayRemovedLabel }}</span></span>
+    </div>
     <div class="row">
         <div>
             <span>{{ callSystem }}</span>
@@ -183,6 +186,18 @@
         <button class="rdio-button" (click)="showStatsPanel()">
             STATS
         </button>
+        <div class="spacer"></div>
+        <button class="rdio-button" (click)="toggleAutoJump()"
+            [ngClass]="{ off: !autoJump, on: autoJump && !autoJumpSuspended, partial: autoJumpSuspended }">
+            AUTO<br>JUMP
+        </button>
+    </div>
+    <div class="rdio-autojump-controls" [ngClass]="{ disabled: !autoJump }">
+        <span class="autojump-label">JUMP AT</span>
+        <input type="range" class="autojump-slider" min="1" max="10" step="1"
+            [value]="autoJumpThreshold" (input)="onAutoJumpThresholdChange($event)"
+            (change)="onAutoJumpThresholdChange($event)">
+        <span class="autojump-value">{{ autoJumpThreshold }} min</span>
     </div>
     <div class="rdio-volume-controls">
         <button class="rdio-button-mini mute-button" (click)="toggleMute()" [ngClass]="{ muted: isMuted }">

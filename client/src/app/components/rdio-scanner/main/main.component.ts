@@ -82,6 +82,18 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     callTime = 0;
     callUnit = '0';
 
+    // How far behind live the listener is, in seconds: the combined length of
+    // everything queued plus whatever's left of the call playing now. The
+    // service emits this on every playback tick, so it counts down ~1s at a
+    // time as calls play. `delayRemoved` is briefly non-zero right after an
+    // auto-jump so the LCD can flash "-m:ss" showing how much was just shed.
+    queueTime = 0;
+    delayRemoved = 0;
+    private delayFlashTimer: Subscription | undefined;
+    autoJump = false;
+    // User-set buffer length (minutes) before auto-jump trims the backlog.
+    autoJumpThreshold = 5;
+
     clock = new Date();
 
     dimmer = false;
@@ -122,6 +134,39 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
     get showListenersCount(): boolean {
         return this.config?.showListenersCount || false;
+    }
+
+    // True when auto-jump is enabled by the user but temporarily suspended
+    // because a system/talkgroup hold is active. Drives the yellow button state.
+    get autoJumpSuspended(): boolean {
+        return this.autoJump && (this.holdSys || this.holdTg);
+    }
+
+    // Formats the current delay as M:SS (or H:MM:SS past an hour). Empty string
+    // when there's no delay so the LCD line can hide.
+    get queueDelayLabel(): string {
+        return this.formatDelay(this.queueTime);
+    }
+
+    // The "-m:ss" amount shed by the most recent auto-jump, shown briefly next
+    // to the new delay. Empty when nothing was just removed.
+    get delayRemovedLabel(): string {
+        return this.delayRemoved > 0 ? `-${this.formatDelay(this.delayRemoved)}` : '';
+    }
+
+    private formatDelay(seconds: number): string {
+        const total = Math.round(seconds);
+
+        if (total <= 0) {
+            return '';
+        }
+
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        const secs = total % 60;
+        const pad = (n: number) => n.toString().padStart(2, '0');
+
+        return hours > 0 ? `${hours}:${pad(minutes)}:${pad(secs)}` : `${minutes}:${pad(secs)}`;
     }
 
     // displayCall is `call` while one is playing, and falls back to the
@@ -269,6 +314,7 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         this.transcriptPollTimer?.unsubscribe();
         this.dimmerTimer?.unsubscribe();
         this.replayTimer?.unsubscribe();
+        this.delayFlashTimer?.unsubscribe();
 
         this.eventSubscription.unsubscribe();
     }
@@ -277,6 +323,8 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         this.syncClock();
         this.volume = this.rdioScannerService.getVolume();
         this.isMuted = this.rdioScannerService.isMuted();
+        this.autoJump = this.rdioScannerService.isAutoJumpAhead();
+        this.autoJumpThreshold = this.rdioScannerService.getAutoJumpThresholdMinutes();
         // Seed `linked` from the service's tracked state. The
         // index.html early-WS can finish handshaking + emit
         // `{linked:true}` before this component is constructed and
@@ -365,10 +413,30 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         this.rdioScannerService.setMute(!this.isMuted);
     }
 
+    toggleAutoJump(): void {
+        if (this.auth) {
+            this.authFocus();
+
+        } else {
+            this.rdioScannerService.beep(this.autoJump ? RdioScannerBeepStyle.Deactivate : RdioScannerBeepStyle.Activate);
+
+            this.rdioScannerService.setAutoJumpAhead(!this.autoJump);
+
+            this.updateDimmer();
+        }
+    }
+
     onVolumeChange(event: Event): void {
         const target = event.target as HTMLInputElement;
         const volume = parseFloat(target.value) / 100;
         this.rdioScannerService.setVolume(volume);
+    }
+
+    onAutoJumpThresholdChange(event: Event): void {
+        const target = event.target as HTMLInputElement;
+        const minutes = parseInt(target.value, 10);
+        this.autoJumpThreshold = minutes;
+        this.rdioScannerService.setAutoJumpThresholdMinutes(minutes);
     }
 
     replay(): void {
@@ -603,6 +671,33 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
         if ('queue' in event) {
             this.callQueue = event.queue || 0;
+        }
+
+        if ('queueTime' in event && typeof event.queueTime === 'number') {
+            // Set instantly — the value already counts down smoothly because the
+            // service re-emits it on every playback tick.
+            this.queueTime = event.queueTime;
+        }
+
+        if ('queueJumped' in event && typeof event.queueJumped === 'number' && event.queueJumped > 0) {
+            // Auto-jump just shed time: flash "-m:ss" for a few seconds. If more
+            // jumps land while the flash is still up, accumulate into a running
+            // total (and extend the window) instead of flickering each amount.
+            this.delayRemoved += event.queueJumped;
+            this.delayFlashTimer?.unsubscribe();
+            this.delayFlashTimer = timer(4000).subscribe(() => {
+                this.delayRemoved = 0;
+                this.delayFlashTimer = undefined;
+                this.ngChangeDetectorRef.detectChanges();
+            });
+        }
+
+        if ('autoJumpAhead' in event && typeof event.autoJumpAhead === 'boolean') {
+            this.autoJump = event.autoJumpAhead;
+        }
+
+        if ('autoJumpThreshold' in event && typeof event.autoJumpThreshold === 'number') {
+            this.autoJumpThreshold = event.autoJumpThreshold;
         }
 
         if ('time' in event && typeof event.time === 'number') {

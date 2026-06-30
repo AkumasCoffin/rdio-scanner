@@ -113,6 +113,16 @@
     }
   }
 
+  .queue-delay {
+    color: var(--accent);
+    font-weight: 600;
+
+    .delay-removed {
+      color: #ef4444;
+      font-weight: 700;
+    }
+  }
+
   .flag {
     background: rgba(239, 68, 68, 0.3);
     border: 1px solid rgba(239, 68, 68, 0.5);
@@ -592,6 +602,94 @@
   }
 
   .volume-label {
+    flex-shrink: 0;
+    min-width: 45px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-align: right;
+  }
+}
+
+.rdio-autojump-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 12px;
+  padding: 0.5rem;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(4px);
+  transition: opacity 0.2s ease;
+
+  /* Dimmed when auto-jump is off — the threshold has no effect until the
+     toggle is on, but the slider stays usable so it can be set ahead of time. */
+  &.disabled {
+    opacity: 0.4;
+  }
+
+  .autojump-label {
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .autojump-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.15);
+    outline: none;
+    cursor: pointer;
+
+    &::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      cursor: pointer;
+      box-shadow: 0 0 8px rgba(249, 115, 22, 0.5);
+      transition: all 0.2s ease;
+    }
+
+    &::-webkit-slider-thumb:hover {
+      transform: scale(1.1);
+      box-shadow: 0 0 12px rgba(249, 115, 22, 0.7);
+    }
+
+    &::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      cursor: pointer;
+      box-shadow: 0 0 8px rgba(249, 115, 22, 0.5);
+      transition: all 0.2s ease;
+    }
+
+    &::-moz-range-thumb:hover {
+      transform: scale(1.1);
+      box-shadow: 0 0 12px rgba(249, 115, 22, 0.7);
+    }
+
+    &::-moz-range-track {
+      height: 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.15);
+    }
+  }
+
+  .autojump-value {
     flex-shrink: 0;
     min-width: 45px;
     font-size: 0.75rem;

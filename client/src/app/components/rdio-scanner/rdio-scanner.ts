@@ -132,6 +132,10 @@ export interface RdioScannerEvent {
     playbackList?: RdioScannerPlaybackList;
     playbackPending?: number;
     queue?: number;
+    queueTime?: number;
+    queueJumped?: number;
+    autoJumpAhead?: boolean;
+    autoJumpThreshold?: number;
     time?: number;
     tooMany?: boolean;
     volume?: number;

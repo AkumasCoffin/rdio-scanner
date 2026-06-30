@@ -8,6 +8,19 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.12.0
+
+Live-feed queue-delay readout and an optional auto-jump catch-up. The LCD now shows how far behind live you are and can automatically trim a runaway backlog back down to a buffer you choose.
+
+### Webapp
+
+- **Queue delay on the LCD.** Under the queue counter, the display now shows `Delay: m:ss` — how far behind live the listener is, computed as the combined length of every queued call plus the remaining time of the call playing now. Call lengths are measured by decoding each queued call's audio once (cached, bounded) so the figure is the real audio duration, not an estimate.
+- **Counts down in real time.** The delay re-emits on every playback tick, so it ticks down ~1s at a time as calls play and stays continuous across call boundaries (the queue shrinks by a call's length at the same instant the next call's remaining time replaces it). A burst of calls bumps it up instantly, then it counts back down.
+- **AUTO JUMP toggle.** Optional, persisted per browser. When on, once the delay crosses the threshold the oldest queued calls are dropped until the delay is back under it — keeping a buffer rather than skipping straight to live. Restarts playback if the trim happens while nothing is playing.
+- **Adjustable threshold (1–10 min)** via a `JUMP AT` slider on the LCD (persisted). The slider dims when auto-jump is off.
+- **Jump indicator.** When auto-jump sheds time, the LCD instantly shows the new delay and flashes the amount removed (`-m:ss`) for a few seconds; rapid successive trims accumulate into a single running total instead of flickering.
+- **Hold suspends auto-jump.** While Hold System or Hold TG is active, auto-jump is suspended (so it won't pull you off a conversation you're holding) and the AUTO JUMP button turns yellow. It resumes on the next call once the hold is released.
+
 ## Version 6.11.0
 
 Multi-provider transcription and cross-instance transcript reliability. The existing Groq integration is now one of three selectable backends; OpenAI and self-hosted Whisper join the lineup. Each provider has independent stored credentials, so switching the active backend in the admin UI doesn't lose previously-entered URLs, keys, or model names. The cross-instance transcript-forwarding path (introduced in 6.10.3) gains a working dedup mechanism, head-of-line release for the wait-for-transcript pre-queue, a server-side fallback timer for upstream-failures, and a number of UX fixes around playback ordering. Iterated through ten prerelease betas in production against a live bidirectional two-server setup before this release.
