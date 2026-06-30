@@ -131,8 +131,6 @@ export class StreamLayoutService implements OnDestroy {
             middleWidth: 2,
             middleColor: '#888888',
             middleUseLed: false,
-            linkMode: false,
-            linkDivider: false,
             points: type === 'shape' ? defaultShapePoints(def.w, def.h) : undefined,
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
@@ -315,8 +313,6 @@ export class StreamLayoutService implements OnDestroy {
             middleWidth: typeof r.middleWidth === 'number' ? r.middleWidth : 2,
             middleColor: typeof r.middleColor === 'string' ? r.middleColor : '#888888',
             middleUseLed: typeof r.middleUseLed === 'boolean' ? r.middleUseLed : false,
-            linkMode: typeof r.linkMode === 'boolean' ? r.linkMode : false,
-            linkDivider: typeof r.linkDivider === 'boolean' ? r.linkDivider : false,
             points: def.type === 'shape'
                 ? this.normalizeShapePoints(r.points,
                     typeof r.w === 'number' ? r.w : def.w,

@@ -87,9 +87,6 @@ export interface StreamItem {
     middleWidth: number;
     middleColor: string;
     middleUseLed: boolean;
-    // Reserved (legacy link-mode flags, no longer used by the UI).
-    linkMode: boolean;
-    linkDivider: boolean;
     // For the 'shape' type only: the editable border polygon, as corner points
     // measured relative to the item's x/y. Undefined for every other type.
     points?: { x: number; y: number }[];
@@ -278,7 +275,6 @@ export function defaultStreamLayout(): StreamLayout {
             histRowLines: true, histColLines: false, histLineWidth: 1, histLineColor: '#888888',
             borderWidth: 2, innerWidth: 2, cornerRadius: 6, centerFill: false, centerColor: '#000000', centerUseLed: false,
             middleFill: false, middleWidth: 2, middleColor: '#888888', middleUseLed: false,
-            linkMode: false, linkDivider: false,
         });
 
     const el = (type: string, x: number, y: number, w: number, h: number): StreamItem =>
@@ -318,8 +314,6 @@ export function defaultStreamLayout(): StreamLayout {
             middleWidth: 2,
             middleColor: '#888888',
             middleUseLed: false,
-            linkMode: false,
-            linkDivider: false,
         });
 
     return {
