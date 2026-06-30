@@ -43,10 +43,15 @@
   z-index: 5;
   opacity: 0.5;
   color: var(--text-main);
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s ease, color 0.2s ease;
 
   &:hover {
     opacity: 1;
+  }
+
+  &.active {
+    opacity: 1;
+    color: var(--accent, #f97316);
   }
 }
 

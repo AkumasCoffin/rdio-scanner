@@ -77,8 +77,9 @@ export class StreamLayoutService implements OnDestroy {
         this.commit(true);
     }
 
-    // Add a new item of the given type at a default spot. Returns its id.
-    addItem(type: string): string {
+    // Add a new item of the given type at the given spot (defaults to 40,40).
+    // Returns its id.
+    addItem(type: string, x = 40, y = 40): string {
         const def = streamItemTypeDef(type);
         if (!def) {
             return '';
@@ -87,11 +88,13 @@ export class StreamLayoutService implements OnDestroy {
         const item: StreamItem = {
             id,
             type,
-            x: 40,
-            y: 40,
+            x: Math.max(0, Math.round(x)),
+            y: Math.max(0, Math.round(y)),
             w: def.w,
             h: def.h,
             color: type === 'frame' ? STREAM_DEFAULT_BORDER_COLOR : STREAM_DEFAULT_TEXT_COLOR,
+            fontSize: def.fontSize,
+            fontFamily: '',
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
         this.commit(true);
@@ -209,6 +212,7 @@ export class StreamLayoutService implements OnDestroy {
 
         return {
             bgColor: typeof input.bgColor === 'string' ? input.bgColor : base.bgColor,
+            bgEnabled: typeof input.bgEnabled === 'boolean' ? input.bgEnabled : base.bgEnabled,
             // moveMode never persists across a fresh load as "on" by accident —
             // but we honour whatever was stored so a live toggle survives sync.
             moveMode: typeof input.moveMode === 'boolean' ? input.moveMode : base.moveMode,
@@ -237,6 +241,8 @@ export class StreamLayoutService implements OnDestroy {
             color: typeof r.color === 'string'
                 ? r.color
                 : (isFrame ? STREAM_DEFAULT_BORDER_COLOR : STREAM_DEFAULT_TEXT_COLOR),
+            fontSize: typeof r.fontSize === 'number' ? r.fontSize : def.fontSize,
+            fontFamily: typeof r.fontFamily === 'string' ? r.fontFamily : '',
         };
     }
 }

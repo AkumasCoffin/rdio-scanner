@@ -32,14 +32,21 @@ export interface StreamItem {
     w: number;
     h: number;
     color: string;
+    // Text size (px) and font family. Empty fontFamily inherits the page's
+    // default monospace font. Ignored for the 'frame' type.
+    fontSize: number;
+    fontFamily: string;
 }
 
 export interface StreamLayout {
     // Background color — default black so a white-text overlay reads well and
-    // the background can be chroma-keyed out in OBS.
+    // the background can be chroma-keyed out in OBS. When bgEnabled is false the
+    // page is fully transparent instead (OBS can key on alpha directly).
     bgColor: string;
-    // When true, the /stream page makes every item drag-movable and resizable.
-    // Hold Shift while dragging to snap to the grid.
+    bgEnabled: boolean;
+    // When true, the /stream page is in edit mode: items are drag-movable and
+    // resizable and right-click opens the editing context menu. Hold Shift
+    // while dragging to snap to the grid.
     moveMode: boolean;
     // Grid size (px) used for Shift-drag snapping.
     gridSize: number;
@@ -56,26 +63,42 @@ export interface StreamItemType {
     label: string;
     w: number;
     h: number;
+    fontSize: number;
 }
 
 export const STREAM_ITEM_TYPES: ReadonlyArray<StreamItemType> = [
-    { type: 'clock', label: 'Time', w: 130, h: 28 },
-    { type: 'callProgress', label: 'Call Time', w: 180, h: 28 },
-    { type: 'listeners', label: 'Listeners', w: 150, h: 28 },
-    { type: 'queue', label: 'Queue', w: 120, h: 28 },
-    { type: 'delay', label: 'Delay', w: 150, h: 24 },
-    { type: 'system', label: 'System', w: 220, h: 28 },
-    { type: 'tag', label: 'Tag', w: 200, h: 28 },
-    { type: 'talkgroup', label: 'Talkgroup', w: 220, h: 28 },
-    { type: 'callDate', label: 'Call Date', w: 100, h: 28 },
-    { type: 'talkgroupName', label: 'Talkgroup Name', w: 460, h: 46 },
-    { type: 'tgid', label: 'TGID', w: 170, h: 28 },
-    { type: 'uid', label: 'UID', w: 200, h: 28 },
-    { type: 'tempAvoid', label: 'Avoid Timer', w: 100, h: 24 },
-    { type: 'avoid', label: 'Avoid Flag', w: 90, h: 24 },
-    { type: 'patch', label: 'Patch Flag', w: 90, h: 24 },
-    { type: 'transcript', label: 'Transcript', w: 600, h: 170 },
-    { type: 'frame', label: 'Border Frame', w: 560, h: 240 },
+    { type: 'clock', label: 'Time', w: 130, h: 28, fontSize: 18 },
+    { type: 'callProgress', label: 'Call Time', w: 180, h: 28, fontSize: 18 },
+    { type: 'listeners', label: 'Listeners', w: 150, h: 28, fontSize: 18 },
+    { type: 'queue', label: 'Queue', w: 120, h: 28, fontSize: 18 },
+    { type: 'delay', label: 'Delay', w: 150, h: 24, fontSize: 14 },
+    { type: 'system', label: 'System', w: 220, h: 28, fontSize: 18 },
+    { type: 'tag', label: 'Tag', w: 200, h: 28, fontSize: 18 },
+    { type: 'talkgroup', label: 'Talkgroup', w: 220, h: 28, fontSize: 18 },
+    { type: 'callDate', label: 'Call Date', w: 100, h: 28, fontSize: 18 },
+    { type: 'talkgroupName', label: 'Talkgroup Name', w: 460, h: 46, fontSize: 32 },
+    { type: 'tgid', label: 'TGID', w: 170, h: 28, fontSize: 18 },
+    { type: 'uid', label: 'UID', w: 200, h: 28, fontSize: 18 },
+    { type: 'tempAvoid', label: 'Avoid Timer', w: 100, h: 24, fontSize: 14 },
+    { type: 'avoid', label: 'Avoid Flag', w: 90, h: 24, fontSize: 14 },
+    { type: 'patch', label: 'Patch Flag', w: 90, h: 24, fontSize: 14 },
+    { type: 'transcript', label: 'Transcript', w: 600, h: 170, fontSize: 20 },
+    { type: 'frame', label: 'Border Frame', w: 560, h: 240, fontSize: 18 },
+];
+
+// Font choices offered in the context menu. '' = the page default (monospace).
+export const STREAM_FONTS: ReadonlyArray<{ value: string; label: string }> = [
+    { value: '', label: 'Default (mono)' },
+    { value: 'Roboto, sans-serif', label: 'Roboto' },
+    { value: 'Arial, sans-serif', label: 'Arial' },
+    { value: 'Verdana, sans-serif', label: 'Verdana' },
+    { value: 'Tahoma, sans-serif', label: 'Tahoma' },
+    { value: '"Trebuchet MS", sans-serif', label: 'Trebuchet MS' },
+    { value: 'Impact, sans-serif', label: 'Impact' },
+    { value: 'Georgia, serif', label: 'Georgia' },
+    { value: '"Times New Roman", serif', label: 'Times New Roman' },
+    { value: '"Courier New", monospace', label: 'Courier New' },
+    { value: 'Consolas, monospace', label: 'Consolas' },
 ];
 
 export function streamItemTypeDef(type: string): StreamItemType | undefined {
@@ -94,13 +117,19 @@ export const STREAM_LAYOUT_CHANNEL = 'rdio-scanner-stream-layout';
 // transcript spaced below. Stable ids so resets are deterministic.
 export function defaultStreamLayout(): StreamLayout {
     const frame = (id: string, x: number, y: number, w: number, h: number): StreamItem =>
-        ({ id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR });
+        ({ id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR, fontSize: 18, fontFamily: '' });
 
     const el = (type: string, x: number, y: number, w: number, h: number): StreamItem =>
-        ({ id: `default-${type}`, type, x, y, w, h, color: STREAM_DEFAULT_TEXT_COLOR });
+        ({
+            id: `default-${type}`, type, x, y, w, h,
+            color: STREAM_DEFAULT_TEXT_COLOR,
+            fontSize: streamItemTypeDef(type)?.fontSize ?? 18,
+            fontFamily: '',
+        });
 
     return {
         bgColor: '#000000',
+        bgEnabled: true,
         moveMode: false,
         gridSize: 20,
         items: [

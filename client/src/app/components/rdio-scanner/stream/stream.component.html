@@ -1,6 +1,7 @@
 <div class="stream-root" [class.move-mode]="layout.moveMode"
-    [style.background]="layout.bgColor"
-    [style.--stream-grid]="layout.gridSize + 'px'">
+    [style.background]="layout.bgEnabled ? layout.bgColor : 'transparent'"
+    [style.--stream-grid]="layout.gridSize + 'px'"
+    (contextmenu)="onCanvasContext($event)">
 
     <div *ngFor="let item of layout.items; trackBy: trackItem" class="stream-item"
         [class.frame]="item.type === 'frame'"
@@ -12,7 +13,9 @@
         [style.left.px]="item.x" [style.top.px]="item.y"
         [style.width.px]="item.w" [style.height.px]="item.h"
         [style.color]="item.color" [style.borderColor]="item.color"
-        (pointerdown)="onDragStart(item, $event)">
+        [style.font-size.px]="item.fontSize" [style.font-family]="item.fontFamily || null"
+        (pointerdown)="onDragStart(item, $event)"
+        (contextmenu)="onItemContext(item, $event)">
 
         <div class="item-content" [ngSwitch]="item.type">
             <span *ngSwitchCase="'clock'">Time: {{ clock | date:timeFormat }}</span>
@@ -38,21 +41,73 @@
             </ng-container>
         </div>
 
-        <!-- Move-mode editing affordances -->
-        <ng-container *ngIf="layout.moveMode">
-            <span class="move-handle" (pointerdown)="onDragStart(item, $event)" title="Drag to move">
-                <span class="grip">⠿</span>
-            </span>
-            <button type="button" class="del-handle" (pointerdown)="$event.stopPropagation()"
-                (click)="removeItem(item, $event)" title="Remove">×</button>
-            <span class="resize-handle" (pointerdown)="onResizeStart(item, $event)" title="Drag to resize"></span>
-        </ng-container>
+        <!-- Resize handle (edit mode) -->
+        <span class="resize-handle" *ngIf="layout.moveMode"
+            (pointerdown)="onResizeStart(item, $event)" title="Drag to resize"></span>
     </div>
 
-    <!-- Drag-mode badge -->
+    <!-- Edit-mode hint -->
     <div class="move-badge" *ngIf="layout.moveMode">
-        MOVE MODE — drag to move · corner to resize · × to remove · hold Shift to snap
+        EDIT MODE — drag to move · corner to resize · right-click to add / recolor / remove · Shift to snap
     </div>
+
+    <!-- Right-click context menu -->
+    <div class="ctx-menu" *ngIf="ctxOpen" [style.left.px]="ctxX" [style.top.px]="ctxY"
+        (click)="onMenuClick($event)" (contextmenu)="$event.preventDefault()">
+
+        <ng-container *ngIf="ctxItem">
+            <div class="ctx-head">{{ itemLabel(ctxItem.type) }}</div>
+            <label class="ctx-row">
+                <span>{{ ctxItem.type === 'frame' ? 'Border color' : 'Text color' }}</span>
+                <input type="color" [value]="ctxItem.color" (input)="setCtxItemColor($any($event.target).value)">
+            </label>
+            <ng-container *ngIf="ctxItem.type !== 'frame'">
+                <label class="ctx-row">
+                    <span>Text size</span>
+                    <input type="number" min="6" max="200" [value]="ctxItem.fontSize"
+                        (input)="setCtxItemSize($any($event.target).valueAsNumber)">
+                </label>
+                <label class="ctx-row">
+                    <span>Font</span>
+                    <select [value]="ctxItem.fontFamily" (change)="setCtxItemFont($any($event.target).value)">
+                        <option *ngFor="let f of fonts" [value]="f.value">{{ f.label }}</option>
+                    </select>
+                </label>
+            </ng-container>
+            <button class="ctx-btn danger" (click)="removeCtxItem()">
+                <mat-icon>delete</mat-icon> Remove
+            </button>
+            <div class="ctx-sep"></div>
+        </ng-container>
+
+        <div class="ctx-head">Add element</div>
+        <div class="ctx-add">
+            <button *ngFor="let t of itemTypes" (click)="addItem(t.type)">{{ t.label }}</button>
+        </div>
+        <div class="ctx-sep"></div>
+
+        <label class="ctx-row">
+            <span>Background</span>
+            <input type="checkbox" [checked]="layout.bgEnabled"
+                (change)="toggleBackground($any($event.target).checked)">
+        </label>
+        <label class="ctx-row">
+            <span>Background color</span>
+            <input type="color" [value]="layout.bgColor" (input)="setBgColor($any($event.target).value)">
+        </label>
+        <label class="ctx-row">
+            <span>Grid snap (px)</span>
+            <input type="number" min="2" max="200" [value]="layout.gridSize"
+                (change)="setGridSize($any($event.target).valueAsNumber)">
+        </label>
+        <div class="ctx-sep"></div>
+
+        <button class="ctx-btn" (click)="exportConfig()"><mat-icon>download</mat-icon> Export config</button>
+        <button class="ctx-btn" (click)="triggerImport()"><mat-icon>upload</mat-icon> Import config</button>
+        <button class="ctx-btn" (click)="resetLayout()"><mat-icon>restart_alt</mat-icon> Reset layout</button>
+    </div>
+
+    <input #importFile type="file" accept="application/json,.json" hidden (change)="onImportFile($event)">
 
     <!-- Start / unlock overlay -->
     <div class="stream-overlay" *ngIf="showOverlay">

@@ -17,53 +17,61 @@
  * ****************************************************************************
  */
 
-import { ChangeDetectorRef, Component, OnDestroy, OnInit } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { FormBuilder } from '@angular/forms';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { Subscription } from 'rxjs';
 import { RdioScannerEvent } from '../rdio-scanner';
 import { RdioScannerService } from '../rdio-scanner.service';
 import { RdioScannerMainComponent } from '../main/main.component';
-import { StreamItem, StreamLayout } from './stream-layout';
+import {
+    StreamItem,
+    StreamItemType,
+    StreamLayout,
+    STREAM_FONTS,
+    STREAM_ITEM_TYPES,
+    streamItemLabel,
+} from './stream-layout';
 import { StreamLayoutService } from './stream-layout.service';
 
 // The /stream page. An OBS-friendly, instance-based canvas clone of the main
-// LCD that:
-//   - mirrors the main page's talkgroup selection / avoid / hold / auto-jump
-//     live (via RdioScannerService follower mode); the main page also remote-
-//     controls its skip/replay/pause;
-//   - auto-starts its OWN livefeed with audio (the one thing it does NOT follow
-//     from the main page) so OBS can capture it;
-//   - renders white-on-black by default so the background can be chroma-keyed;
-//   - lets users add/remove/move/resize/recolor items via the Stream-settings
-//     menu on the main page (live-synced over StreamLayoutService).
-//
-// It extends RdioScannerMainComponent purely to reuse all of its LCD data
-// plumbing (event handling + updateDisplay computing callSystem, callTalkgroup,
-// listeners, queueDelayLabel, etc). Its own template/styles replace the main
-// controls entirely.
+// LCD. It mirrors the main page's selection/avoid/hold/auto-jump live and is
+// remote-controlled (skip/replay/pause/mute/volume) by the main page; it auto-
+// starts its OWN audio so OBS can capture it. All editing happens here on the
+// canvas (right-click context menu) when the main page enables edit mode.
 @Component({
     selector: 'rdio-scanner-stream',
     styleUrls: ['./stream.component.scss'],
     templateUrl: './stream.component.html',
 })
 export class RdioScannerStreamComponent extends RdioScannerMainComponent implements OnDestroy, OnInit {
-    // Current layout (bgColor, move mode, items).
     layout: StreamLayout = this.streamLayoutService.getLayout();
+
+    readonly itemTypes: ReadonlyArray<StreamItemType> = STREAM_ITEM_TYPES;
+    readonly fonts = STREAM_FONTS;
 
     // Start overlay: hidden once the user has clicked Start (the gesture that
     // unlocks browser audio) and the livefeed is running.
     started = false;
 
-    // Our own references to the base's injected deps — the base declares them
-    // `private`, so we can't reach them through `this` in the subclass.
+    // Context menu state.
+    ctxOpen = false;
+    ctxX = 0;
+    ctxY = 0;
+    ctxItem: StreamItem | null = null;
+    private addX = 40;
+    private addY = 40;
+
+    @ViewChild('importFile') private importFile: ElementRef<HTMLInputElement> | undefined;
+
     private svc: RdioScannerService;
     private cdr: ChangeDetectorRef;
+    private snack: MatSnackBar;
 
     private layoutSub: Subscription | undefined;
     private streamEventSub: Subscription | undefined;
 
-    // Active drag/resize state, set on pointerdown over an item in move mode.
+    // Active drag/resize state, set on pointerdown over an item in edit mode.
     private gestureId: string | null = null;
     private gestureMode: 'move' | 'resize' | null = null;
     private gestureStartX = 0;
@@ -74,6 +82,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private gestureOrigH = 0;
     private boundMove = (e: PointerEvent) => this.onGestureMove(e);
     private boundUp = () => this.onGestureEnd();
+    private boundDocClick = () => this.closeContext();
 
     constructor(
         private streamLayoutService: StreamLayoutService,
@@ -85,15 +94,12 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         super(rdioScannerService, matSnackBar, ngChangeDetectorRef, ngFormBuilder);
         this.svc = rdioScannerService;
         this.cdr = ngChangeDetectorRef;
+        this.snack = matSnackBar;
     }
 
     override ngOnInit(): void {
-        // Reuse all of the main component's data wiring (clock, event
-        // subscription, display computation, stored settings).
         super.ngOnInit();
 
-        // Become a sync follower BEFORE anything subscribes, so we apply the
-        // leader's state and never broadcast our own.
         this.svc.enableFollowerMode();
 
         this.layoutSub = this.streamLayoutService.changes.subscribe((layout) => {
@@ -101,18 +107,18 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             this.cdr.detectChanges();
         });
 
-        // Stream-specific reactions on top of the inherited (private) handler.
         this.streamEventSub = this.svc.event.subscribe((event: RdioScannerEvent) => this.streamEventHandler(event));
 
-        // Pull the leader's current holds/selection immediately (holds aren't
-        // persisted to localStorage, so a fresh window can't read them).
         this.svc.requestSyncState();
+
+        document.addEventListener('click', this.boundDocClick);
     }
 
     override ngOnDestroy(): void {
         this.layoutSub?.unsubscribe();
         this.streamEventSub?.unsubscribe();
         this.detachGestureListeners();
+        document.removeEventListener('click', this.boundDocClick);
         this.svc.disableFollowerMode();
         super.ngOnDestroy();
     }
@@ -121,18 +127,16 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return item.id;
     }
 
-    // True while the start overlay should cover the screen: before the user
-    // has started, or whenever the server is demanding an unlock code.
+    itemLabel(type: string): string {
+        return streamItemLabel(type);
+    }
+
     get showOverlay(): boolean {
         return !this.started || this.auth;
     }
 
-    // User clicked "Start". This click is the gesture that unlocks the audio
-    // context (the service listens on document for the first pointer/keydown),
-    // so kicking off the livefeed here will actually produce sound.
     startStream(): void {
         if (this.auth) {
-            // Need the unlock code first — focus handled by the template.
             return;
         }
         this.svc.startLivefeed();
@@ -140,21 +144,148 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.cdr.detectChanges();
     }
 
-    removeItem(item: StreamItem, event?: Event): void {
-        event?.stopPropagation();
-        this.streamLayoutService.removeItem(item.id);
-    }
-
     private streamEventHandler(event: RdioScannerEvent): void {
-        // If auth was required and has now cleared (valid PIN accepted), the
-        // overlay flips back to the Start button automatically via showOverlay.
         if ('config' in event) {
             this.cdr.detectChanges();
         }
     }
 
     // ---------------------------------------------------------------------
-    // Drag-to-move / drag-to-resize (only active when layout.moveMode is on)
+    // Context menu (edit mode only)
+    // ---------------------------------------------------------------------
+
+    onCanvasContext(event: MouseEvent): void {
+        if (!this.layout.moveMode) {
+            return;
+        }
+        this.openContext(event, null);
+    }
+
+    onItemContext(item: StreamItem, event: MouseEvent): void {
+        if (!this.layout.moveMode) {
+            return;
+        }
+        event.stopPropagation();
+        this.openContext(event, item);
+    }
+
+    private openContext(event: MouseEvent, item: StreamItem | null): void {
+        event.preventDefault();
+        this.ctxItem = item;
+        this.addX = event.clientX;
+        this.addY = event.clientY;
+        // Keep the menu on-screen-ish.
+        this.ctxX = Math.min(event.clientX, window.innerWidth - 230);
+        this.ctxY = Math.min(event.clientY, window.innerHeight - 360);
+        this.ctxOpen = true;
+        this.cdr.detectChanges();
+    }
+
+    closeContext(): void {
+        if (this.ctxOpen) {
+            this.ctxOpen = false;
+            this.cdr.detectChanges();
+        }
+    }
+
+    // Stop the menu's own clicks from bubbling to the document close-handler.
+    onMenuClick(event: Event): void {
+        event.stopPropagation();
+    }
+
+    addItem(type: string): void {
+        this.streamLayoutService.addItem(type, this.addX, this.addY);
+        this.closeContext();
+    }
+
+    removeCtxItem(): void {
+        if (this.ctxItem) {
+            this.streamLayoutService.removeItem(this.ctxItem.id);
+        }
+        this.closeContext();
+    }
+
+    setCtxItemColor(value: string): void {
+        if (this.ctxItem) {
+            this.streamLayoutService.updateItem(this.ctxItem.id, { color: value });
+        }
+    }
+
+    setCtxItemSize(value: number): void {
+        if (this.ctxItem && Number.isFinite(value)) {
+            this.streamLayoutService.updateItem(this.ctxItem.id, { fontSize: Math.max(6, Math.min(200, Math.round(value))) });
+        }
+    }
+
+    setCtxItemFont(value: string): void {
+        if (this.ctxItem) {
+            this.streamLayoutService.updateItem(this.ctxItem.id, { fontFamily: value });
+        }
+    }
+
+    setGridSize(value: number): void {
+        if (Number.isFinite(value)) {
+            this.streamLayoutService.update({ gridSize: Math.max(2, Math.min(200, Math.round(value))) });
+        }
+    }
+
+    toggleBackground(enabled: boolean): void {
+        this.streamLayoutService.update({ bgEnabled: enabled });
+    }
+
+    setBgColor(value: string): void {
+        this.streamLayoutService.update({ bgColor: value });
+    }
+
+    resetLayout(): void {
+        this.streamLayoutService.reset();
+        this.closeContext();
+    }
+
+    exportConfig(): void {
+        const json = this.streamLayoutService.exportLayout();
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'rdio-scanner-stream-layout.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        this.closeContext();
+    }
+
+    triggerImport(): void {
+        this.importFile?.nativeElement.click();
+    }
+
+    onImportFile(event: Event): void {
+        const input = event.target as HTMLInputElement;
+        const file = input.files?.[0];
+        if (!file) {
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = this.streamLayoutService.importLayout(String(reader.result ?? ''));
+            this.snack.open(
+                result.success ? 'Stream layout imported' : `Import failed: ${result.error}`,
+                '',
+                { duration: 2500 },
+            );
+            input.value = '';
+        };
+        reader.onerror = () => {
+            this.snack.open('Could not read file', '', { duration: 2500 });
+            input.value = '';
+        };
+        reader.readAsText(file);
+        this.closeContext();
+    }
+
+    // ---------------------------------------------------------------------
+    // Drag-to-move / drag-to-resize (edit mode only)
     // ---------------------------------------------------------------------
 
     onDragStart(item: StreamItem, event: PointerEvent): void {
@@ -166,7 +297,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     private beginGesture(item: StreamItem, event: PointerEvent, mode: 'move' | 'resize'): void {
-        if (!this.layout.moveMode) {
+        if (!this.layout.moveMode || event.button !== 0) {
             return;
         }
         event.preventDefault();

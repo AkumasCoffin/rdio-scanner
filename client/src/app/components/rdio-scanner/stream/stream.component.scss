@@ -17,24 +17,18 @@
     user-select: none;
     -webkit-user-select: none;
 
-    /* Faint snapping grid, only visible in move mode. */
+    /* Faint snapping grid, only visible in edit mode. */
     &.move-mode {
         background-image:
             repeating-linear-gradient(0deg, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px)),
             repeating-linear-gradient(90deg, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px));
 
-        /* Lift items above frames while editing, and bring the hovered item
-           (with its handles) to the very front so handles never hide behind a
-           neighbouring element. */
-        .stream-item {
-            z-index: 20;
-        }
-
-        /* Frames go ABOVE elements while editing so their corner handles are
-           reachable. Their bodies are click-through (pointer-events: none), so
-           this doesn't block dragging the elements underneath. */
+        /* Frames become interactive while editing so they can be dragged /
+           resized / right-clicked; they stay behind elements so elements take
+           click priority. Hovering any item lifts it (and its resize handle)
+           to the front. */
         .stream-item.frame {
-            z-index: 30;
+            pointer-events: auto;
         }
 
         .stream-item.movable:hover {
@@ -47,8 +41,6 @@
     position: absolute;
     box-sizing: border-box;
     z-index: 1;
-    /* Each item reserves a fixed box; text clips at the edge so the layout
-       never jumps as call data changes length. */
     display: flex;
     align-items: center;
     overflow: hidden;
@@ -58,15 +50,17 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: clip;
+        /* Font size + family come from the item's inline style (set per item in
+           the context menu) and are inherited here. */
+        font-size: inherit;
+        font-family: inherit;
     }
 
     &.big .item-content {
-        font-size: 32px;
         font-weight: 700;
     }
 
     &.small .item-content {
-        font-size: 14px;
         font-weight: 600;
     }
 
@@ -74,15 +68,13 @@
         font-weight: 800;
     }
 
-    /* Avoid / Patch: bold emphasis without a key-unsafe background. */
     &.flag .flag-text {
         font-weight: 700;
         letter-spacing: 0.05em;
     }
 
-    /* Border-frame item: a pure decorative rectangle that never intercepts
-       pointer events (so elements above it stay draggable); its editing
-       handles re-enable pointer events individually in move mode. */
+    /* Border-frame item: a decorative rectangle that sits behind the readouts
+       and never intercepts pointer events in the final overlay. */
     &.frame {
         z-index: 0;
         border: 2px solid;
@@ -110,7 +102,7 @@
         }
 
         .transcript-text {
-            font-size: 20px;
+            font-size: inherit;
             font-weight: 600;
             line-height: 1.4;
             word-break: break-word;
@@ -122,8 +114,8 @@
         }
     }
 
-    /* Move mode: show each item's bounds (so overlaps are visible) and reveal
-       the drag/resize/remove handles. */
+    /* Edit mode: show each item's bounds (so overlaps are visible) and the
+       resize handle. */
     &.movable {
         outline: 1px dashed rgba(127, 127, 127, 0.8);
         outline-offset: 2px;
@@ -134,51 +126,14 @@
         }
     }
 
-    .move-handle,
-    .del-handle,
     .resize-handle {
         position: absolute;
-        pointer-events: auto;
-        z-index: 2;
-        font-family: 'Roboto', sans-serif;
-    }
-
-    .move-handle {
-        top: -10px;
-        left: -2px;
-        cursor: grab;
-        color: #0f172a;
-        background: rgba(148, 163, 184, 0.95);
-        border-radius: 4px;
-        padding: 0 4px;
-        font-size: 11px;
-        line-height: 16px;
-
-        &:active {
-            cursor: grabbing;
-        }
-    }
-
-    .del-handle {
-        top: -10px;
-        right: -2px;
-        width: 16px;
-        height: 16px;
-        padding: 0;
-        border: 0;
-        border-radius: 50%;
-        background: #ef4444;
-        color: #fff;
-        font-size: 13px;
-        line-height: 16px;
-        cursor: pointer;
-    }
-
-    .resize-handle {
         right: -3px;
         bottom: -3px;
         width: 12px;
         height: 12px;
+        pointer-events: auto;
+        z-index: 2;
         background: rgba(148, 163, 184, 0.95);
         border: 1px solid #0f172a;
         border-radius: 2px;
@@ -202,6 +157,132 @@
     white-space: nowrap;
     pointer-events: none;
     z-index: 5;
+}
+
+/* Right-click context menu. */
+.ctx-menu {
+    position: fixed;
+    z-index: 50;
+    min-width: 210px;
+    max-width: 240px;
+    padding: 6px;
+    background: #0f172a;
+    color: #e2e8f0;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    font-family: 'Roboto', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+
+    .ctx-head {
+        padding: 4px 8px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #94a3b8;
+    }
+
+    .ctx-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 4px 8px;
+
+        input[type="color"] {
+            width: 32px;
+            height: 22px;
+            border: 1px solid rgba(148, 163, 184, 0.4);
+            border-radius: 4px;
+            background: transparent;
+            padding: 1px;
+            cursor: pointer;
+        }
+
+        input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        input[type="number"],
+        select {
+            width: 92px;
+            padding: 3px 6px;
+            border: 1px solid rgba(148, 163, 184, 0.4);
+            border-radius: 6px;
+            background: rgba(2, 6, 23, 0.5);
+            color: #e2e8f0;
+            font-size: 12px;
+            cursor: pointer;
+        }
+    }
+
+    .ctx-add {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        max-height: 168px;
+        overflow-y: auto;
+        padding: 2px;
+
+        button {
+            flex: 0 0 auto;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            border-radius: 6px;
+            background: rgba(148, 163, 184, 0.12);
+            color: #e2e8f0;
+            font-size: 12px;
+            padding: 3px 8px;
+            cursor: pointer;
+
+            &:hover {
+                background: rgba(148, 163, 184, 0.28);
+            }
+        }
+    }
+
+    .ctx-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #e2e8f0;
+        font-size: 13px;
+        text-align: left;
+        padding: 6px 8px;
+        cursor: pointer;
+
+        mat-icon {
+            font-size: 18px;
+            width: 18px;
+            height: 18px;
+            line-height: 18px;
+        }
+
+        &:hover {
+            background: rgba(148, 163, 184, 0.18);
+        }
+
+        &.danger {
+            color: #fca5a5;
+
+            &:hover {
+                background: rgba(239, 68, 68, 0.2);
+            }
+        }
+    }
+
+    .ctx-sep {
+        height: 1px;
+        margin: 6px 4px;
+        background: rgba(148, 163, 184, 0.2);
+    }
 }
 
 /* Start / unlock overlay — its own dark scrim, independent of the keyable

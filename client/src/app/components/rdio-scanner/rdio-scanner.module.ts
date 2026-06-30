@@ -32,7 +32,6 @@ import { RdioScannerSelectComponent } from './select/select.component';
 import { RdioScannerPresetDialogComponent } from './select/preset-dialog.component';
 import { RdioScannerPublicStatsComponent } from './stats/public-stats.component';
 import { RdioScannerStreamComponent } from './stream/stream.component';
-import { RdioScannerStreamSettingsComponent } from './stream/stream-settings.component';
 
 @NgModule({
     declarations: [
@@ -43,7 +42,6 @@ import { RdioScannerStreamSettingsComponent } from './stream/stream-settings.com
         RdioScannerSelectComponent,
         RdioScannerPresetDialogComponent,
         RdioScannerStreamComponent,
-        RdioScannerStreamSettingsComponent,
         RdioScannerSupportComponent,
     ],
     exports: [RdioScannerComponent, RdioScannerStreamComponent],

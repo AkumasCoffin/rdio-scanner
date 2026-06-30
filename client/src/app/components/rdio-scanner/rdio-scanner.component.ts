@@ -18,16 +18,15 @@
  */
 
 import { AfterViewInit, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild } from '@angular/core';
-import { MatDialog } from '@angular/material/dialog';
 import { MatSidenav } from '@angular/material/sidenav';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { timer } from 'rxjs';
+import { Subscription, timer } from 'rxjs';
 import { RdioScannerEvent, RdioScannerLivefeedMode } from './rdio-scanner';
 import { RdioScannerService } from './rdio-scanner.service';
 import { RdioScannerNativeComponent } from './native/native.component';
 import { RdioScannerPublicStatsComponent } from './stats/public-stats.component';
 import { RdioScannerSearchComponent } from './search/search.component';
-import { RdioScannerStreamSettingsComponent } from './stream/stream-settings.component';
+import { StreamLayoutService } from './stream/stream-layout.service';
 
 @Component({
     selector: 'rdio-scanner',
@@ -40,8 +39,13 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
     private livefeedMode: RdioScannerLivefeedMode = RdioScannerLivefeedMode.Offline;
 
     // True while at least one /stream window is open (detected over the
-    // stream-sync channel). Gates the Stream-settings button.
+    // stream-sync channel). Gates the Stream edit-mode toggle.
     streamOpen = false;
+
+    // Mirror of the stream layout's edit (move) mode, so the toggle button
+    // reflects the current state. Synced live across windows.
+    streamEditMode = false;
+    private streamLayoutSub: Subscription | undefined;
 
     @ViewChild('searchPanel') private searchPanel: MatSidenav | undefined;
 
@@ -56,17 +60,15 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
     @ViewChild('scrollableSearch') private scrollableSearch: ElementRef | undefined;
 
     constructor(
-        private matDialog: MatDialog,
         private matSnackBar: MatSnackBar,
         private ngElementRef: ElementRef,
         private rdioScannerService: RdioScannerService,
+        private streamLayoutService: StreamLayoutService,
     ) { }
 
-    openStreamSettings(): void {
-        this.matDialog.open(RdioScannerStreamSettingsComponent, {
-            autoFocus: false,
-            panelClass: 'rdio-scanner-stream-settings-dialog',
-        });
+    // Toggle the /stream page's edit mode (drag/resize/right-click editing).
+    toggleStreamEdit(): void {
+        this.streamLayoutService.update({ moveMode: !this.streamEditMode });
     }
 
     @HostListener('window:beforeunload', ['$event'])
@@ -95,12 +97,19 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
 
     ngOnDestroy(): void {
         this.eventSubscription.unsubscribe();
+        this.streamLayoutSub?.unsubscribe();
     }
 
     ngOnInit(): void {
         // Seed from the service in case a /stream window was already open
         // before this component subscribed to the event stream.
         this.streamOpen = this.rdioScannerService.isStreamOpen;
+
+        // Reflect the live edit-mode state in the toggle button.
+        this.streamEditMode = this.streamLayoutService.getLayout().moveMode;
+        this.streamLayoutSub = this.streamLayoutService.changes.subscribe((layout) => {
+            this.streamEditMode = layout.moveMode;
+        });
 
         /*
          * BEGIN OF RED TAPE:

@@ -49,9 +49,11 @@
         </div>
     </mat-sidenav>
     <mat-sidenav-content>
-        <button *ngIf="streamOpen" class="stream-settings-fab" mat-icon-button matTooltip="Stream overlay (OBS)"
-            aria-label="Stream overlay settings" (click)="openStreamSettings()">
-            <mat-icon>cast</mat-icon>
+        <button *ngIf="streamOpen" class="stream-settings-fab" mat-icon-button
+            [class.active]="streamEditMode"
+            [matTooltip]="streamEditMode ? 'Stream edit mode: ON' : 'Edit stream overlay'"
+            aria-label="Toggle stream edit mode" (click)="toggleStreamEdit()">
+            <mat-icon>{{ streamEditMode ? 'edit_off' : 'edit' }}</mat-icon>
         </button>
         <rdio-scanner-main
             (openSearchPanel)="scrollTop(scrollableSearch); searchPanel.open(); searchComponent.searchCalls()"
