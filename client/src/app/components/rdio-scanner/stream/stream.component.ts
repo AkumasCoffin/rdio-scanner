@@ -133,6 +133,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
         this.layoutSub = this.streamLayoutService.changes.subscribe((layout) => {
             this.layout = layout;
+            // Drop any selection once edit mode is turned off so it doesn't
+            // linger (and reappear highlighted) the next time it's enabled.
+            if (!layout.moveMode && this.selectedIds.size) {
+                this.selectedIds.clear();
+            }
             this.cdr.detectChanges();
         });
 
