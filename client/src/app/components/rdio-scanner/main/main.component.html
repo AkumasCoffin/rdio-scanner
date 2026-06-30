@@ -146,7 +146,8 @@
 </div>
 <div class="rdio-control">
     <div class="row">
-        <button class="rdio-button" (click)="livefeed()"
+        <button class="rdio-button" (click)="livefeed()" [disabled]="controllingStream"
+            [matTooltip]="controllingStream ? 'Disabled while controlling /stream' : ''"
             [ngClass]="{ off: livefeedOffline && !playbackMode, on: livefeedOnline, partial: playbackMode }">
             LIVE<br>FEED
         </button>

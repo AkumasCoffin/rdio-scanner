@@ -319,6 +319,11 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         if (this.auth) {
             this.authFocus();
 
+        } else if (this.controllingStream && this.livefeedOffline) {
+            // While controlling an open /stream window, don't let the main page
+            // start its own feed — that would play a second set of calls.
+            return;
+
         } else {
             this.rdioScannerService.beep(this.livefeedOffline ? RdioScannerBeepStyle.Activate : RdioScannerBeepStyle.Deactivate);
 
@@ -680,6 +685,12 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
         if ('streamOpen' in event) {
             this.controllingStream = !!event.streamOpen;
+
+            // A /stream window just opened while this page's feed is running —
+            // stop it so the two don't play calls over each other.
+            if (this.controllingStream && !this.livefeedOffline) {
+                this.rdioScannerService.stopLivefeed();
+            }
         }
 
         if ('map' in event) {
