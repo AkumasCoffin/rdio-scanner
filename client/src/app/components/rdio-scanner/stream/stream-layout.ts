@@ -53,6 +53,16 @@ export interface StreamItem {
     autoScroll: boolean;
     // Column config for the 'history' (playing history table) type; [] otherwise.
     historyCols: StreamHistoryCol[];
+    // History table dividing lines (history type only).
+    histRowLines: boolean;
+    histColLines: boolean;
+    histLineWidth: number;
+    histLineColor: string;
+    // Border frame (frame type only): outline width, and an optional filled
+    // center. The outline color is the item's `color`.
+    borderWidth: number;
+    centerFill: boolean;
+    centerColor: string;
 }
 
 // One column of the history table — toggleable, retitleable, with its own text
@@ -212,6 +222,8 @@ export function defaultStreamLayout(): StreamLayout {
             fontSize: 18, fontFamily: '', bold: true, text: '',
             titleEnabled: false, titleColor: STREAM_DEFAULT_TITLE_COLOR, titleBold: true,
             useLedColor: false, autoScroll: true, historyCols: [],
+            histRowLines: true, histColLines: false, histLineWidth: 1, histLineColor: '#888888',
+            borderWidth: 2, centerFill: false, centerColor: '#000000',
         });
 
     const el = (type: string, x: number, y: number, w: number, h: number): StreamItem =>
@@ -228,6 +240,13 @@ export function defaultStreamLayout(): StreamLayout {
             useLedColor: false,
             autoScroll: true,
             historyCols: [],
+            histRowLines: true,
+            histColLines: false,
+            histLineWidth: 1,
+            histLineColor: '#888888',
+            borderWidth: 2,
+            centerFill: false,
+            centerColor: '#000000',
         });
 
     return {

@@ -103,8 +103,15 @@
                 letter-spacing: 0.03em;
             }
 
-            tbody tr {
-                border-top: 1px solid rgba(127, 127, 127, 0.25);
+            /* Row dividers. */
+            &.row-lines tbody tr {
+                border-top: var(--hist-lw, 1px) solid var(--hist-line, rgba(127, 127, 127, 0.25));
+            }
+
+            /* Column dividers (skip the last visible cell). */
+            &.col-lines th:not(:last-child),
+            &.col-lines td:not(:last-child) {
+                border-right: var(--hist-lw, 1px) solid var(--hist-line, rgba(127, 127, 127, 0.25));
             }
         }
     }

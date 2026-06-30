@@ -106,6 +106,13 @@ export class StreamLayoutService implements OnDestroy {
             useLedColor: false,
             autoScroll: true,
             historyCols: type === 'history' ? defaultHistoryCols() : [],
+            histRowLines: true,
+            histColLines: false,
+            histLineWidth: 1,
+            histLineColor: '#888888',
+            borderWidth: 2,
+            centerFill: false,
+            centerColor: '#000000',
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
         this.commit(true);
@@ -262,6 +269,13 @@ export class StreamLayoutService implements OnDestroy {
             useLedColor: typeof r.useLedColor === 'boolean' ? r.useLedColor : false,
             autoScroll: typeof r.autoScroll === 'boolean' ? r.autoScroll : true,
             historyCols: def.type === 'history' ? this.normalizeHistoryCols(r.historyCols) : [],
+            histRowLines: typeof r.histRowLines === 'boolean' ? r.histRowLines : true,
+            histColLines: typeof r.histColLines === 'boolean' ? r.histColLines : false,
+            histLineWidth: typeof r.histLineWidth === 'number' ? r.histLineWidth : 1,
+            histLineColor: typeof r.histLineColor === 'string' ? r.histLineColor : '#888888',
+            borderWidth: typeof r.borderWidth === 'number' ? r.borderWidth : 2,
+            centerFill: typeof r.centerFill === 'boolean' ? r.centerFill : false,
+            centerColor: typeof r.centerColor === 'string' ? r.centerColor : '#000000',
         };
     }
 

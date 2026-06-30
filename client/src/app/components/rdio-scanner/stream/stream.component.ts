@@ -26,6 +26,7 @@ import { RdioScannerCall, RdioScannerEvent } from '../rdio-scanner';
 import { RdioScannerService } from '../rdio-scanner.service';
 import { RdioScannerMainComponent } from '../main/main.component';
 import {
+    StreamHistoryCol,
     StreamItem,
     StreamItemType,
     StreamLayout,
@@ -414,16 +415,64 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             return;
         }
         const rect = el.getBoundingClientRect();
+        const mw = rect.width;
+        const mh = rect.height;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
         const margin = 6;
+
         let x = this.ctxX;
         let y = this.ctxY;
 
-        if (rect.right > window.innerWidth - margin) {
-            x = Math.max(margin, window.innerWidth - rect.width - margin);
+        // When an element was right-clicked, try to place the menu beside it so
+        // it doesn't cover the element (which the user is editing). Only fall
+        // back to over-the-cursor if no side fits.
+        const root = this.streamRootRef?.nativeElement;
+        if (this.ctxItem && root) {
+            const r = root.getBoundingClientRect();
+            const item = this.ctxItem;
+            const eLeft = r.left + item.x;
+            const eTop = r.top + item.y;
+            const eRight = eLeft + item.w;
+            const eBottom = eTop + item.h;
+            const gap = 8;
+            const clampX = (cx: number) => Math.max(margin, Math.min(cx, vw - mw - margin));
+            const clampY = (cy: number) => Math.max(margin, Math.min(cy, vh - mh - margin));
+            const ok = (cx: number, cy: number): boolean => {
+                if (cx < margin || cy < margin || cx + mw > vw - margin || cy + mh > vh - margin) {
+                    return false;
+                }
+                const overlaps = !(cx >= eRight || cx + mw <= eLeft || cy >= eBottom || cy + mh <= eTop);
+                return !overlaps;
+            };
+            const candidates: Array<[number, number]> = [
+                [eRight + gap, clampY(eTop)],       // right of element
+                [eLeft - mw - gap, clampY(eTop)],   // left of element
+                [clampX(eLeft), eBottom + gap],     // below element
+                [clampX(eLeft), eTop - mh - gap],   // above element
+            ];
+            let placed = false;
+            for (const [cx, cy] of candidates) {
+                if (ok(cx, cy)) {
+                    x = cx;
+                    y = cy;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) {
+                x = clampX(this.ctxX);
+                y = clampY(this.ctxY);
+            }
+        } else {
+            if (rect.right > vw - margin) {
+                x = Math.max(margin, vw - mw - margin);
+            }
+            if (rect.bottom > vh - margin) {
+                y = Math.max(margin, vh - mh - margin);
+            }
         }
-        if (rect.bottom > window.innerHeight - margin) {
-            y = Math.max(margin, window.innerHeight - rect.height - margin);
-        }
+
         x = Math.max(margin, x);
         y = Math.max(margin, y);
 
@@ -533,8 +582,14 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.applyToTargets({ titleBold });
     }
 
-    // Patch one column of the right-clicked history table, then refresh ctxItem
-    // from the updated layout so further edits read fresh data.
+    trackHistCol(_index: number, col: StreamHistoryCol): string {
+        return col.key;
+    }
+
+    // Patch one column of the right-clicked history table. Reads the current
+    // columns from the live layout (not the possibly-stale ctxItem) and does
+    // NOT reassign ctxItem — otherwise the column *ngFor rebuilds its inputs
+    // mid-edit and the native color picker closes.
     setHistCol(index: number, patch: Partial<{ title: string; visible: boolean; color: string; fontSize: number; bold: boolean }>): void {
         if (!this.ctxItem) {
             return;
@@ -546,9 +601,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             patch = { ...patch, fontSize: Math.max(6, Math.min(120, Math.round(patch.fontSize))) };
         }
         const id = this.ctxItem.id;
-        const cols = (this.ctxItem.historyCols || []).map((c, i) => (i === index ? { ...c, ...patch } : c));
+        const current = this.layout.items.find((i) => i.id === id);
+        const baseCols = current?.historyCols ?? this.ctxItem.historyCols ?? [];
+        const cols = baseCols.map((c, i) => (i === index ? { ...c, ...patch } : c));
         this.streamLayoutService.updateItem(id, { historyCols: cols });
-        this.ctxItem = this.layout.items.find((i) => i.id === id) ?? this.ctxItem;
     }
 
     // Value for a history-table cell.
@@ -825,6 +881,38 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setShowGrid(showGrid: boolean): void {
         this.streamLayoutService.update({ showGrid });
+    }
+
+    setHistRowLines(histRowLines: boolean): void {
+        this.applyToTargets({ histRowLines });
+    }
+
+    setHistColLines(histColLines: boolean): void {
+        this.applyToTargets({ histColLines });
+    }
+
+    setHistLineWidth(value: number): void {
+        if (Number.isFinite(value)) {
+            this.applyToTargets({ histLineWidth: Math.max(0, Math.min(20, value)) });
+        }
+    }
+
+    setHistLineColor(histLineColor: string): void {
+        this.applyToTargets({ histLineColor });
+    }
+
+    setBorderWidth(value: number): void {
+        if (Number.isFinite(value)) {
+            this.applyToTargets({ borderWidth: Math.max(0, Math.min(40, Math.round(value))) });
+        }
+    }
+
+    setCenterFill(centerFill: boolean): void {
+        this.applyToTargets({ centerFill });
+    }
+
+    setCenterColor(centerColor: string): void {
+        this.applyToTargets({ centerColor });
     }
 
     private detachGestureListeners(): void {
