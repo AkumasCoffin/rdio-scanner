@@ -317,6 +317,43 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return parts.length ? parts.join(', ') : null;
     }
 
+    // Per-side outer border widths. For a frame with link mode on we collapse
+    // the edge it shares with another link-mode frame: suppress this frame's
+    // top/left border when a linked neighbour sits directly above/to-the-left
+    // (the neighbour's bottom/right border draws the shared grid line once).
+    frameBorderStyle(item: StreamItem): { [key: string]: number } {
+        const w = item.type === 'frame' ? item.borderWidth : 0;
+        if (item.type !== 'frame' || !item.linkMode) {
+            return {
+                'border-top-width.px': w, 'border-right-width.px': w,
+                'border-bottom-width.px': w, 'border-left-width.px': w,
+            };
+        }
+        const tol = Math.max(3, w + 1);
+        let top = w, left = w;
+        for (const o of this.layout.items) {
+            if (o.id === item.id || o.type !== 'frame' || !o.linkMode) {
+                continue;
+            }
+            if (Math.abs((o.x + o.w) - item.x) <= tol &&
+                this.rangesOverlap(item.y, item.y + item.h, o.y, o.y + o.h)) {
+                left = 0;
+            }
+            if (Math.abs((o.y + o.h) - item.y) <= tol &&
+                this.rangesOverlap(item.x, item.x + item.w, o.x, o.x + o.w)) {
+                top = 0;
+            }
+        }
+        return {
+            'border-top-width.px': top, 'border-right-width.px': w,
+            'border-bottom-width.px': w, 'border-left-width.px': left,
+        };
+    }
+
+    private rangesOverlap(a1: number, a2: number, b1: number, b2: number): boolean {
+        return a1 < b2 - 1 && b1 < a2 - 1;
+    }
+
     // True when nothing is playing and the queue is empty (idle). Drives the
     // per-element "hide while idle" toggles.
     get waitingForCall(): boolean {
@@ -1114,6 +1151,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setMiddleUseLed(middleUseLed: boolean): void {
         this.applyToTargets({ middleUseLed });
+    }
+
+    setLinkMode(linkMode: boolean): void {
+        this.applyToTargets({ linkMode });
     }
 
     private detachGestureListeners(): void {

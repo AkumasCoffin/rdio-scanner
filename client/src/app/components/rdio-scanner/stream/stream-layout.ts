@@ -87,6 +87,9 @@ export interface StreamItem {
     middleWidth: number;
     middleColor: string;
     middleUseLed: boolean;
+    // Link mode: collapse shared edges with adjacent frames that also have it
+    // on, so they form a connected grid instead of stacked outlines.
+    linkMode: boolean;
 }
 
 // One column of the history table — toggleable, retitleable, with its own text
@@ -250,7 +253,7 @@ export function defaultStreamLayout(): StreamLayout {
             useLedColor: false, align: 'left', autoScroll: true, historyCols: [],
             histRowLines: true, histColLines: false, histLineWidth: 1, histLineColor: '#888888',
             borderWidth: 2, innerWidth: 2, cornerRadius: 6, centerFill: false, centerColor: '#000000', centerUseLed: false,
-            middleFill: false, middleWidth: 2, middleColor: '#888888', middleUseLed: false,
+            middleFill: false, middleWidth: 2, middleColor: '#888888', middleUseLed: false, linkMode: false,
         });
 
     const el = (type: string, x: number, y: number, w: number, h: number): StreamItem =>
@@ -290,6 +293,7 @@ export function defaultStreamLayout(): StreamLayout {
             middleWidth: 2,
             middleColor: '#888888',
             middleUseLed: false,
+            linkMode: false,
         });
 
     return {

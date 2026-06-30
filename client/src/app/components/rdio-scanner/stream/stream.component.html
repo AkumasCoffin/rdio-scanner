@@ -19,7 +19,7 @@
         [style.left.px]="item.x" [style.top.px]="item.y"
         [style.width.px]="item.w" [style.height.px]="item.h"
         [style.color]="itemColor(item)" [style.borderColor]="itemColor(item)"
-        [style.border-width.px]="item.type === 'frame' ? item.borderWidth : null"
+        [ngStyle]="item.type === 'frame' ? frameBorderStyle(item) : null"
         [style.border-radius.px]="item.type === 'frame' ? item.cornerRadius : null"
         [style.box-shadow]="frameShadow(item)"
         [style.font-size.px]="item.fontSize" [style.font-family]="item.fontFamily || null"
@@ -161,6 +161,15 @@
                     <input type="range" min="0" max="60" [value]="ctxItem.cornerRadius"
                         (input)="setCornerRadius($any($event.target).valueAsNumber)">
                 </label>
+                <label class="ctx-row">
+                    <span>Link mode</span>
+                    <input type="checkbox" [checked]="ctxItem.linkMode"
+                        (change)="setLinkMode($any($event.target).checked)">
+                </label>
+                <div class="ctx-hint" *ngIf="ctxItem.linkMode">
+                    Shares edges with adjacent frames that also have Link mode on,
+                    so touching frames join into one grid.
+                </div>
 
                 <div class="ctx-sep"></div>
                 <label class="ctx-row">
