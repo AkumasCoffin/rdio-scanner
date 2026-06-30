@@ -77,15 +77,31 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private layoutSub: Subscription | undefined;
     private streamEventSub: Subscription | undefined;
 
+    // Multi-selection: ids of selected items (Ctrl+click toggles, Ctrl+drag
+    // rubber-bands). Edits in the context menu apply to all selected.
+    selectedIds = new Set<string>();
+
+    // Rubber-band selection rectangle (client coords), shown while Ctrl+dragging
+    // the canvas.
+    selecting = false;
+    selX = 0;
+    selY = 0;
+    selW = 0;
+    selH = 0;
+    private selStartX = 0;
+    private selStartY = 0;
+    private boundSelMove = (e: PointerEvent) => this.onSelectMove(e);
+    private boundSelUp = () => this.onSelectEnd();
+
     // Active drag/resize state, set on pointerdown over an item in edit mode.
     private gestureId: string | null = null;
     private gestureMode: 'move' | 'resize' | null = null;
     private gestureStartX = 0;
     private gestureStartY = 0;
-    private gestureOrigX = 0;
-    private gestureOrigY = 0;
     private gestureOrigW = 0;
     private gestureOrigH = 0;
+    // Original positions of every item being moved (one, or all selected).
+    private moveTargets: { id: string; x: number; y: number }[] = [];
     private boundMove = (e: PointerEvent) => this.onGestureMove(e);
     private boundUp = () => this.onGestureEnd();
     private boundDocClick = () => this.closeContext();
@@ -149,6 +165,8 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.layoutSub?.unsubscribe();
         this.streamEventSub?.unsubscribe();
         this.detachGestureListeners();
+        window.removeEventListener('pointermove', this.boundSelMove);
+        window.removeEventListener('pointerup', this.boundSelUp);
         document.removeEventListener('click', this.boundDocClick);
         this.restoreManifest();
         this.svc.disableFollowerMode();
@@ -196,6 +214,35 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // inherent data, so they're never flagged as missing.
     isMissing(type: string): boolean {
         return this.countOf(type) === 0 && type !== 'text' && type !== 'frame';
+    }
+
+    // Hex equivalents of the main LCD's named LED colors.
+    private static readonly LED_HEX: { [key: string]: string } = {
+        blue: '#3b82f6',
+        cyan: '#06b6d4',
+        green: '#22c55e',
+        magenta: '#a855f7',
+        orange: '#f97316',
+        red: '#ef4444',
+        white: '#f9fafb',
+        yellow: '#eab308',
+    };
+
+    // The LCD color of the currently/last playing call (from its talkgroup or
+    // system LED), or null when there's nothing to colour by.
+    private ledColor(): string | null {
+        const call = this.displayCall;
+        const led = (call?.talkgroupData?.led as string) || (call?.systemData?.led as string) || '';
+        return RdioScannerStreamComponent.LED_HEX[led] ?? null;
+    }
+
+    // The effective color for an item: the live LCD color when "Match LCD
+    // color" is on (falling back to the item's own color), else its own color.
+    itemColor(item: StreamItem): string {
+        if (item.useLedColor) {
+            return this.ledColor() ?? item.color;
+        }
+        return item.color;
     }
 
     // Whether a conditionally-empty element currently has a value to show — so
@@ -246,7 +293,25 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             return;
         }
         event.stopPropagation();
+        // Right-clicking an item that isn't part of the current selection
+        // selects just it; right-clicking within a multi-selection keeps it so
+        // the edits apply to all selected.
+        if (!this.selectedIds.has(item.id)) {
+            this.selectedIds.clear();
+            this.selectedIds.add(item.id);
+        }
         this.openContext(event, item);
+    }
+
+    // The items a context-menu edit applies to: the whole selection, or just
+    // the right-clicked item when nothing is selected.
+    private targetIds(): string[] {
+        return this.selectedIds.size ? [...this.selectedIds] : (this.ctxItem ? [this.ctxItem.id] : []);
+    }
+
+    // Count shown in the element-menu header so multi-edits are obvious.
+    get selectedCount(): number {
+        return this.selectedIds.size;
     }
 
     private openContext(event: MouseEvent, item: StreamItem | null): void {
@@ -306,59 +371,60 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.closeContext();
     }
 
+    private applyToTargets(patch: Partial<StreamItem>): void {
+        for (const id of this.targetIds()) {
+            this.streamLayoutService.updateItem(id, patch);
+        }
+    }
+
     removeCtxItem(): void {
-        if (this.ctxItem && window.confirm(`Remove this ${this.itemLabel(this.ctxItem.type)}?`)) {
-            this.streamLayoutService.removeItem(this.ctxItem.id);
+        const ids = this.targetIds();
+        if (ids.length && window.confirm(`Remove ${ids.length} element${ids.length > 1 ? 's' : ''}?`)) {
+            ids.forEach((id) => this.streamLayoutService.removeItem(id));
+            this.selectedIds.clear();
         }
         this.closeContext();
     }
 
     setCtxItemColor(value: string): void {
-        if (this.ctxItem) {
-            this.streamLayoutService.updateItem(this.ctxItem.id, { color: value });
-        }
+        this.applyToTargets({ color: value });
     }
 
     setCtxItemSize(value: number): void {
-        if (this.ctxItem && Number.isFinite(value)) {
-            this.streamLayoutService.updateItem(this.ctxItem.id, { fontSize: Math.max(6, Math.min(200, Math.round(value))) });
+        if (Number.isFinite(value)) {
+            this.applyToTargets({ fontSize: Math.max(6, Math.min(200, Math.round(value))) });
         }
     }
 
     setCtxItemFont(value: string): void {
-        if (this.ctxItem) {
-            this.streamLayoutService.updateItem(this.ctxItem.id, { fontFamily: value });
-        }
+        this.applyToTargets({ fontFamily: value });
     }
 
     setCtxItemBold(bold: boolean): void {
-        if (this.ctxItem) {
-            this.streamLayoutService.updateItem(this.ctxItem.id, { bold });
-        }
+        this.applyToTargets({ bold });
+    }
+
+    setCtxItemLed(useLedColor: boolean): void {
+        this.applyToTargets({ useLedColor });
     }
 
     setCtxItemText(text: string): void {
+        // Custom text is per-item — only write it to the right-clicked item.
         if (this.ctxItem) {
             this.streamLayoutService.updateItem(this.ctxItem.id, { text });
         }
     }
 
     setCtxItemTitleEnabled(titleEnabled: boolean): void {
-        if (this.ctxItem) {
-            this.streamLayoutService.updateItem(this.ctxItem.id, { titleEnabled });
-        }
+        this.applyToTargets({ titleEnabled });
     }
 
     setCtxItemTitleColor(titleColor: string): void {
-        if (this.ctxItem) {
-            this.streamLayoutService.updateItem(this.ctxItem.id, { titleColor });
-        }
+        this.applyToTargets({ titleColor });
     }
 
     setCtxItemTitleBold(titleBold: boolean): void {
-        if (this.ctxItem) {
-            this.streamLayoutService.updateItem(this.ctxItem.id, { titleBold });
-        }
+        this.applyToTargets({ titleBold });
     }
 
     setGridSize(value: number): void {
@@ -424,12 +490,43 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // Drag-to-move / drag-to-resize (edit mode only)
     // ---------------------------------------------------------------------
 
+    isSelected(id: string): boolean {
+        return this.selectedIds.has(id);
+    }
+
     onDragStart(item: StreamItem, event: PointerEvent): void {
+        if (!this.layout.moveMode) {
+            return;
+        }
+
+        // Ctrl/Cmd+click an item toggles its selection instead of dragging.
+        if (event.ctrlKey || event.metaKey) {
+            event.preventDefault();
+            event.stopPropagation();
+            this.toggleSelected(item.id);
+            this.cdr.detectChanges();
+            return;
+        }
+
+        // Plain drag of an unselected item clears the selection first; dragging
+        // a selected item moves the whole selection together.
+        if (!this.selectedIds.has(item.id)) {
+            this.selectedIds.clear();
+        }
+
         this.beginGesture(item, event, 'move');
     }
 
     onResizeStart(item: StreamItem, event: PointerEvent): void {
         this.beginGesture(item, event, 'resize');
+    }
+
+    private toggleSelected(id: string): void {
+        if (this.selectedIds.has(id)) {
+            this.selectedIds.delete(id);
+        } else {
+            this.selectedIds.add(id);
+        }
     }
 
     private beginGesture(item: StreamItem, event: PointerEvent, mode: 'move' | 'resize'): void {
@@ -443,10 +540,15 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.gestureMode = mode;
         this.gestureStartX = event.clientX;
         this.gestureStartY = event.clientY;
-        this.gestureOrigX = item.x;
-        this.gestureOrigY = item.y;
         this.gestureOrigW = item.w;
         this.gestureOrigH = item.h;
+
+        // Move targets: the whole selection if this item is part of it, else
+        // just this item.
+        const moving = this.selectedIds.has(item.id) && this.selectedIds.size > 1
+            ? this.layout.items.filter((i) => this.selectedIds.has(i.id))
+            : [item];
+        this.moveTargets = moving.map((i) => ({ id: i.id, x: i.x, y: i.y }));
 
         window.addEventListener('pointermove', this.boundMove);
         window.addEventListener('pointerup', this.boundUp);
@@ -467,9 +569,12 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         };
 
         if (this.gestureMode === 'move') {
-            const x = Math.max(0, snap(this.gestureOrigX + dx));
-            const y = Math.max(0, snap(this.gestureOrigY + dy));
-            this.streamLayoutService.updateItem(this.gestureId, { x, y });
+            for (const t of this.moveTargets) {
+                this.streamLayoutService.updateItem(t.id, {
+                    x: Math.max(0, snap(t.x + dx)),
+                    y: Math.max(0, snap(t.y + dy)),
+                });
+            }
         } else {
             const item = this.layout.items.find((i) => i.id === this.gestureId);
             const minW = item ? streamItemMinW(item.type) : 20;
@@ -483,11 +588,73 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private onGestureEnd(): void {
         this.gestureId = null;
         this.gestureMode = null;
+        this.moveTargets = [];
         this.detachGestureListeners();
     }
 
     private detachGestureListeners(): void {
         window.removeEventListener('pointermove', this.boundMove);
         window.removeEventListener('pointerup', this.boundUp);
+    }
+
+    // ---------------------------------------------------------------------
+    // Rubber-band selection (Ctrl+drag on the canvas)
+    // ---------------------------------------------------------------------
+
+    onCanvasPointerDown(event: PointerEvent): void {
+        if (!this.layout.moveMode || event.button !== 0) {
+            return;
+        }
+
+        if (event.ctrlKey || event.metaKey) {
+            // Start a rubber-band; existing selection is kept (additive).
+            event.preventDefault();
+            this.selecting = true;
+            this.selStartX = event.clientX;
+            this.selStartY = event.clientY;
+            this.selX = event.clientX;
+            this.selY = event.clientY;
+            this.selW = 0;
+            this.selH = 0;
+            window.addEventListener('pointermove', this.boundSelMove);
+            window.addEventListener('pointerup', this.boundSelUp);
+        } else {
+            // Plain click on empty canvas clears the selection.
+            if (this.selectedIds.size) {
+                this.selectedIds.clear();
+                this.cdr.detectChanges();
+            }
+        }
+    }
+
+    private onSelectMove(event: PointerEvent): void {
+        if (!this.selecting) {
+            return;
+        }
+        this.selX = Math.min(this.selStartX, event.clientX);
+        this.selY = Math.min(this.selStartY, event.clientY);
+        this.selW = Math.abs(event.clientX - this.selStartX);
+        this.selH = Math.abs(event.clientY - this.selStartY);
+        this.cdr.detectChanges();
+    }
+
+    private onSelectEnd(): void {
+        if (this.selecting) {
+            // Select every item whose box intersects the rubber-band.
+            const rx = this.selX;
+            const ry = this.selY;
+            const rr = this.selX + this.selW;
+            const rb = this.selY + this.selH;
+            for (const i of this.layout.items) {
+                const overlap = !(i.x > rr || i.x + i.w < rx || i.y > rb || i.y + i.h < ry);
+                if (overlap) {
+                    this.selectedIds.add(i.id);
+                }
+            }
+        }
+        this.selecting = false;
+        window.removeEventListener('pointermove', this.boundSelMove);
+        window.removeEventListener('pointerup', this.boundSelUp);
+        this.cdr.detectChanges();
     }
 }

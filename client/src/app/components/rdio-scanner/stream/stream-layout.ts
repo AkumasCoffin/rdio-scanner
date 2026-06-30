@@ -44,6 +44,9 @@ export interface StreamItem {
     titleEnabled: boolean;
     titleColor: string;
     titleBold: boolean;
+    // When true the element's color follows the playing talkgroup's LCD (LED)
+    // color instead of `color`.
+    useLedColor: boolean;
 }
 
 export interface StreamLayout {
@@ -170,6 +173,7 @@ export function defaultStreamLayout(): StreamLayout {
             id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR,
             fontSize: 18, fontFamily: '', bold: true, text: '',
             titleEnabled: false, titleColor: STREAM_DEFAULT_TITLE_COLOR, titleBold: true,
+            useLedColor: false,
         });
 
     const el = (type: string, x: number, y: number, w: number, h: number): StreamItem =>
@@ -183,6 +187,7 @@ export function defaultStreamLayout(): StreamLayout {
             titleEnabled: streamItemTypeDef(type)?.titleOn ?? false,
             titleColor: STREAM_DEFAULT_TITLE_COLOR,
             titleBold: true,
+            useLedColor: false,
         });
 
     return {

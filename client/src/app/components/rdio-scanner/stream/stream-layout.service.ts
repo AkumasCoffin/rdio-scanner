@@ -101,6 +101,7 @@ export class StreamLayoutService implements OnDestroy {
             titleEnabled: def.titleOn,
             titleColor: STREAM_DEFAULT_TITLE_COLOR,
             titleBold: true,
+            useLedColor: false,
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
         this.commit(true);
@@ -253,6 +254,7 @@ export class StreamLayoutService implements OnDestroy {
             titleEnabled: typeof r.titleEnabled === 'boolean' ? r.titleEnabled : def.titleOn,
             titleColor: typeof r.titleColor === 'string' ? r.titleColor : STREAM_DEFAULT_TITLE_COLOR,
             titleBold: typeof r.titleBold === 'boolean' ? r.titleBold : true,
+            useLedColor: typeof r.useLedColor === 'boolean' ? r.useLedColor : false,
         };
     }
 }

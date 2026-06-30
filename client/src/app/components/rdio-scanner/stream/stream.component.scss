@@ -132,6 +132,13 @@
         }
     }
 
+    /* Selected (Ctrl+click / Ctrl+drag) — solid accent outline + tint. */
+    &.selected {
+        outline: 2px solid #38bdf8;
+        outline-offset: 2px;
+        background: rgba(56, 189, 248, 0.12);
+    }
+
     .resize-handle {
         position: absolute;
         right: -3px;
@@ -145,6 +152,14 @@
         border-radius: 2px;
         cursor: nwse-resize;
     }
+}
+
+.sel-rect {
+    position: absolute;
+    z-index: 40;
+    border: 1px solid #38bdf8;
+    background: rgba(56, 189, 248, 0.15);
+    pointer-events: none;
 }
 
 .move-badge {
