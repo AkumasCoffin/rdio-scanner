@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -95,17 +96,27 @@ func platformToken() string {
 }
 
 // assetForPlatform picks the release asset that matches this server's own
-// OS/arch (the server-side OS check), skipping the Android APK.
+// OS/arch (the server-side OS check). Only raw binaries are accepted — archives
+// (older .zip releases, the .apk, etc.) are skipped since the updater swaps the
+// file in directly and can't unpack them.
 func assetForPlatform(r githubRelease) *githubAsset {
 	token := platformToken()
 	for i := range r.Assets {
 		name := strings.ToLower(r.Assets[i].Name)
-		if strings.HasSuffix(name, ".apk") {
+		if !strings.Contains(name, token) {
 			continue
 		}
-		if strings.Contains(name, token) {
-			return &r.Assets[i]
+		switch {
+		case strings.HasSuffix(name, ".zip"),
+			strings.HasSuffix(name, ".apk"),
+			strings.HasSuffix(name, ".gz"),
+			strings.HasSuffix(name, ".tar"),
+			strings.HasSuffix(name, ".tgz"),
+			strings.HasSuffix(name, ".bz2"),
+			strings.HasSuffix(name, ".xz"):
+			continue
 		}
+		return &r.Assets[i]
 	}
 	return nil
 }
@@ -149,6 +160,153 @@ func isGithubDownloadUrl(raw string) bool {
 
 func normalizeVersion(s string) string {
 	return strings.TrimPrefix(strings.TrimSpace(s), "v")
+}
+
+func parseVersion(s string) ([3]int, []string) {
+	s = normalizeVersion(s)
+	pre := ""
+	if i := strings.IndexAny(s, "-+"); i >= 0 {
+		pre = s[i+1:]
+		s = s[:i]
+	}
+	var nums [3]int
+	for i, p := range strings.SplitN(s, ".", 3) {
+		if i > 2 {
+			break
+		}
+		nums[i], _ = strconv.Atoi(strings.TrimFunc(p, func(r rune) bool { return r < '0' || r > '9' }))
+	}
+	var preParts []string
+	if pre != "" {
+		preParts = strings.FieldsFunc(pre, func(r rune) bool { return r == '.' || r == '-' })
+	}
+	return nums, preParts
+}
+
+// compareVersions returns >0 if a is newer than b, <0 if older, 0 if equal.
+// A release without a prerelease suffix is newer than the same X.Y.Z with one,
+// and prerelease identifiers compare numerically where both are numbers.
+func compareVersions(a, b string) int {
+	na, pa := parseVersion(a)
+	nb, pb := parseVersion(b)
+	for i := 0; i < 3; i++ {
+		if na[i] != nb[i] {
+			if na[i] > nb[i] {
+				return 1
+			}
+			return -1
+		}
+	}
+	if len(pa) == 0 && len(pb) == 0 {
+		return 0
+	}
+	if len(pa) == 0 {
+		return 1
+	}
+	if len(pb) == 0 {
+		return -1
+	}
+	for i := 0; i < len(pa) && i < len(pb); i++ {
+		ai, aerr := strconv.Atoi(pa[i])
+		bi, berr := strconv.Atoi(pb[i])
+		if aerr == nil && berr == nil {
+			if ai != bi {
+				if ai > bi {
+					return 1
+				}
+				return -1
+			}
+		} else if c := strings.Compare(pa[i], pb[i]); c != 0 {
+			return c
+		}
+	}
+	if len(pa) != len(pb) {
+		if len(pa) > len(pb) {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
+// availableUpdate is the newest release for this platform/channel that is newer
+// than the running version, as found by the hourly checker.
+type availableUpdate struct {
+	Version     string
+	Branch      string
+	Prerelease  bool
+	PublishedAt string
+	HtmlUrl     string
+	assetUrl    string
+	assetName   string
+	assetSize   int64
+}
+
+// updateChecker runs an initial check shortly after boot, then hourly.
+func (admin *Admin) updateChecker() {
+	time.Sleep(15 * time.Second)
+	for {
+		admin.checkForUpdate()
+		time.Sleep(time.Hour)
+	}
+}
+
+// checkForUpdate fetches releases from the configured repo, picks the newest
+// one carrying a binary for this server on the selected channel (stable, or
+// including prereleases), and caches it when it is newer than the running
+// version.
+func (admin *Admin) checkForUpdate() {
+	owner, repo, err := parseGitHubRepo(admin.updateRepoUrl())
+	if err != nil {
+		admin.setUpdateResult(nil, err.Error())
+		return
+	}
+	releases, err := fetchReleases(owner, repo)
+	if err != nil {
+		admin.setUpdateResult(nil, err.Error())
+		return
+	}
+
+	prereleases := admin.Controller.Options.UpdatePrereleases
+	var best *githubRelease
+	var bestAsset *githubAsset
+	for i := range releases {
+		r := &releases[i]
+		if r.Draft || (r.Prerelease && !prereleases) {
+			continue
+		}
+		a := assetForPlatform(*r)
+		if a == nil {
+			continue
+		}
+		if best == nil || compareVersions(r.TagName, best.TagName) > 0 {
+			best = r
+			bestAsset = a
+		}
+	}
+
+	if best == nil || compareVersions(best.TagName, Version) <= 0 {
+		admin.setUpdateResult(nil, "")
+		return
+	}
+	admin.setUpdateResult(&availableUpdate{
+		Version:     best.TagName,
+		Branch:      best.Branch,
+		Prerelease:  best.Prerelease,
+		PublishedAt: best.PublishedAt,
+		HtmlUrl:     best.HtmlUrl,
+		assetUrl:    bestAsset.Url,
+		assetName:   bestAsset.Name,
+		assetSize:   bestAsset.Size,
+	}, "")
+}
+
+func (admin *Admin) setUpdateResult(a *availableUpdate, errMsg string) {
+	admin.updateMu.Lock()
+	admin.updateAvail = a
+	admin.updateErr = errMsg
+	admin.updateChecked = time.Now()
+	admin.updateMu.Unlock()
 }
 
 func writeJson(w http.ResponseWriter, v any) {
@@ -215,9 +373,58 @@ func pendingPath() (string, error) {
 	return exe + ".pending", nil
 }
 
-// UpdatesHandler (GET /api/admin/updates) lists the releases available from the
-// configured repo, each tagged with its branch + prerelease flag, plus the
-// running version, this server's platform, and whether an update is staged.
+// writeUpdateState writes the current auto-update state (cached availability +
+// settings) used by both the GET and the manual-check endpoints.
+func (admin *Admin) writeUpdateState(w http.ResponseWriter) {
+	admin.updateMu.Lock()
+	avail := admin.updateAvail
+	checkErr := admin.updateErr
+	checkedAt := admin.updateChecked
+	admin.updateMu.Unlock()
+
+	owner, repo, _ := parseGitHubRepo(admin.updateRepoUrl())
+
+	staged := false
+	if p, err := pendingPath(); err == nil {
+		if _, err := os.Stat(p); err == nil {
+			staged = true
+		}
+	}
+
+	var available any
+	if avail != nil {
+		available = map[string]any{
+			"version":     avail.Version,
+			"branch":      avail.Branch,
+			"prerelease":  avail.Prerelease,
+			"publishedAt": avail.PublishedAt,
+			"htmlUrl":     avail.HtmlUrl,
+			"asset":       avail.assetName,
+		}
+	}
+
+	checked := ""
+	if !checkedAt.IsZero() {
+		checked = checkedAt.UTC().Format(time.RFC3339)
+	}
+
+	writeJson(w, map[string]any{
+		"repo":           owner + "/" + repo,
+		"repoUrl":        admin.updateRepoUrl(),
+		"defaultRepo":    DefaultUpdateRepo,
+		"customUrl":      strings.TrimSpace(admin.Controller.Options.UpdateUrl),
+		"prereleases":    admin.Controller.Options.UpdatePrereleases,
+		"currentVersion": Version,
+		"platform":       platformToken(),
+		"available":      available,
+		"pending":        staged,
+		"checkedAt":      checked,
+		"error":          checkErr,
+	})
+}
+
+// UpdatesHandler (GET /api/admin/updates) returns the cached auto-update state.
+// If nothing has been checked yet (fresh boot), it runs one check first.
 func (admin *Admin) UpdatesHandler(w http.ResponseWriter, r *http.Request) {
 	if !admin.ValidateToken(admin.GetAuthorization(r)) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -227,68 +434,32 @@ func (admin *Admin) UpdatesHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	admin.updateMu.Lock()
+	never := admin.updateChecked.IsZero()
+	admin.updateMu.Unlock()
+	if never {
+		admin.checkForUpdate()
+	}
+	admin.writeUpdateState(w)
+}
 
-	repoUrl := admin.updateRepoUrl()
-	owner, repo, err := parseGitHubRepo(repoUrl)
-	if err != nil {
-		writeJsonError(w, http.StatusBadRequest, fmt.Sprintf("invalid update URL: %v", err))
+// UpdateCheckHandler (POST /api/admin/update/check) forces a fresh check now.
+func (admin *Admin) UpdateCheckHandler(w http.ResponseWriter, r *http.Request) {
+	if !admin.ValidateToken(admin.GetAuthorization(r)) {
+		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-
-	releases, err := fetchReleases(owner, repo)
-	if err != nil {
-		writeJsonError(w, http.StatusBadGateway, err.Error())
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-
-	type relOut struct {
-		Version     string `json:"version"`
-		Branch      string `json:"branch"`
-		Prerelease  bool   `json:"prerelease"`
-		PublishedAt string `json:"publishedAt"`
-		HtmlUrl     string `json:"htmlUrl"`
-		HasAsset    bool   `json:"hasAsset"`
-		Current     bool   `json:"current"`
-	}
-
-	cur := normalizeVersion(Version)
-	out := []relOut{}
-	for _, rel := range releases {
-		if rel.Draft {
-			continue
-		}
-		out = append(out, relOut{
-			Version:     rel.TagName,
-			Branch:      rel.Branch,
-			Prerelease:  rel.Prerelease,
-			PublishedAt: rel.PublishedAt,
-			HtmlUrl:     rel.HtmlUrl,
-			HasAsset:    assetForPlatform(rel) != nil,
-			Current:     normalizeVersion(rel.TagName) == cur,
-		})
-	}
-
-	pending := ""
-	if p, err := pendingPath(); err == nil {
-		if _, err := os.Stat(p); err == nil {
-			pending = p
-		}
-	}
-
-	writeJson(w, map[string]any{
-		"repo":           owner + "/" + repo,
-		"repoUrl":        repoUrl,
-		"defaultRepo":    DefaultUpdateRepo,
-		"customUrl":      strings.TrimSpace(admin.Controller.Options.UpdateUrl),
-		"currentVersion": Version,
-		"platform":       platformToken(),
-		"releases":       out,
-		"pending":        pending != "",
-	})
+	admin.checkForUpdate()
+	admin.writeUpdateState(w)
 }
 
 // UpdateSourceHandler (POST /api/admin/update/source) persists the custom
-// Update URL option (empty = revert to the fork's DefaultUpdateRepo).
+// Update URL (empty = revert to the fork's DefaultUpdateRepo) and the release
+// channel (prereleases on/off), then re-checks and returns the new state.
 func (admin *Admin) UpdateSourceHandler(w http.ResponseWriter, r *http.Request) {
 	if !admin.ValidateToken(admin.GetAuthorization(r)) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -299,7 +470,8 @@ func (admin *Admin) UpdateSourceHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body struct {
-		Url string `json:"url"`
+		Url         string `json:"url"`
+		Prereleases *bool  `json:"prereleases"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJsonError(w, http.StatusBadRequest, "invalid request")
@@ -313,16 +485,20 @@ func (admin *Admin) UpdateSourceHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	admin.Controller.Options.UpdateUrl = u
+	if body.Prereleases != nil {
+		admin.Controller.Options.UpdatePrereleases = *body.Prereleases
+	}
 	if err := admin.Controller.Options.Write(admin.Controller.Database); err != nil {
 		writeJsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJson(w, map[string]any{"ok": true, "repoUrl": admin.updateRepoUrl()})
+	admin.checkForUpdate()
+	admin.writeUpdateState(w)
 }
 
 // UpdateDownloadHandler (POST /api/admin/update/download) downloads the binary
-// matching THIS server's OS/arch for the requested version and stages it as
-// <exe>.pending. It does not touch the running binary.
+// for the currently-available update (matched to THIS server's OS/arch by the
+// checker) and stages it as <exe>.pending. It does not touch the running binary.
 func (admin *Admin) UpdateDownloadHandler(w http.ResponseWriter, r *http.Request) {
 	if !admin.ValidateToken(admin.GetAuthorization(r)) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -333,43 +509,14 @@ func (admin *Admin) UpdateDownloadHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var body struct {
-		Version string `json:"version"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Version) == "" {
-		writeJsonError(w, http.StatusBadRequest, "missing version")
+	admin.updateMu.Lock()
+	avail := admin.updateAvail
+	admin.updateMu.Unlock()
+	if avail == nil {
+		writeJsonError(w, http.StatusBadRequest, "no update available")
 		return
 	}
-
-	owner, repo, err := parseGitHubRepo(admin.updateRepoUrl())
-	if err != nil {
-		writeJsonError(w, http.StatusBadRequest, fmt.Sprintf("invalid update URL: %v", err))
-		return
-	}
-	releases, err := fetchReleases(owner, repo)
-	if err != nil {
-		writeJsonError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-
-	var rel *githubRelease
-	for i := range releases {
-		if releases[i].TagName == body.Version {
-			rel = &releases[i]
-			break
-		}
-	}
-	if rel == nil {
-		writeJsonError(w, http.StatusNotFound, "version not found")
-		return
-	}
-
-	asset := assetForPlatform(*rel)
-	if asset == nil {
-		writeJsonError(w, http.StatusBadRequest, fmt.Sprintf("no %s binary in release %s", platformToken(), rel.TagName))
-		return
-	}
-	if !isGithubDownloadUrl(asset.Url) {
+	if !isGithubDownloadUrl(avail.assetUrl) {
 		writeJsonError(w, http.StatusBadRequest, "refusing to download from a non-GitHub URL")
 		return
 	}
@@ -380,8 +527,8 @@ func (admin *Admin) UpdateDownloadHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	admin.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("admin: downloading update %s (%s)", rel.TagName, asset.Name))
-	if err := downloadTo(asset.Url, pending, asset.Size); err != nil {
+	admin.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("admin: downloading update %s (%s)", avail.Version, avail.assetName))
+	if err := downloadTo(avail.assetUrl, pending, avail.assetSize); err != nil {
 		admin.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("admin: update download failed: %v", err))
 		writeJsonError(w, http.StatusBadGateway, fmt.Sprintf("download failed: %v", err))
 		return
@@ -389,11 +536,11 @@ func (admin *Admin) UpdateDownloadHandler(w http.ResponseWriter, r *http.Request
 
 	writeJson(w, map[string]any{
 		"ok":      true,
-		"version": rel.TagName,
-		"branch":  rel.Branch,
-		"asset":   asset.Name,
+		"version": avail.Version,
+		"branch":  avail.Branch,
+		"asset":   avail.assetName,
 		"pending": pending,
-		"size":    asset.Size,
+		"size":    avail.assetSize,
 	})
 }
 

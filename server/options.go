@@ -72,6 +72,9 @@ type Options struct {
 	// UpdateUrl points the admin auto-updater at a GitHub repo
 	// (https://github.com/owner/repo). Empty = use DefaultUpdateRepo.
 	UpdateUrl                   string `json:"updateUrl"`
+	// UpdatePrereleases selects the update channel: false = stable releases
+	// only, true = include prereleases. Defaults to true (see Read()).
+	UpdatePrereleases           bool   `json:"updatePrereleases"`
 	adminPassword               string
 	adminPasswordNeedChange     bool
 	mutex                       sync.Mutex
@@ -181,6 +184,7 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	setStr("umamiUrl", &options.UmamiUrl)
 	setStr("umamiWebsiteId", &options.UmamiWebsiteId)
 	setStr("updateUrl", &options.UpdateUrl)
+	setBool("updatePrereleases", &options.UpdatePrereleases)
 
 	return options
 }
@@ -235,6 +239,7 @@ func (options *Options) optionKeyValuePairs() []struct {
 		{"umamiUrl", options.UmamiUrl},
 		{"umamiWebsiteId", options.UmamiWebsiteId},
 		{"updateUrl", options.UpdateUrl},
+		{"updatePrereleases", options.UpdatePrereleases},
 	}
 }
 
@@ -277,6 +282,7 @@ func (options *Options) Read(db *Database) error {
 	options.TranscriptionWhisperModel = defaults.options.transcriptionWhisperModel
 	options.TranscriptionLanguage = defaults.options.transcriptionLanguage
 	options.TranscriptionPrompt = defaults.options.transcriptionPrompt
+	options.UpdatePrereleases = true
 
 	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'adminPassword'").Scan(&s)
 	if err == nil {
@@ -369,6 +375,7 @@ func (options *Options) Read(db *Database) error {
 		applyStr("umamiUrl", &options.UmamiUrl)
 		applyStr("umamiWebsiteId", &options.UmamiWebsiteId)
 		applyStr("updateUrl", &options.UpdateUrl)
+		applyBool("updatePrereleases", &options.UpdatePrereleases)
 	}
 
 	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'secret'").Scan(&s)

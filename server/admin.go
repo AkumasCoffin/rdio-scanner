@@ -47,6 +47,11 @@ type Admin struct {
 	// handler during DB writes) so a slow config save can't block logins.
 	attemptsMu sync.Mutex
 	running    bool
+	// auto-update check cache, filled by the hourly checker / on demand.
+	updateMu      sync.Mutex
+	updateChecked time.Time
+	updateAvail   *availableUpdate
+	updateErr     string
 }
 
 type AdminLoginAttempt struct {
@@ -610,6 +615,9 @@ func (admin *Admin) Start() error {
 	} else {
 		admin.running = true
 	}
+
+	// Background auto-update checker (hourly).
+	go admin.updateChecker()
 
 	go func() {
 		for {

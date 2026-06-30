@@ -19,7 +19,7 @@
 
 import { Component, OnInit } from '@angular/core';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { AdminUpdateRelease, AdminUpdates, RdioScannerAdminService } from '../../admin.service';
+import { AdminUpdates, RdioScannerAdminService } from '../../admin.service';
 
 @Component({
     selector: 'rdio-scanner-admin-updates',
@@ -30,10 +30,7 @@ export class RdioScannerAdminUpdatesComponent implements OnInit {
     updates: AdminUpdates | undefined;
 
     customUrl = '';
-    includePrereleases = true;
-    includeReleases = true;
-    branch = '';
-    selectedVersion = '';
+    prereleases = true;
 
     loading = false;
     busy = false;
@@ -48,34 +45,11 @@ export class RdioScannerAdminUpdatesComponent implements OnInit {
         await this.load();
     }
 
-    get branches(): string[] {
-        const set = new Set<string>();
-        (this.updates?.releases ?? []).forEach((r) => set.add(r.branch));
-        return [...set].sort();
-    }
-
-    get filtered(): AdminUpdateRelease[] {
-        return (this.updates?.releases ?? []).filter((r) =>
-            (r.prerelease ? this.includePrereleases : this.includeReleases) &&
-            (!this.branch || r.branch === this.branch));
-    }
-
-    get selectedRelease(): AdminUpdateRelease | undefined {
-        return this.filtered.find((r) => r.version === this.selectedVersion);
-    }
-
-    label(r: AdminUpdateRelease): string {
-        const tags: string[] = [];
-        if (r.prerelease) { tags.push('prerelease'); }
-        if (r.current) { tags.push('current'); }
-        if (!r.hasAsset) { tags.push('no ' + (this.updates?.platform ?? '') + ' binary'); }
-        return `${r.version} (${r.branch})` + (tags.length ? ` — ${tags.join(', ')}` : '');
-    }
-
-    onFilter(): void {
-        if (!this.filtered.some((r) => r.version === this.selectedVersion)) {
-            const first = this.filtered.find((r) => r.hasAsset) ?? this.filtered[0];
-            this.selectedVersion = first?.version ?? '';
+    private apply(u: AdminUpdates | undefined): void {
+        this.updates = u;
+        if (u) {
+            this.customUrl = u.customUrl || '';
+            this.prereleases = u.prereleases;
         }
     }
 
@@ -83,75 +57,69 @@ export class RdioScannerAdminUpdatesComponent implements OnInit {
         this.loading = true;
         this.status = '';
         try {
-            this.updates = await this.adminService.getUpdates();
-            if (this.updates) {
-                this.customUrl = this.updates.customUrl || '';
-                this.onFilter();
-            }
+            this.apply(await this.adminService.getUpdates());
         } catch (e) {
-            this.status = this.errMsg(e, 'Could not load releases — check the update URL and network.');
+            this.status = this.errMsg(e, 'Could not load update status.');
         }
         this.loading = false;
     }
 
-    async saveSource(): Promise<void> {
+    async checkNow(): Promise<void> {
         this.busy = true;
+        this.status = 'Checking for updates…';
         try {
-            await this.adminService.setUpdateSource(this.customUrl.trim());
-            await this.load();
-            this.matSnackBar.open('Update source saved', '', { duration: 3000 });
+            this.apply(await this.adminService.checkUpdates());
+            this.status = '';
         } catch (e) {
-            this.status = this.errMsg(e, 'Could not save the update source.');
+            this.status = this.errMsg(e, 'Update check failed.');
         }
         this.busy = false;
     }
 
-    async download(): Promise<void> {
-        if (!this.selectedVersion) {
-            return;
-        }
+    async saveSettings(): Promise<void> {
         this.busy = true;
-        this.status = `Downloading ${this.selectedVersion}…`;
+        this.status = 'Saving…';
         try {
-            const res = await this.adminService.downloadUpdate(this.selectedVersion);
-            this.status = `Downloaded ${res.version} (${res.asset}). Press “Update & restart” to apply it.`;
-            await this.refreshPending();
+            this.apply(await this.adminService.setUpdateSource(this.customUrl.trim(), this.prereleases));
+            this.status = '';
+            this.matSnackBar.open('Update settings saved', '', { duration: 3000 });
         } catch (e) {
-            this.status = this.errMsg(e, 'Download failed.');
+            this.status = this.errMsg(e, 'Could not save update settings.');
         }
         this.busy = false;
     }
 
-    async apply(): Promise<void> {
+    // One click: download the available binary, then apply it and restart.
+    async update(): Promise<void> {
         this.busy = true;
-        this.status = 'Applying the update and restarting the server…';
         try {
-            await this.adminService.applyUpdate();
+            if (!this.updates?.pending) {
+                this.status = `Downloading ${this.updates?.available?.version ?? 'update'}…`;
+                await this.adminService.downloadUpdate();
+            }
+            this.status = 'Applying the update and restarting the server…';
+            try {
+                await this.adminService.applyUpdate();
+            } catch (e) {
+                // The request usually fails because the server restarts mid-flight.
+            }
+            this.status = 'Server is restarting with the new version. This page will reconnect shortly — reload it if it does not.';
         } catch (e) {
-            // The HTTP request usually fails because the server restarts mid-flight.
+            this.status = this.errMsg(e, 'Update failed.');
         }
-        this.status = 'Server is restarting with the new version. This page will reconnect shortly — reload it if it does not.';
         this.busy = false;
     }
 
-    async cancel(): Promise<void> {
+    async discard(): Promise<void> {
         this.busy = true;
         try {
             await this.adminService.cancelUpdate();
+            await this.load();
             this.status = 'Staged update discarded.';
-            await this.refreshPending();
         } catch (e) {
             this.status = this.errMsg(e, 'Could not discard the staged update.');
         }
         this.busy = false;
-    }
-
-    private async refreshPending(): Promise<void> {
-        try {
-            this.updates = await this.adminService.getUpdates();
-        } catch (e) {
-            // keep the previous view on a transient error
-        }
     }
 
     private errMsg(e: unknown, fallback: string): string {

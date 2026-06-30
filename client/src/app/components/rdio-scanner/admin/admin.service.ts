@@ -46,14 +46,13 @@ export interface AdminEvent {
     passwordNeedChange?: boolean;
 }
 
-export interface AdminUpdateRelease {
+export interface AdminUpdateAvailable {
     version: string;
     branch: string;
     prerelease: boolean;
     publishedAt: string;
     htmlUrl: string;
-    hasAsset: boolean;
-    current: boolean;
+    asset: string;
 }
 
 export interface AdminUpdates {
@@ -61,10 +60,13 @@ export interface AdminUpdates {
     repoUrl: string;
     defaultRepo: string;
     customUrl: string;
+    prereleases: boolean;
     currentVersion: string;
     platform: string;
-    releases: AdminUpdateRelease[];
+    available: AdminUpdateAvailable | null;
     pending: boolean;
+    checkedAt: string;
+    error: string;
 }
 
 export interface ApiKey {
@@ -732,18 +734,26 @@ export class RdioScannerAdminService implements OnDestroy {
         }
     }
 
-    async setUpdateSource(updateUrl: string): Promise<{ ok: boolean; repoUrl: string }> {
-        return await firstValueFrom(this.ngHttpClient.post<{ ok: boolean; repoUrl: string }>(
-            `${window.location.href}/../api/admin/update/source`,
-            { url: updateUrl },
+    async checkUpdates(): Promise<AdminUpdates> {
+        return await firstValueFrom(this.ngHttpClient.post<AdminUpdates>(
+            `${window.location.href}/../api/admin/update/check`,
+            {},
             { headers: this.getHeaders(), responseType: 'json' },
         ));
     }
 
-    async downloadUpdate(version: string): Promise<{ ok: boolean; version: string; asset: string; pending: string; size: number }> {
+    async setUpdateSource(updateUrl: string, prereleases: boolean): Promise<AdminUpdates> {
+        return await firstValueFrom(this.ngHttpClient.post<AdminUpdates>(
+            `${window.location.href}/../api/admin/update/source`,
+            { url: updateUrl, prereleases },
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    async downloadUpdate(): Promise<{ ok: boolean; version: string; asset: string; pending: string; size: number }> {
         return await firstValueFrom(this.ngHttpClient.post<{ ok: boolean; version: string; asset: string; pending: string; size: number }>(
             `${window.location.href}/../api/admin/update/download`,
-            { version },
+            {},
             { headers: this.getHeaders(), responseType: 'json' },
         ));
     }

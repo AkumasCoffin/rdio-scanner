@@ -1,63 +1,62 @@
-<div class="updates">
+<div class="updates" *ngIf="updates as u">
     <p class="hint">
-        Update rdio-scanner from a GitHub repository. The binary matching this
-        server<span *ngIf="updates"> ({{ updates.platform }})</span> is downloaded
-        and staged as a <code>.pending</code> file; pressing
-        <em>Update&nbsp;&amp;&nbsp;restart</em> swaps it in (backing up the old
-        binary as <code>.old</code>) and restarts. The server needs write access
-        to its own binary's folder.
+        rdio-scanner checks for updates hourly. When one is available it shows
+        here; pressing <em>Update&nbsp;&amp;&nbsp;restart</em> downloads the binary
+        for this server ({{ u.platform }}), swaps it in (backing up the old binary
+        as <code>.old</code>) and restarts. The server needs write access to its
+        own binary's folder.
     </p>
 
-    <div class="source">
+    <div class="banner" *ngIf="u.available as a">
+        <mat-icon color="primary">system_update_alt</mat-icon>
+        <div class="banner-text">
+            <div class="title">Update available — {{ a.version }}</div>
+            <div class="sub">
+                branch {{ a.branch }}<span *ngIf="a.prerelease"> · prerelease</span>
+                · you're on {{ u.currentVersion }}
+                <a *ngIf="a.htmlUrl" [href]="a.htmlUrl" target="_blank" rel="noopener">release notes</a>
+            </div>
+        </div>
+        <button mat-flat-button color="primary" [disabled]="busy" (click)="update()">Update &amp; restart</button>
+    </div>
+
+    <div class="banner ok" *ngIf="!u.available && !u.error">
+        <mat-icon color="primary">check_circle</mat-icon>
+        <div class="banner-text">
+            <div class="title">Up to date</div>
+            <div class="sub">Running {{ u.currentVersion }} ({{ u.platform }}).</div>
+        </div>
+    </div>
+
+    <div class="banner warn" *ngIf="u.error">
+        <mat-icon>error_outline</mat-icon>
+        <div class="banner-text">
+            <div class="title">Couldn't check for updates</div>
+            <div class="sub">{{ u.error }}</div>
+        </div>
+    </div>
+
+    <div class="staged" *ngIf="u.pending">
+        An update is downloaded and staged.
+        <button mat-stroked-button [disabled]="busy" (click)="discard()">Discard</button>
+    </div>
+
+    <div class="line">
+        <button mat-stroked-button [disabled]="busy || loading" (click)="checkNow()">Check now</button>
+        <span class="checked" *ngIf="u.checkedAt">Last checked {{ u.checkedAt | date:'medium' }}</span>
+    </div>
+
+    <mat-divider></mat-divider>
+
+    <div class="settings">
         <mat-form-field appearance="fill" class="grow">
             <mat-label>Update source (GitHub repo)</mat-label>
-            <input matInput [(ngModel)]="customUrl" [placeholder]="updates?.defaultRepo || 'https://github.com/owner/repo'">
-            <mat-hint *ngIf="updates">
-                Checking {{ updates.repo }}<span *ngIf="!updates.customUrl"> (default)</span>
-            </mat-hint>
+            <input matInput [(ngModel)]="customUrl" [placeholder]="u.defaultRepo || 'https://github.com/owner/repo'">
+            <mat-hint>Checking {{ u.repo }}<span *ngIf="!u.customUrl"> (default)</span></mat-hint>
         </mat-form-field>
-        <button mat-stroked-button [disabled]="busy || loading" (click)="saveSource()">Save &amp; check</button>
-        <button mat-button [disabled]="busy || loading" (click)="load()">Refresh</button>
+        <mat-checkbox [(ngModel)]="prereleases">Include prereleases</mat-checkbox>
+        <button mat-stroked-button [disabled]="busy" (click)="saveSettings()">Save &amp; check</button>
     </div>
 
-    <div class="meta" *ngIf="updates">
-        Running <strong>{{ updates.currentVersion }}</strong> on {{ updates.platform }}.
-    </div>
-
-    <div class="filters" *ngIf="updates">
-        <mat-checkbox [(ngModel)]="includeReleases" (change)="onFilter()">Releases</mat-checkbox>
-        <mat-checkbox [(ngModel)]="includePrereleases" (change)="onFilter()">Prereleases</mat-checkbox>
-        <mat-form-field appearance="fill" class="branch">
-            <mat-label>Branch</mat-label>
-            <mat-select [(ngModel)]="branch" (selectionChange)="onFilter()">
-                <mat-option value="">All branches</mat-option>
-                <mat-option *ngFor="let b of branches" [value]="b">{{ b }}</mat-option>
-            </mat-select>
-        </mat-form-field>
-    </div>
-
-    <mat-form-field appearance="fill" class="version" *ngIf="updates">
-        <mat-label>Version</mat-label>
-        <mat-select [(ngModel)]="selectedVersion">
-            <mat-option *ngFor="let r of filtered" [value]="r.version" [disabled]="!r.hasAsset">
-                {{ label(r) }}
-            </mat-option>
-            <mat-option *ngIf="!filtered.length" disabled>No releases match the filters</mat-option>
-        </mat-select>
-    </mat-form-field>
-
-    <div class="actions" *ngIf="updates">
-        <button mat-flat-button color="primary" [disabled]="busy || !selectedRelease?.hasAsset" (click)="download()">
-            Download
-        </button>
-        <button mat-flat-button color="accent" *ngIf="updates.pending" [disabled]="busy" (click)="apply()">
-            Update &amp; restart
-        </button>
-        <button mat-stroked-button *ngIf="updates.pending" [disabled]="busy" (click)="cancel()">
-            Discard staged
-        </button>
-    </div>
-
-    <p class="staged" *ngIf="updates?.pending">An update is staged and ready to apply.</p>
     <p class="status" *ngIf="status">{{ status }}</p>
 </div>
