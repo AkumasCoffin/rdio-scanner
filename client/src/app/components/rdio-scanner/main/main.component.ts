@@ -227,6 +227,13 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     avoid(options?: RdioScannerAvoidOptions): void {
         const call = this.call || this.callPrevious;
 
+        // Remote-control an open /stream window: a manual AVOID press acts on
+        // the stream's current call even when this page has no call of its own
+        // (Live Feed off while controlling).
+        if (!this.auth && !options && this.controllingStream) {
+            this.rdioScannerService.forwardStreamControl('avoid');
+        }
+
         if (this.auth) {
             this.authFocus();
 
@@ -269,6 +276,10 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
             this.authFocus();
 
         } else {
+            if (this.controllingStream) {
+                this.rdioScannerService.forwardStreamControl('holdSys');
+            }
+
             if (this.call || this.callPrevious) {
                 this.rdioScannerService.beep(this.holdSys ? RdioScannerBeepStyle.Deactivate : RdioScannerBeepStyle.Activate);
 
@@ -287,6 +298,10 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
             this.authFocus();
 
         } else {
+            if (this.controllingStream) {
+                this.rdioScannerService.forwardStreamControl('holdTg');
+            }
+
             if (this.call || this.callPrevious) {
                 this.rdioScannerService.beep(this.holdTg ? RdioScannerBeepStyle.Deactivate : RdioScannerBeepStyle.Activate);
 
@@ -450,6 +465,10 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
             this.authFocus();
 
         } else {
+            if (this.controllingStream) {
+                this.rdioScannerService.forwardStreamControl('replay');
+            }
+
             if (!this.livefeedPaused && (this.call || this.callPrevious)) {
                 this.rdioScannerService.beep(RdioScannerBeepStyle.Activate);
 

@@ -23,6 +23,7 @@ import {
     StreamLayout,
     STREAM_DEFAULT_BORDER_COLOR,
     STREAM_DEFAULT_TEXT_COLOR,
+    STREAM_DEFAULT_TITLE_COLOR,
     STREAM_LAYOUT_CHANNEL,
     STREAM_LAYOUT_STORAGE_KEY,
     defaultStreamLayout,
@@ -97,6 +98,9 @@ export class StreamLayoutService implements OnDestroy {
             fontFamily: '',
             bold: true,
             text: type === 'text' ? 'Text' : '',
+            titleEnabled: def.titleOn,
+            titleColor: STREAM_DEFAULT_TITLE_COLOR,
+            titleBold: true,
         };
         this.layout = { ...this.layout, items: [...this.layout.items, item] };
         this.commit(true);
@@ -214,7 +218,6 @@ export class StreamLayoutService implements OnDestroy {
 
         return {
             bgColor: typeof input.bgColor === 'string' ? input.bgColor : base.bgColor,
-            bgEnabled: typeof input.bgEnabled === 'boolean' ? input.bgEnabled : base.bgEnabled,
             // moveMode never persists across a fresh load as "on" by accident —
             // but we honour whatever was stored so a live toggle survives sync.
             moveMode: typeof input.moveMode === 'boolean' ? input.moveMode : base.moveMode,
@@ -247,6 +250,9 @@ export class StreamLayoutService implements OnDestroy {
             fontFamily: typeof r.fontFamily === 'string' ? r.fontFamily : '',
             bold: typeof r.bold === 'boolean' ? r.bold : true,
             text: typeof r.text === 'string' ? r.text : '',
+            titleEnabled: typeof r.titleEnabled === 'boolean' ? r.titleEnabled : def.titleOn,
+            titleColor: typeof r.titleColor === 'string' ? r.titleColor : STREAM_DEFAULT_TITLE_COLOR,
+            titleBold: typeof r.titleBold === 'boolean' ? r.titleBold : true,
         };
     }
 }

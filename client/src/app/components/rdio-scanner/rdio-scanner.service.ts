@@ -632,6 +632,15 @@ export class RdioScannerService implements OnDestroy {
             case 'pause':
                 this.pause(typeof msg.pauseStatus === 'boolean' ? msg.pauseStatus : undefined);
                 break;
+            case 'avoid':
+                this.avoid();
+                break;
+            case 'holdTg':
+                this.holdTalkgroup();
+                break;
+            case 'holdSys':
+                this.holdSystem();
+                break;
             case 'mute':
                 if (typeof msg.muted === 'boolean') {
                     this.setMute(msg.muted);
@@ -1757,9 +1766,14 @@ export class RdioScannerService implements OnDestroy {
 
     replay(): void {
         this.play(this.call || this.callPrevious);
+    }
 
-        // Forward to /stream followers so the main page controls them.
-        this.broadcastCommand({ cmd: 'replay' });
+    // Public entry point for the main page to remote-control an open /stream
+    // window with a call-based action (avoid / hold / replay) that the main
+    // page itself can't perform because its own Live Feed is off (no current
+    // call). The follower runs the action against the stream's current call.
+    forwardStreamControl(cmd: string): void {
+        this.broadcastCommand({ cmd });
     }
 
     readPin(): string | undefined {

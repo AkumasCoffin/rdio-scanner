@@ -1,5 +1,5 @@
 <div class="stream-root" [class.move-mode]="layout.moveMode"
-    [style.background]="layout.bgEnabled ? layout.bgColor : 'transparent'"
+    [style.background]="layout.bgColor"
     [style.--stream-grid]="layout.gridSize + 'px'"
     (contextmenu)="onCanvasContext($event)">
 
@@ -18,29 +18,37 @@
         (pointerdown)="onDragStart(item, $event)"
         (contextmenu)="onItemContext(item, $event)">
 
-        <div class="item-content" [ngSwitch]="item.type">
-            <span *ngSwitchCase="'text'">{{ item.text }}</span>
-            <span *ngSwitchCase="'clock'">Time: {{ clock | date:timeFormat }}</span>
-            <span *ngSwitchCase="'callProgress'">Call Time: {{ callProgress | date:timeFormat }}</span>
-            <span *ngSwitchCase="'listeners'">Listeners: {{ listeners }}</span>
-            <span *ngSwitchCase="'queue'">Queue: {{ callQueue }}</span>
-            <span *ngSwitchCase="'delay'">Delay: {{ queueDelayLabel || '0:00' }}<span *ngIf="delayRemovedLabel"
-                    class="delay-removed"> {{ delayRemovedLabel }}</span></span>
-            <span *ngSwitchCase="'system'">{{ callSystem }}</span>
-            <span *ngSwitchCase="'tag'">{{ callTag }}</span>
-            <span *ngSwitchCase="'talkgroup'">{{ callTalkgroup }}</span>
-            <span *ngSwitchCase="'callDate'">{{ callDate | date:'MM/dd' }}</span>
-            <span *ngSwitchCase="'talkgroupName'">{{ callTalkgroupName }}</span>
-            <span *ngSwitchCase="'tgid'">TGID: {{ callTalkgroupId || 0 }}</span>
-            <span *ngSwitchCase="'uid'"><ng-container *ngIf="callUnit">UID: {{ callUnit }}</ng-container></span>
-            <span *ngSwitchCase="'tempAvoid'"><ng-container *ngIf="tempAvoid">&#x23f2;&#xFE0E; {{ tempAvoid }}M</ng-container></span>
-            <span *ngSwitchCase="'avoid'" class="flag-text"><ng-container *ngIf="avoided">AVOID</ng-container></span>
-            <span *ngSwitchCase="'patch'" class="flag-text"><ng-container *ngIf="patched">PATCH</ng-container></span>
-            <ng-container *ngSwitchCase="'transcript'">
+        <div class="item-content">
+            <ng-container *ngIf="item.type === 'transcript'; else titledContent">
                 <div class="transcript-label">TRANSCRIPT</div>
                 <div class="transcript-text" *ngIf="displayCall?.transcript">{{ displayCall?.transcript }}</div>
                 <div class="transcript-text placeholder" *ngIf="!displayCall?.transcript">—</div>
             </ng-container>
+            <ng-template #titledContent>
+                <span class="item-title"
+                    *ngIf="item.titleEnabled && titleOf(item.type) && hasContent(item)"
+                    [style.color]="item.titleColor"
+                    [style.font-weight]="item.titleBold ? 700 : 400">{{ titleOf(item.type) }}: </span>
+                <span class="item-value" [ngSwitch]="item.type">
+                    <span *ngSwitchCase="'text'">{{ item.text }}</span>
+                    <span *ngSwitchCase="'clock'">{{ clock | date:timeFormat }}</span>
+                    <span *ngSwitchCase="'callProgress'">{{ callProgress | date:timeFormat }}</span>
+                    <span *ngSwitchCase="'listeners'">{{ listeners }}</span>
+                    <span *ngSwitchCase="'queue'">{{ callQueue }}</span>
+                    <span *ngSwitchCase="'delay'">{{ queueDelayLabel || '0:00' }}<span *ngIf="delayRemovedLabel"
+                            class="delay-removed"> {{ delayRemovedLabel }}</span></span>
+                    <span *ngSwitchCase="'system'">{{ callSystem }}</span>
+                    <span *ngSwitchCase="'tag'">{{ callTag }}</span>
+                    <span *ngSwitchCase="'talkgroup'">{{ callTalkgroup }}</span>
+                    <span *ngSwitchCase="'callDate'">{{ callDate | date:'MM/dd' }}</span>
+                    <span *ngSwitchCase="'talkgroupName'">{{ callTalkgroupName }}</span>
+                    <span *ngSwitchCase="'tgid'">{{ callTalkgroupId || 0 }}</span>
+                    <span *ngSwitchCase="'uid'"><ng-container *ngIf="callUnit">{{ callUnit }}</ng-container></span>
+                    <span *ngSwitchCase="'tempAvoid'"><ng-container *ngIf="tempAvoid">&#x23f2;&#xFE0E; {{ tempAvoid }}M</ng-container></span>
+                    <span *ngSwitchCase="'avoid'" class="flag-text"><ng-container *ngIf="avoided">AVOID</ng-container></span>
+                    <span *ngSwitchCase="'patch'" class="flag-text"><ng-container *ngIf="patched">PATCH</ng-container></span>
+                </span>
+            </ng-template>
         </div>
 
         <!-- Resize handle (edit mode) -->
@@ -86,6 +94,24 @@
                         (change)="setCtxItemBold($any($event.target).checked)">
                 </label>
             </ng-container>
+            <ng-container *ngIf="titleOf(ctxItem.type)">
+                <div class="ctx-sep"></div>
+                <label class="ctx-row">
+                    <span>Title</span>
+                    <input type="checkbox" [checked]="ctxItem.titleEnabled"
+                        (change)="setCtxItemTitleEnabled($any($event.target).checked)">
+                </label>
+                <label class="ctx-row">
+                    <span>Title color</span>
+                    <input type="color" [value]="ctxItem.titleColor"
+                        (input)="setCtxItemTitleColor($any($event.target).value)">
+                </label>
+                <label class="ctx-row">
+                    <span>Title bold</span>
+                    <input type="checkbox" [checked]="ctxItem.titleBold"
+                        (change)="setCtxItemTitleBold($any($event.target).checked)">
+                </label>
+            </ng-container>
             <button class="ctx-btn danger" (click)="removeCtxItem()">
                 <mat-icon>delete</mat-icon> Remove
             </button>
@@ -98,11 +124,6 @@
         </div>
         <div class="ctx-sep"></div>
 
-        <label class="ctx-row">
-            <span>Background</span>
-            <input type="checkbox" [checked]="layout.bgEnabled"
-                (change)="toggleBackground($any($event.target).checked)">
-        </label>
         <label class="ctx-row">
             <span>Background color</span>
             <input type="color" [value]="layout.bgColor" (input)="setBgColor($any($event.target).value)">

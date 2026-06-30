@@ -39,14 +39,17 @@ export interface StreamItem {
     bold: boolean;
     // Free text for the 'text' (custom text box) type; unused otherwise.
     text: string;
+    // Optional title/label shown before the value (e.g. "System: ...") with its
+    // own color + bold. Unsupported for flags, frames and custom text.
+    titleEnabled: boolean;
+    titleColor: string;
+    titleBold: boolean;
 }
 
 export interface StreamLayout {
     // Background color — default black so a white-text overlay reads well and
-    // the background can be chroma-keyed out in OBS. When bgEnabled is false the
-    // page is fully transparent instead (OBS can key on alpha directly).
+    // the background can be chroma-keyed out in OBS.
     bgColor: string;
-    bgEnabled: boolean;
     // When true, the /stream page is in edit mode: items are drag-movable and
     // resizable and right-click opens the editing context menu. Hold Shift
     // while dragging to snap to the grid.
@@ -58,37 +61,47 @@ export interface StreamLayout {
 
 export const STREAM_DEFAULT_TEXT_COLOR = '#ffffff';
 export const STREAM_DEFAULT_BORDER_COLOR = '#ffffff';
+export const STREAM_DEFAULT_TITLE_COLOR = '#ffffff';
 
-// Catalog of addable item types: a human label + the default box size used when
-// a new instance is added. 'frame' is the border-box type.
+// Catalog of addable item types: a human label + default box size + default
+// font size. `title` is the label shown before the value when titles are on
+// ('' = the type has no title option: flags, frames, custom text, transcript).
+// `titleOn` is the per-type default for the title toggle. 'frame' is the
+// border-box type.
 export interface StreamItemType {
     type: string;
     label: string;
     w: number;
     h: number;
     fontSize: number;
+    title: string;
+    titleOn: boolean;
 }
 
 export const STREAM_ITEM_TYPES: ReadonlyArray<StreamItemType> = [
-    { type: 'text', label: 'Custom Text', w: 200, h: 32, fontSize: 18 },
-    { type: 'clock', label: 'Time', w: 130, h: 28, fontSize: 18 },
-    { type: 'callProgress', label: 'Call Time', w: 180, h: 28, fontSize: 18 },
-    { type: 'listeners', label: 'Listeners', w: 150, h: 28, fontSize: 18 },
-    { type: 'queue', label: 'Queue', w: 120, h: 28, fontSize: 18 },
-    { type: 'delay', label: 'Delay', w: 150, h: 24, fontSize: 14 },
-    { type: 'system', label: 'System', w: 220, h: 28, fontSize: 18 },
-    { type: 'tag', label: 'Tag', w: 200, h: 28, fontSize: 18 },
-    { type: 'talkgroup', label: 'Talkgroup', w: 220, h: 28, fontSize: 18 },
-    { type: 'callDate', label: 'Call Date', w: 100, h: 28, fontSize: 18 },
-    { type: 'talkgroupName', label: 'Talkgroup Name', w: 460, h: 46, fontSize: 32 },
-    { type: 'tgid', label: 'TGID', w: 170, h: 28, fontSize: 18 },
-    { type: 'uid', label: 'UID', w: 200, h: 28, fontSize: 18 },
-    { type: 'tempAvoid', label: 'Avoid Timer', w: 100, h: 24, fontSize: 14 },
-    { type: 'avoid', label: 'Avoid Flag', w: 90, h: 24, fontSize: 14 },
-    { type: 'patch', label: 'Patch Flag', w: 90, h: 24, fontSize: 14 },
-    { type: 'transcript', label: 'Transcript', w: 600, h: 170, fontSize: 20 },
-    { type: 'frame', label: 'Border Frame', w: 560, h: 240, fontSize: 18 },
+    { type: 'text', label: 'Custom Text', w: 200, h: 32, fontSize: 18, title: '', titleOn: false },
+    { type: 'clock', label: 'Time', w: 130, h: 28, fontSize: 18, title: 'Time', titleOn: true },
+    { type: 'callProgress', label: 'Call Time', w: 180, h: 28, fontSize: 18, title: 'Call Time', titleOn: true },
+    { type: 'listeners', label: 'Listeners', w: 150, h: 28, fontSize: 18, title: 'Listeners', titleOn: true },
+    { type: 'queue', label: 'Queue', w: 120, h: 28, fontSize: 18, title: 'Queue', titleOn: true },
+    { type: 'delay', label: 'Delay', w: 150, h: 24, fontSize: 14, title: 'Delay', titleOn: true },
+    { type: 'system', label: 'System', w: 220, h: 28, fontSize: 18, title: 'System', titleOn: false },
+    { type: 'tag', label: 'Tag', w: 200, h: 28, fontSize: 18, title: 'Tag', titleOn: false },
+    { type: 'talkgroup', label: 'Talkgroup', w: 220, h: 28, fontSize: 18, title: 'Talkgroup', titleOn: false },
+    { type: 'callDate', label: 'Call Date', w: 100, h: 28, fontSize: 18, title: 'Date', titleOn: false },
+    { type: 'talkgroupName', label: 'Talkgroup Name', w: 460, h: 46, fontSize: 32, title: 'Name', titleOn: false },
+    { type: 'tgid', label: 'TGID', w: 170, h: 28, fontSize: 18, title: 'TGID', titleOn: true },
+    { type: 'uid', label: 'UID', w: 200, h: 28, fontSize: 18, title: 'UID', titleOn: true },
+    { type: 'tempAvoid', label: 'Avoid Timer', w: 100, h: 24, fontSize: 14, title: 'Avoid', titleOn: false },
+    { type: 'avoid', label: 'Avoid Flag', w: 90, h: 24, fontSize: 14, title: '', titleOn: false },
+    { type: 'patch', label: 'Patch Flag', w: 90, h: 24, fontSize: 14, title: '', titleOn: false },
+    { type: 'transcript', label: 'Transcript', w: 600, h: 170, fontSize: 20, title: '', titleOn: false },
+    { type: 'frame', label: 'Border Frame', w: 560, h: 240, fontSize: 18, title: '', titleOn: false },
 ];
+
+export function streamItemTitle(type: string): string {
+    return streamItemTypeDef(type)?.title ?? '';
+}
 
 // Font choices offered in the context menu. '' = the page default (monospace).
 // The "radio / display" group are Google Fonts loaded only on the /stream page
@@ -104,6 +117,10 @@ export const STREAM_FONTS: ReadonlyArray<{ value: string; label: string }> = [
     { value: '"Major Mono Display", monospace', label: '★ Major Mono' },
     { value: '"Chakra Petch", sans-serif', label: '★ Chakra Petch' },
     { value: '"Teko", sans-serif', label: '★ Teko' },
+    { value: '"Bitcount Grid Double", monospace', label: '★ Bitcount Grid Double' },
+    { value: '"Bitcount Single", monospace', label: '★ Bitcount Single' },
+    { value: '"Pixelify Sans", sans-serif', label: '★ Pixelify Sans' },
+    { value: '"Tourney", sans-serif', label: '★ Tourney' },
     // Standard fonts.
     { value: 'Roboto, sans-serif', label: 'Roboto' },
     { value: 'Arial, sans-serif', label: 'Arial' },
@@ -120,7 +137,7 @@ export const STREAM_FONTS: ReadonlyArray<{ value: string; label: string }> = [
 // Google Fonts stylesheet URL for the radio/display fonts above. Injected only
 // while the /stream page is open.
 export const STREAM_FONTS_HREF =
-    'https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Audiowide&family=Share+Tech+Mono&family=VT323&family=Wallpoet&family=Major+Mono+Display&family=Chakra+Petch:wght@400;700&family=Teko:wght@400;700&display=swap';
+    'https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Audiowide&family=Share+Tech+Mono&family=VT323&family=Wallpoet&family=Major+Mono+Display&family=Chakra+Petch:wght@400;700&family=Teko:wght@400;700&family=Bitcount+Grid+Double:wght@100..900&family=Bitcount+Single:wght@100..900&family=Pixelify+Sans:wght@400..700&family=Tourney:ital,wght@0,100..900;1,100..900&display=swap';
 
 export function streamItemTypeDef(type: string): StreamItemType | undefined {
     return STREAM_ITEM_TYPES.find((t) => t.type === type);
@@ -138,7 +155,11 @@ export const STREAM_LAYOUT_CHANNEL = 'rdio-scanner-stream-layout';
 // transcript spaced below. Stable ids so resets are deterministic.
 export function defaultStreamLayout(): StreamLayout {
     const frame = (id: string, x: number, y: number, w: number, h: number): StreamItem =>
-        ({ id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR, fontSize: 18, fontFamily: '', bold: true, text: '' });
+        ({
+            id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR,
+            fontSize: 18, fontFamily: '', bold: true, text: '',
+            titleEnabled: false, titleColor: STREAM_DEFAULT_TITLE_COLOR, titleBold: true,
+        });
 
     const el = (type: string, x: number, y: number, w: number, h: number): StreamItem =>
         ({
@@ -148,11 +169,13 @@ export function defaultStreamLayout(): StreamLayout {
             fontFamily: '',
             bold: true,
             text: '',
+            titleEnabled: streamItemTypeDef(type)?.titleOn ?? false,
+            titleColor: STREAM_DEFAULT_TITLE_COLOR,
+            titleBold: true,
         });
 
     return {
         bgColor: '#000000',
-        bgEnabled: true,
         moveMode: false,
         gridSize: 20,
         items: [

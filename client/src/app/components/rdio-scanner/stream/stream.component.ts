@@ -33,6 +33,7 @@ import {
     STREAM_FONTS_HREF,
     STREAM_ITEM_TYPES,
     streamItemLabel,
+    streamItemTitle,
 } from './stream-layout';
 import { StreamLayoutService } from './stream-layout.service';
 
@@ -176,6 +177,24 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return streamItemLabel(type);
     }
 
+    // The title/label text for a type ('' when the type has no title option).
+    titleOf(type: string): string {
+        return streamItemTitle(type);
+    }
+
+    // Whether a conditionally-empty element currently has a value to show — so
+    // its title isn't shown standing alone when there's nothing after it.
+    hasContent(item: StreamItem): boolean {
+        switch (item.type) {
+            case 'uid':
+                return !!this.callUnit;
+            case 'tempAvoid':
+                return this.tempAvoid > 0;
+            default:
+                return true;
+        }
+    }
+
     get showOverlay(): boolean {
         return !this.started || this.auth;
     }
@@ -280,14 +299,28 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         }
     }
 
+    setCtxItemTitleEnabled(titleEnabled: boolean): void {
+        if (this.ctxItem) {
+            this.streamLayoutService.updateItem(this.ctxItem.id, { titleEnabled });
+        }
+    }
+
+    setCtxItemTitleColor(titleColor: string): void {
+        if (this.ctxItem) {
+            this.streamLayoutService.updateItem(this.ctxItem.id, { titleColor });
+        }
+    }
+
+    setCtxItemTitleBold(titleBold: boolean): void {
+        if (this.ctxItem) {
+            this.streamLayoutService.updateItem(this.ctxItem.id, { titleBold });
+        }
+    }
+
     setGridSize(value: number): void {
         if (Number.isFinite(value)) {
             this.streamLayoutService.update({ gridSize: Math.max(2, Math.min(200, Math.round(value))) });
         }
-    }
-
-    toggleBackground(enabled: boolean): void {
-        this.streamLayoutService.update({ bgEnabled: enabled });
     }
 
     setBgColor(value: string): void {
