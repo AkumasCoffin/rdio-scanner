@@ -92,7 +92,7 @@ export const STREAM_ITEM_TYPES: ReadonlyArray<StreamItemType> = [
     { type: 'tag', label: 'Tag', w: 240, h: 30, minW: 120, minH: 24, fontSize: 18, title: 'Tag', titleOn: false },
     { type: 'talkgroup', label: 'Talkgroup', w: 280, h: 30, minW: 140, minH: 24, fontSize: 18, title: 'Talkgroup', titleOn: false },
     { type: 'callDate', label: 'Call Date', w: 110, h: 30, minW: 80, minH: 24, fontSize: 18, title: 'Date', titleOn: false },
-    { type: 'talkgroupName', label: 'Talkgroup Name', w: 600, h: 70, minW: 240, minH: 36, fontSize: 26, title: 'Name', titleOn: false },
+    { type: 'talkgroupName', label: 'Talkgroup Name', w: 600, h: 44, minW: 200, minH: 30, fontSize: 26, title: 'Name', titleOn: false },
     { type: 'tgid', label: 'TGID', w: 180, h: 30, minW: 110, minH: 24, fontSize: 18, title: 'TGID', titleOn: true },
     { type: 'uid', label: 'UID', w: 240, h: 30, minW: 120, minH: 24, fontSize: 18, title: 'UID', titleOn: true },
     { type: 'tempAvoid', label: 'Avoid Timer', w: 110, h: 26, minW: 70, minH: 20, fontSize: 14, title: 'Avoid', titleOn: false },
@@ -191,8 +191,8 @@ export function defaultStreamLayout(): StreamLayout {
         gridSize: 20,
         items: [
             // Frames first so they render behind the readouts.
-            frame('default-lcd-frame', 12, 12, 628, 322),
-            frame('default-transcript-frame', 12, 340, 628, 184),
+            frame('default-lcd-frame', 12, 12, 628, 292),
+            frame('default-transcript-frame', 12, 308, 628, 184),
             // Readouts.
             el('clock', 24, 24, 140, 30),
             el('listeners', 200, 24, 160, 30),
@@ -203,13 +203,13 @@ export function defaultStreamLayout(): StreamLayout {
             el('tag', 330, 96, 240, 30),
             el('talkgroup', 24, 132, 280, 30),
             el('callDate', 330, 132, 110, 30),
-            el('talkgroupName', 24, 170, 600, 70),
-            el('tgid', 24, 250, 180, 30),
-            el('uid', 330, 250, 240, 30),
-            el('tempAvoid', 24, 290, 110, 26),
-            el('avoid', 150, 290, 90, 26),
-            el('patch', 250, 290, 90, 26),
-            el('transcript', 24, 348, 600, 168),
+            el('talkgroupName', 24, 170, 600, 44),
+            el('tgid', 24, 226, 180, 30),
+            el('uid', 330, 226, 240, 30),
+            el('tempAvoid', 24, 266, 110, 26),
+            el('avoid', 150, 266, 90, 26),
+            el('patch', 250, 266, 90, 26),
+            el('transcript', 24, 316, 600, 168),
         ],
     };
 }
