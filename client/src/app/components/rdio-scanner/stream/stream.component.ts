@@ -368,7 +368,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // geometry or styling changes, and recomputed only when needed (sig check).
     private shapeSig = '';
     private shapeDirty = false;
-    private shapeRenders: { outline: string; bands: { color: string; width: number }[]; dividers: { d: string; color: string; width: number }[] }[] = [];
+    private shapeRenders: { outline: string; bands: { color: string; width: number }[]; dividerPaths: string[]; dividerBands: { color: string; width: number }[] }[] = [];
 
     ngAfterViewChecked(): void {
         this.recomputeShapes();
@@ -446,7 +446,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // only its inside half shows. Widest (outer colour) first, narrower bands
     // painted over it — giving outer/middle/inner bands aligned to the outline.
     // No polygon offsetting, so corners (including reflex bumps) can't spike.
-    private shapeRender(item: StreamItem): { outline: string; bands: { color: string; width: number }[]; dividers: { d: string; color: string; width: number }[] } | null {
+    private shapeRender(item: StreamItem): { outline: string; bands: { color: string; width: number }[]; dividerPaths: string[]; dividerBands: { color: string; width: number }[] } | null {
         const abs = this.absShapePoints(item);
         const outline = this.roundedPath(abs, item.cornerRadius);
         if (!outline) {
@@ -466,23 +466,35 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         if (wi > 0) {
             bands.push({ color: this.innerColor(item), width: 2 * wi });
         }
-        // Internal dividers: full-extent lines in the outer colour, the border's
-        // thickness, clipped to the interior and drawn under the bands so they
-        // meet the inner edge of the border cleanly.
-        const dividers: { d: string; color: string; width: number }[] = [];
-        if (total > 0) {
-            const color = this.itemColor(item);
-            for (const dv of this.shapeDividers(item)) {
-                if (dv.axis === 'v') {
-                    const x = item.x + dv.pos * item.w;
-                    dividers.push({ d: `M ${x.toFixed(2)} ${(item.y - 2).toFixed(2)} L ${x.toFixed(2)} ${(item.y + item.h + 2).toFixed(2)}`, color, width: total });
-                } else {
-                    const y = item.y + dv.pos * item.h;
-                    dividers.push({ d: `M ${(item.x - 2).toFixed(2)} ${y.toFixed(2)} L ${(item.x + item.w + 2).toFixed(2)} ${y.toFixed(2)}`, color, width: total });
-                }
+        // Internal dividers: full-extent lines clipped to the interior and drawn
+        // under the bands so they meet the inner edge of the border cleanly.
+        const dividerPaths: string[] = [];
+        for (const dv of this.shapeDividers(item)) {
+            if (dv.axis === 'v') {
+                const x = item.x + dv.pos * item.w;
+                dividerPaths.push(`M ${x.toFixed(2)} ${(item.y - 2).toFixed(2)} L ${x.toFixed(2)} ${(item.y + item.h + 2).toFixed(2)}`);
+            } else {
+                const y = item.y + dv.pos * item.h;
+                dividerPaths.push(`M ${(item.x - 2).toFixed(2)} ${y.toFixed(2)} L ${(item.x + item.w + 2).toFixed(2)} ${y.toFixed(2)}`);
             }
         }
-        return bands.length ? { outline, bands, dividers } : null;
+        // A divider's cross-section mirrors the border on each side: the band
+        // touching each section is the inner colour (as on the border's interior
+        // edge), then middle, with the outer colour down the centre — two borders
+        // back to back. Painted widest-first so the colours stack correctly.
+        const dividerBands: { color: string; width: number }[] = [];
+        if (dividerPaths.length && total > 0) {
+            if (wi > 0) {
+                dividerBands.push({ color: this.innerColor(item), width: 2 * total });
+            }
+            if (wm > 0) {
+                dividerBands.push({ color: this.middleColorOf(item), width: 2 * (wo + wm) });
+            }
+            if (wo > 0) {
+                dividerBands.push({ color: this.itemColor(item), width: 2 * wo });
+            }
+        }
+        return bands.length ? { outline, bands, dividerPaths, dividerBands } : null;
     }
 
     // Rebuild the #linkLayer SVG children directly (correct SVG namespace, so it
@@ -513,15 +525,19 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             clip.appendChild(clipPath);
             defs.appendChild(clip);
             // Dividers first (under the bands), clipped to the shape interior.
-            for (const dv of r.dividers) {
-                const line = this.document.createElementNS(NS, 'path');
-                line.setAttribute('d', dv.d);
-                line.setAttribute('fill', 'none');
-                line.setAttribute('stroke', dv.color);
-                line.setAttribute('stroke-width', String(dv.width));
-                line.setAttribute('clip-path', `url(#${clipId})`);
-                line.style.clipPath = `url(#${clipId})`;
-                svg.appendChild(line);
+            // Each divider is stroked widest-band first so the band colours stack
+            // into a symmetric outer/middle/inner stripe along the line.
+            for (const dPath of r.dividerPaths) {
+                for (const band of r.dividerBands) {
+                    const line = this.document.createElementNS(NS, 'path');
+                    line.setAttribute('d', dPath);
+                    line.setAttribute('fill', 'none');
+                    line.setAttribute('stroke', band.color);
+                    line.setAttribute('stroke-width', String(band.width));
+                    line.setAttribute('clip-path', `url(#${clipId})`);
+                    line.style.clipPath = `url(#${clipId})`;
+                    svg.appendChild(line);
+                }
             }
             for (const band of r.bands) {
                 const path = this.document.createElementNS(NS, 'path');
