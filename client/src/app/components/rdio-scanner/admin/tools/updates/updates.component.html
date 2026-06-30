@@ -1,0 +1,63 @@
+<div class="updates">
+    <p class="hint">
+        Update rdio-scanner from a GitHub repository. The binary matching this
+        server<span *ngIf="updates"> ({{ updates.platform }})</span> is downloaded
+        and staged as a <code>.pending</code> file; pressing
+        <em>Update&nbsp;&amp;&nbsp;restart</em> swaps it in (backing up the old
+        binary as <code>.old</code>) and restarts. The server needs write access
+        to its own binary's folder.
+    </p>
+
+    <div class="source">
+        <mat-form-field appearance="fill" class="grow">
+            <mat-label>Update source (GitHub repo)</mat-label>
+            <input matInput [(ngModel)]="customUrl" [placeholder]="updates?.defaultRepo || 'https://github.com/owner/repo'">
+            <mat-hint *ngIf="updates">
+                Checking {{ updates.repo }}<span *ngIf="!updates.customUrl"> (default)</span>
+            </mat-hint>
+        </mat-form-field>
+        <button mat-stroked-button [disabled]="busy || loading" (click)="saveSource()">Save &amp; check</button>
+        <button mat-button [disabled]="busy || loading" (click)="load()">Refresh</button>
+    </div>
+
+    <div class="meta" *ngIf="updates">
+        Running <strong>{{ updates.currentVersion }}</strong> on {{ updates.platform }}.
+    </div>
+
+    <div class="filters" *ngIf="updates">
+        <mat-checkbox [(ngModel)]="includeReleases" (change)="onFilter()">Releases</mat-checkbox>
+        <mat-checkbox [(ngModel)]="includePrereleases" (change)="onFilter()">Prereleases</mat-checkbox>
+        <mat-form-field appearance="fill" class="branch">
+            <mat-label>Branch</mat-label>
+            <mat-select [(ngModel)]="branch" (selectionChange)="onFilter()">
+                <mat-option value="">All branches</mat-option>
+                <mat-option *ngFor="let b of branches" [value]="b">{{ b }}</mat-option>
+            </mat-select>
+        </mat-form-field>
+    </div>
+
+    <mat-form-field appearance="fill" class="version" *ngIf="updates">
+        <mat-label>Version</mat-label>
+        <mat-select [(ngModel)]="selectedVersion">
+            <mat-option *ngFor="let r of filtered" [value]="r.version" [disabled]="!r.hasAsset">
+                {{ label(r) }}
+            </mat-option>
+            <mat-option *ngIf="!filtered.length" disabled>No releases match the filters</mat-option>
+        </mat-select>
+    </mat-form-field>
+
+    <div class="actions" *ngIf="updates">
+        <button mat-flat-button color="primary" [disabled]="busy || !selectedRelease?.hasAsset" (click)="download()">
+            Download
+        </button>
+        <button mat-flat-button color="accent" *ngIf="updates.pending" [disabled]="busy" (click)="apply()">
+            Update &amp; restart
+        </button>
+        <button mat-stroked-button *ngIf="updates.pending" [disabled]="busy" (click)="cancel()">
+            Discard staged
+        </button>
+    </div>
+
+    <p class="staged" *ngIf="updates?.pending">An update is staged and ready to apply.</p>
+    <p class="status" *ngIf="status">{{ status }}</p>
+</div>

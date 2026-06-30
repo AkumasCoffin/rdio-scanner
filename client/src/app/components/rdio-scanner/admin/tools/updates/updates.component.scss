@@ -1,0 +1,65 @@
+.updates {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+
+    .hint {
+        margin: 0 0 0.5rem;
+        opacity: 0.8;
+        font-size: 0.85rem;
+
+        code {
+            font-size: 0.8rem;
+        }
+    }
+
+    .source {
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+
+        .grow {
+            flex: 1 1 16rem;
+        }
+    }
+
+    .meta {
+        font-size: 0.9rem;
+        opacity: 0.85;
+    }
+
+    .filters {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        flex-wrap: wrap;
+
+        .branch {
+            min-width: 12rem;
+        }
+    }
+
+    .version {
+        width: 100%;
+        max-width: 32rem;
+    }
+
+    .actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+
+    .staged {
+        margin: 0.25rem 0 0;
+        font-weight: 600;
+    }
+
+    .status {
+        margin: 0.25rem 0 0;
+        opacity: 0.9;
+        white-space: pre-wrap;
+    }
+}

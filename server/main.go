@@ -121,6 +121,8 @@ func main() {
 
 	http.HandleFunc("/api/admin/updates", gzipHandler(controller.Admin.UpdatesHandler))
 
+	http.HandleFunc("/api/admin/update/source", controller.Admin.UpdateSourceHandler)
+
 	http.HandleFunc("/api/admin/update/download", controller.Admin.UpdateDownloadHandler)
 
 	http.HandleFunc("/api/admin/update/apply", controller.Admin.UpdateApplyHandler)

@@ -287,6 +287,39 @@ func (admin *Admin) UpdatesHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// UpdateSourceHandler (POST /api/admin/update/source) persists the custom
+// Update URL option (empty = revert to the fork's DefaultUpdateRepo).
+func (admin *Admin) UpdateSourceHandler(w http.ResponseWriter, r *http.Request) {
+	if !admin.ValidateToken(admin.GetAuthorization(r)) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Url string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJsonError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	u := strings.TrimSpace(body.Url)
+	if u != "" {
+		if _, _, err := parseGitHubRepo(u); err != nil {
+			writeJsonError(w, http.StatusBadRequest, fmt.Sprintf("invalid update URL: %v", err))
+			return
+		}
+	}
+	admin.Controller.Options.UpdateUrl = u
+	if err := admin.Controller.Options.Write(admin.Controller.Database); err != nil {
+		writeJsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJson(w, map[string]any{"ok": true, "repoUrl": admin.updateRepoUrl()})
+}
+
 // UpdateDownloadHandler (POST /api/admin/update/download) downloads the binary
 // matching THIS server's OS/arch for the requested version and stages it as
 // <exe>.pending. It does not touch the running binary.

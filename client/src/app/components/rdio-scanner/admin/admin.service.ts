@@ -46,6 +46,27 @@ export interface AdminEvent {
     passwordNeedChange?: boolean;
 }
 
+export interface AdminUpdateRelease {
+    version: string;
+    branch: string;
+    prerelease: boolean;
+    publishedAt: string;
+    htmlUrl: string;
+    hasAsset: boolean;
+    current: boolean;
+}
+
+export interface AdminUpdates {
+    repo: string;
+    repoUrl: string;
+    defaultRepo: string;
+    customUrl: string;
+    currentVersion: string;
+    platform: string;
+    releases: AdminUpdateRelease[];
+    pending: boolean;
+}
+
 export interface ApiKey {
     _id?: string;
     disabled?: boolean;
@@ -697,6 +718,50 @@ export class RdioScannerAdminService implements OnDestroy {
             this.errorHandler(error);
             return undefined;
         }
+    }
+
+    async getUpdates(): Promise<AdminUpdates | undefined> {
+        try {
+            return await firstValueFrom(this.ngHttpClient.get<AdminUpdates>(
+                `${window.location.href}/../api/admin/updates`,
+                { headers: this.getHeaders(), responseType: 'json' },
+            ));
+        } catch (error) {
+            this.errorHandler(error);
+            throw error;
+        }
+    }
+
+    async setUpdateSource(updateUrl: string): Promise<{ ok: boolean; repoUrl: string }> {
+        return await firstValueFrom(this.ngHttpClient.post<{ ok: boolean; repoUrl: string }>(
+            `${window.location.href}/../api/admin/update/source`,
+            { url: updateUrl },
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    async downloadUpdate(version: string): Promise<{ ok: boolean; version: string; asset: string; pending: string; size: number }> {
+        return await firstValueFrom(this.ngHttpClient.post<{ ok: boolean; version: string; asset: string; pending: string; size: number }>(
+            `${window.location.href}/../api/admin/update/download`,
+            { version },
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    async applyUpdate(): Promise<{ ok: boolean; restarting: boolean }> {
+        return await firstValueFrom(this.ngHttpClient.post<{ ok: boolean; restarting: boolean }>(
+            `${window.location.href}/../api/admin/update/apply`,
+            {},
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    async cancelUpdate(): Promise<{ ok: boolean }> {
+        return await firstValueFrom(this.ngHttpClient.post<{ ok: boolean }>(
+            `${window.location.href}/../api/admin/update/cancel`,
+            {},
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
     }
 
     private configWebSocketClose(): void {
