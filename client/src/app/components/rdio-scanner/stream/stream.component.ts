@@ -799,8 +799,12 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             const item = this.layout.items.find((i) => i.id === this.gestureId);
             const minW = item ? streamItemMinW(item.type) : 20;
             const minH = item ? streamItemMinH(item.type) : 16;
-            const w = Math.max(minW, snap(this.gestureOrigW + dx));
-            const h = Math.max(minH, snap(this.gestureOrigH + dy));
+            const ix = item ? item.x : 0;
+            const iy = item ? item.y : 0;
+            // Snap the box's bottom-right EDGE to the grid (matching how move
+            // snaps the top-left), so resized edges land on grid lines too.
+            const w = Math.max(minW, snap(ix + this.gestureOrigW + dx) - ix);
+            const h = Math.max(minH, snap(iy + this.gestureOrigH + dy) - iy);
             this.streamLayoutService.updateItem(this.gestureId, { w, h });
         }
     }

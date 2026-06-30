@@ -17,11 +17,14 @@
     user-select: none;
     -webkit-user-select: none;
 
-    /* Faint snapping grid, only visible in edit mode when Show Grid is on. */
+    /* Faint snapping grid, only visible in edit mode when Show Grid is on.
+       Both gradients tile from the top-left (to bottom / to right) so the lines
+       line up with the snap positions, which are measured from the top-left. */
     &.move-mode.show-grid {
+        background-position: 0 0;
         background-image:
-            repeating-linear-gradient(0deg, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px)),
-            repeating-linear-gradient(90deg, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px));
+            repeating-linear-gradient(to bottom, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px)),
+            repeating-linear-gradient(to right, rgba(127, 127, 127, 0.25) 0 1px, transparent 1px var(--stream-grid, 20px));
     }
 
     &.move-mode {

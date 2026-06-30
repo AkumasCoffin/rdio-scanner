@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path"
 	"sync"
 	"time"
 
@@ -38,6 +39,10 @@ type Client struct {
 	Livefeed   *Livefeed
 	SystemsMap SystemsMap
 	request    *http.Request
+	// Overlay is true for the /stream OBS overlay page. It still receives
+	// calls, but is excluded from the listener count so a user running both
+	// the main page and /stream isn't counted twice.
+	Overlay bool
 }
 
 func (client *Client) Init(controller *Controller, request *http.Request, conn *websocket.Conn) error {
@@ -62,6 +67,9 @@ func (client *Client) Init(controller *Controller, request *http.Request, conn *
 	client.Livefeed = NewLivefeed()
 	client.Send = make(chan *Message, 8192)
 	client.request = request
+	// The /stream overlay connects its WebSocket to the /stream path; flag it
+	// so it isn't double-counted as a listener.
+	client.Overlay = path.Base(request.URL.Path) == "stream"
 
 	go func() {
 		defer func() {
@@ -223,7 +231,7 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 	// "L:" counter for the 3-15 s debounce window used by the controller's
 	// register/unregister broadcaster.
 	if options.ShowListenersCount && client.Controller != nil {
-		client.SendListenersCount(client.Controller.Clients.Count())
+		client.SendListenersCount(client.Controller.Clients.CountListeners())
 	}
 }
 
@@ -280,6 +288,23 @@ func (clients *Clients) Count() int {
 	return len(clients.Map)
 }
 
+// CountListeners is the number of clients shown as "listeners" — every
+// connection except /stream overlay pages (so opening /stream alongside the
+// main page doesn't count as a second user).
+func (clients *Clients) CountListeners() int {
+	clients.mutex.RLock()
+	defer clients.mutex.RUnlock()
+
+	count := 0
+	for c := range clients.Map {
+		if !c.Overlay {
+			count++
+		}
+	}
+
+	return count
+}
+
 func (clients *Clients) EmitCall(call *Call, restricted bool) {
 	clients.mutex.RLock()
 	defer clients.mutex.RUnlock()
@@ -295,7 +320,12 @@ func (clients *Clients) EmitConfig(groups *Groups, options *Options, systems *Sy
 	clients.mutex.RLock()
 	defer clients.mutex.RUnlock()
 
-	count := len(clients.Map)
+	count := 0
+	for c := range clients.Map {
+		if !c.Overlay {
+			count++
+		}
+	}
 
 	for c := range clients.Map {
 		if restricted {
@@ -343,7 +373,12 @@ func (clients *Clients) EmitListenersCount() {
 	clients.mutex.RLock()
 	defer clients.mutex.RUnlock()
 
-	count := len(clients.Map)
+	count := 0
+	for c := range clients.Map {
+		if !c.Overlay {
+			count++
+		}
+	}
 
 	for c := range clients.Map {
 		c.SendListenersCount(count)
