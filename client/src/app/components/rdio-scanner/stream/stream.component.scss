@@ -166,6 +166,9 @@
     z-index: 50;
     min-width: 210px;
     max-width: 240px;
+    /* Never taller than the viewport — scroll if the menu is very long. */
+    max-height: calc(100vh - 12px);
+    overflow-y: auto;
     padding: 6px;
     background: #0f172a;
     color: #e2e8f0;

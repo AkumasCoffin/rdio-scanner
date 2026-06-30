@@ -66,6 +66,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     private addY = 40;
 
     @ViewChild('importFile') private importFile: ElementRef<HTMLInputElement> | undefined;
+    @ViewChild('ctxMenu') private ctxMenuRef: ElementRef<HTMLElement> | undefined;
 
     private svc: RdioScannerService;
     private cdr: ChangeDetectorRef;
@@ -244,11 +245,39 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.ctxItem = item;
         this.addX = event.clientX;
         this.addY = event.clientY;
-        // Keep the menu on-screen-ish.
-        this.ctxX = Math.min(event.clientX, window.innerWidth - 230);
-        this.ctxY = Math.min(event.clientY, window.innerHeight - 360);
+        this.ctxX = event.clientX;
+        this.ctxY = event.clientY;
         this.ctxOpen = true;
         this.cdr.detectChanges();
+        // Now that the menu has rendered with its real size, snap it fully into
+        // view (the menu height varies a lot between the canvas/element menus).
+        setTimeout(() => this.snapMenuIntoView());
+    }
+
+    private snapMenuIntoView(): void {
+        const el = this.ctxMenuRef?.nativeElement;
+        if (!el) {
+            return;
+        }
+        const rect = el.getBoundingClientRect();
+        const margin = 6;
+        let x = this.ctxX;
+        let y = this.ctxY;
+
+        if (rect.right > window.innerWidth - margin) {
+            x = Math.max(margin, window.innerWidth - rect.width - margin);
+        }
+        if (rect.bottom > window.innerHeight - margin) {
+            y = Math.max(margin, window.innerHeight - rect.height - margin);
+        }
+        x = Math.max(margin, x);
+        y = Math.max(margin, y);
+
+        if (x !== this.ctxX || y !== this.ctxY) {
+            this.ctxX = x;
+            this.ctxY = y;
+            this.cdr.detectChanges();
+        }
     }
 
     closeContext(): void {

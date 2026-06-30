@@ -63,7 +63,7 @@
     </div>
 
     <!-- Right-click context menu -->
-    <div class="ctx-menu" *ngIf="ctxOpen" [style.left.px]="ctxX" [style.top.px]="ctxY"
+    <div #ctxMenu class="ctx-menu" *ngIf="ctxOpen" [style.left.px]="ctxX" [style.top.px]="ctxY"
         (click)="onMenuClick($event)" (contextmenu)="$event.preventDefault()">
 
         <ng-container *ngIf="ctxItem">
