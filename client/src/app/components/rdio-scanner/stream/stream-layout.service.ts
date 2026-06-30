@@ -317,7 +317,11 @@ export class StreamLayoutService implements OnDestroy {
             middleUseLed: typeof r.middleUseLed === 'boolean' ? r.middleUseLed : false,
             linkMode: typeof r.linkMode === 'boolean' ? r.linkMode : false,
             linkDivider: typeof r.linkDivider === 'boolean' ? r.linkDivider : false,
-            points: def.type === 'shape' ? this.normalizeShapePoints(r.points, def.w, def.h) : undefined,
+            points: def.type === 'shape'
+                ? this.normalizeShapePoints(r.points,
+                    typeof r.w === 'number' ? r.w : def.w,
+                    typeof r.h === 'number' ? r.h : def.h)
+                : undefined,
         };
     }
 

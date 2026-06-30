@@ -961,8 +961,6 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     setCtxItemColor(value: string): void {
-        // Per-frame: linked frames keep individual colours and blend smoothly
-        // along the merged outline (see linkOutlines gradient).
         this.applyToTargets({ color: value });
     }
 
