@@ -365,7 +365,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // geometry or styling changes, and recomputed only when needed (sig check).
     private shapeSig = '';
     private shapeDirty = false;
-    private shapeRenders: { outline: string; clipId: string; bands: { color: string; width: number }[] }[] = [];
+    private shapeRenders: { outline: string; bands: { color: string; width: number }[] }[] = [];
 
     ngAfterViewChecked(): void {
         this.recomputeShapes();
@@ -429,7 +429,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // only its inside half shows. Widest (outer colour) first, narrower bands
     // painted over it — giving outer/middle/inner bands aligned to the outline.
     // No polygon offsetting, so corners (including reflex bumps) can't spike.
-    private shapeRender(item: StreamItem): { outline: string; clipId: string; bands: { color: string; width: number }[] } | null {
+    private shapeRender(item: StreamItem): { outline: string; bands: { color: string; width: number }[] } | null {
         const abs = this.absShapePoints(item);
         const outline = this.roundedPath(abs, this.cornerRadii(abs, item.cornerRadius));
         if (!outline) {
@@ -449,10 +449,12 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         if (wi > 0) {
             bands.push({ color: this.innerColor(item), width: 2 * wi });
         }
-        return bands.length ? { outline, clipId: `shape-clip-${item.id}`, bands } : null;
+        return bands.length ? { outline, bands } : null;
     }
 
-    // Rebuild the #linkLayer SVG children directly (correct SVG namespace).
+    // Rebuild the #linkLayer SVG children directly (correct SVG namespace, so it
+    // renders the same in every browser incl. OBS's embedded Chromium). Clip ids
+    // are index-based so they're always valid + unique regardless of item ids.
     private renderShapeLayer(): void {
         const svg = this.linkLayerRef?.nativeElement;
         if (!svg) {
@@ -468,9 +470,10 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         }
         const defs = this.document.createElementNS(NS, 'defs');
         svg.appendChild(defs);
-        for (const r of this.shapeRenders) {
+        this.shapeRenders.forEach((r, index) => {
+            const clipId = `rdio-shape-clip-${index}`;
             const clip = this.document.createElementNS(NS, 'clipPath');
-            clip.setAttribute('id', r.clipId);
+            clip.setAttribute('id', clipId);
             clip.setAttribute('clipPathUnits', 'userSpaceOnUse');
             const clipPath = this.document.createElementNS(NS, 'path');
             clipPath.setAttribute('d', r.outline);
@@ -483,10 +486,13 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
                 path.setAttribute('stroke', band.color);
                 path.setAttribute('stroke-width', String(band.width));
                 path.setAttribute('stroke-linejoin', 'round');
-                path.setAttribute('clip-path', `url(#${r.clipId})`);
+                // Both the attribute and the CSS property — older WebKit honours
+                // only one of them for SVG clip references.
+                path.setAttribute('clip-path', `url(#${clipId})`);
+                path.style.clipPath = `url(#${clipId})`;
                 svg.appendChild(path);
             }
-        }
+        });
     }
 
     // ---- Shape editing -------------------------------------------------------
