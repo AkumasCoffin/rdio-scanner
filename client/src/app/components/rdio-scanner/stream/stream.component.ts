@@ -365,7 +365,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // geometry or styling changes, and recomputed only when needed (sig check).
     private shapeSig = '';
     private shapeDirty = false;
-    private shapePaths: { d: string; color: string; width: number }[] = [];
+    private shapePaths: { d: string; color: string }[] = [];
 
     ngAfterViewChecked(): void {
         this.recomputeShapes();
@@ -403,8 +403,9 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         const sig = shapes
             .map((s) => `${s.id}:${s.x},${s.y}:${JSON.stringify(s.points)}:${s.borderWidth},${s.cornerRadius},${s.color},${s.useLedColor ? 1 : 0}`
                 + `|${s.middleFill ? 1 : 0},${s.middleWidth},${s.middleColor},${s.middleUseLed ? 1 : 0}`
-                + `|${s.centerFill ? 1 : 0},${s.innerWidth},${s.centerColor},${s.centerUseLed ? 1 : 0}`)
-            .join('||') + '#' + (this.ledColor() ?? '');
+                + `|${s.centerFill ? 1 : 0},${s.innerWidth},${s.centerColor},${s.centerUseLed ? 1 : 0}`
+                + `|${s.hideOnCall ? 1 : 0},${s.hideOnIdle ? 1 : 0}`)
+            .join('||') + '#' + (this.ledColor() ?? '') + (this.waitingForCall ? 'i' : 'c');
         if (sig === this.shapeSig) {
             return;
         }
@@ -412,35 +413,39 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         this.shapeDirty = true;
         this.shapePaths = [];
         for (const s of shapes) {
+            // Respect the element's hide-while-call / hide-while-idle toggles.
+            if (!this.dataVisible(s)) {
+                continue;
+            }
             for (const band of this.shapeBands(s)) {
-                const d = this.roundedPath(band.poly, band.radius);
-                if (d) {
-                    this.shapePaths.push({ d, color: band.color, width: band.width });
-                }
+                this.shapePaths.push(band);
             }
         }
     }
 
-    // The concentric bands of a shapable border, from the outer edge inward.
-    private shapeBands(item: StreamItem): { poly: { x: number; y: number }[]; color: string; width: number; radius: number }[] {
+    // The concentric bands of a shapable border, each a filled ring between two
+    // concentric rounded outlines (even-odd), from the outer edge inward. Filled
+    // rings can't leave gaps at the corners the way stacked strokes do.
+    private shapeBands(item: StreamItem): { d: string; color: string }[] {
         const abs = this.absShapePoints(item);
         const R = item.cornerRadius;
         const wo = item.borderWidth;
         const wm = item.middleFill ? item.middleWidth : 0;
         const wi = item.centerFill ? item.innerWidth : 0;
-        const bands: { poly: { x: number; y: number }[]; color: string; width: number; radius: number }[] = [];
-        if (wo > 0) {
-            const inset = wo / 2;
-            bands.push({ poly: this.offsetPolygon(abs, inset), color: this.itemColor(item), width: wo, radius: Math.max(0, R - inset) });
-        }
-        if (wm > 0) {
-            const inset = wo + wm / 2;
-            bands.push({ poly: this.offsetPolygon(abs, inset), color: this.middleColorOf(item), width: wm, radius: Math.max(0, R - inset) });
-        }
-        if (wi > 0) {
-            const inset = wo + wm + wi / 2;
-            bands.push({ poly: this.offsetPolygon(abs, inset), color: this.innerColor(item), width: wi, radius: Math.max(0, R - inset) });
-        }
+        const bands: { d: string; color: string }[] = [];
+        const ring = (o1: number, o2: number, color: string): void => {
+            if (o2 - o1 <= 0) {
+                return;
+            }
+            const outer = this.roundedPath(this.offsetPolygon(abs, o1), Math.max(0, R - o1));
+            const inner = this.roundedPath(this.offsetPolygon(abs, o2), Math.max(0, R - o2));
+            if (outer && inner) {
+                bands.push({ d: `${outer} ${inner}`, color });
+            }
+        };
+        ring(0, wo, this.itemColor(item));
+        ring(wo, wo + wm, this.middleColorOf(item));
+        ring(wo + wm, wo + wm + wi, this.innerColor(item));
         return bands;
     }
 
@@ -493,11 +498,9 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         for (const p of this.shapePaths) {
             const path = this.document.createElementNS(NS, 'path');
             path.setAttribute('d', p.d);
-            path.setAttribute('fill', 'none');
-            path.setAttribute('stroke', p.color);
-            path.setAttribute('stroke-width', String(p.width));
-            path.setAttribute('stroke-linejoin', 'round');
-            path.setAttribute('stroke-linecap', 'round');
+            path.setAttribute('fill', p.color);
+            path.setAttribute('fill-rule', 'evenodd');
+            path.setAttribute('stroke', 'none');
             svg.appendChild(path);
         }
     }
