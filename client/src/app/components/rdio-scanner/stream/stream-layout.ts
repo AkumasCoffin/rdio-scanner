@@ -73,31 +73,42 @@ export interface StreamItemType {
     label: string;
     w: number;
     h: number;
+    // Smallest the box may be resized to, so text isn't squeezed to nothing.
+    minW: number;
+    minH: number;
     fontSize: number;
     title: string;
     titleOn: boolean;
 }
 
 export const STREAM_ITEM_TYPES: ReadonlyArray<StreamItemType> = [
-    { type: 'text', label: 'Custom Text', w: 200, h: 32, fontSize: 18, title: '', titleOn: false },
-    { type: 'clock', label: 'Time', w: 130, h: 28, fontSize: 18, title: 'Time', titleOn: true },
-    { type: 'callProgress', label: 'Call Time', w: 180, h: 28, fontSize: 18, title: 'Call Time', titleOn: true },
-    { type: 'listeners', label: 'Listeners', w: 150, h: 28, fontSize: 18, title: 'Listeners', titleOn: true },
-    { type: 'queue', label: 'Queue', w: 120, h: 28, fontSize: 18, title: 'Queue', titleOn: true },
-    { type: 'delay', label: 'Delay', w: 150, h: 24, fontSize: 14, title: 'Delay', titleOn: true },
-    { type: 'system', label: 'System', w: 220, h: 28, fontSize: 18, title: 'System', titleOn: false },
-    { type: 'tag', label: 'Tag', w: 200, h: 28, fontSize: 18, title: 'Tag', titleOn: false },
-    { type: 'talkgroup', label: 'Talkgroup', w: 220, h: 28, fontSize: 18, title: 'Talkgroup', titleOn: false },
-    { type: 'callDate', label: 'Call Date', w: 100, h: 28, fontSize: 18, title: 'Date', titleOn: false },
-    { type: 'talkgroupName', label: 'Talkgroup Name', w: 460, h: 46, fontSize: 32, title: 'Name', titleOn: false },
-    { type: 'tgid', label: 'TGID', w: 170, h: 28, fontSize: 18, title: 'TGID', titleOn: true },
-    { type: 'uid', label: 'UID', w: 200, h: 28, fontSize: 18, title: 'UID', titleOn: true },
-    { type: 'tempAvoid', label: 'Avoid Timer', w: 100, h: 24, fontSize: 14, title: 'Avoid', titleOn: false },
-    { type: 'avoid', label: 'Avoid Flag', w: 90, h: 24, fontSize: 14, title: '', titleOn: false },
-    { type: 'patch', label: 'Patch Flag', w: 90, h: 24, fontSize: 14, title: '', titleOn: false },
-    { type: 'transcript', label: 'Transcript', w: 600, h: 170, fontSize: 20, title: '', titleOn: false },
-    { type: 'frame', label: 'Border Frame', w: 560, h: 240, fontSize: 18, title: '', titleOn: false },
+    { type: 'text', label: 'Custom Text', w: 200, h: 32, minW: 60, minH: 24, fontSize: 18, title: '', titleOn: false },
+    { type: 'clock', label: 'Time', w: 140, h: 30, minW: 100, minH: 24, fontSize: 18, title: 'Time', titleOn: true },
+    { type: 'callProgress', label: 'Call Time', w: 190, h: 30, minW: 120, minH: 24, fontSize: 18, title: 'Call Time', titleOn: true },
+    { type: 'listeners', label: 'Listeners', w: 160, h: 30, minW: 110, minH: 24, fontSize: 18, title: 'Listeners', titleOn: true },
+    { type: 'queue', label: 'Queue', w: 130, h: 30, minW: 90, minH: 24, fontSize: 18, title: 'Queue', titleOn: true },
+    { type: 'delay', label: 'Delay', w: 160, h: 26, minW: 100, minH: 20, fontSize: 14, title: 'Delay', titleOn: true },
+    { type: 'system', label: 'System', w: 280, h: 30, minW: 140, minH: 24, fontSize: 18, title: 'System', titleOn: false },
+    { type: 'tag', label: 'Tag', w: 240, h: 30, minW: 120, minH: 24, fontSize: 18, title: 'Tag', titleOn: false },
+    { type: 'talkgroup', label: 'Talkgroup', w: 280, h: 30, minW: 140, minH: 24, fontSize: 18, title: 'Talkgroup', titleOn: false },
+    { type: 'callDate', label: 'Call Date', w: 110, h: 30, minW: 80, minH: 24, fontSize: 18, title: 'Date', titleOn: false },
+    { type: 'talkgroupName', label: 'Talkgroup Name', w: 600, h: 70, minW: 240, minH: 36, fontSize: 26, title: 'Name', titleOn: false },
+    { type: 'tgid', label: 'TGID', w: 180, h: 30, minW: 110, minH: 24, fontSize: 18, title: 'TGID', titleOn: true },
+    { type: 'uid', label: 'UID', w: 240, h: 30, minW: 120, minH: 24, fontSize: 18, title: 'UID', titleOn: true },
+    { type: 'tempAvoid', label: 'Avoid Timer', w: 110, h: 26, minW: 70, minH: 20, fontSize: 14, title: 'Avoid', titleOn: false },
+    { type: 'avoid', label: 'Avoid Flag', w: 90, h: 26, minW: 60, minH: 20, fontSize: 14, title: '', titleOn: false },
+    { type: 'patch', label: 'Patch Flag', w: 90, h: 26, minW: 60, minH: 20, fontSize: 14, title: '', titleOn: false },
+    { type: 'transcript', label: 'Transcript', w: 600, h: 170, minW: 200, minH: 60, fontSize: 20, title: '', titleOn: false },
+    { type: 'frame', label: 'Border Frame', w: 560, h: 240, minW: 40, minH: 30, fontSize: 18, title: '', titleOn: false },
 ];
+
+export function streamItemMinW(type: string): number {
+    return streamItemTypeDef(type)?.minW ?? 20;
+}
+
+export function streamItemMinH(type: string): number {
+    return streamItemTypeDef(type)?.minH ?? 16;
+}
 
 export function streamItemTitle(type: string): string {
     return streamItemTypeDef(type)?.title ?? '';
@@ -180,25 +191,25 @@ export function defaultStreamLayout(): StreamLayout {
         gridSize: 20,
         items: [
             // Frames first so they render behind the readouts.
-            frame('default-lcd-frame', 12, 12, 560, 272),
-            frame('default-transcript-frame', 12, 292, 624, 196),
+            frame('default-lcd-frame', 12, 12, 628, 322),
+            frame('default-transcript-frame', 12, 340, 628, 184),
             // Readouts.
-            el('clock', 24, 24, 130, 28),
-            el('callProgress', 24, 56, 180, 28),
-            el('listeners', 214, 24, 150, 28),
-            el('queue', 410, 24, 120, 28),
-            el('delay', 410, 56, 150, 24),
-            el('system', 24, 92, 220, 28),
-            el('tag', 360, 92, 200, 28),
-            el('talkgroup', 24, 124, 220, 28),
-            el('callDate', 360, 124, 100, 28),
-            el('talkgroupName', 24, 158, 460, 46),
-            el('tgid', 24, 212, 170, 28),
-            el('uid', 360, 212, 200, 28),
-            el('tempAvoid', 24, 248, 100, 24),
-            el('avoid', 134, 248, 90, 24),
-            el('patch', 234, 248, 90, 24),
-            el('transcript', 24, 306, 600, 168),
+            el('clock', 24, 24, 140, 30),
+            el('listeners', 200, 24, 160, 30),
+            el('queue', 384, 24, 130, 30),
+            el('callProgress', 24, 58, 190, 30),
+            el('delay', 384, 58, 160, 26),
+            el('system', 24, 96, 280, 30),
+            el('tag', 330, 96, 240, 30),
+            el('talkgroup', 24, 132, 280, 30),
+            el('callDate', 330, 132, 110, 30),
+            el('talkgroupName', 24, 170, 600, 70),
+            el('tgid', 24, 250, 180, 30),
+            el('uid', 330, 250, 240, 30),
+            el('tempAvoid', 24, 290, 110, 26),
+            el('avoid', 150, 290, 90, 26),
+            el('patch', 250, 290, 90, 26),
+            el('transcript', 24, 348, 600, 168),
         ],
     };
 }

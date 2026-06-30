@@ -49,9 +49,12 @@
 
     .item-content {
         width: 100%;
-        white-space: nowrap;
+        /* Wrap long values (e.g. talkgroup names) within the box instead of
+           clipping them off the right edge. Overflow past the box height still
+           clips, but the box can be resized taller. */
+        white-space: normal;
+        word-break: break-word;
         overflow: hidden;
-        text-overflow: clip;
         /* Font size / family / weight come from the item's inline style (set
            per item in the context menu) and are inherited here. */
         font-size: inherit;

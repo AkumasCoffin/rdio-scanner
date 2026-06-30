@@ -33,6 +33,8 @@ import {
     STREAM_FONTS_HREF,
     STREAM_ITEM_TYPES,
     streamItemLabel,
+    streamItemMinH,
+    streamItemMinW,
     streamItemTitle,
 } from './stream-layout';
 import { StreamLayoutService } from './stream-layout.service';
@@ -469,8 +471,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             const y = Math.max(0, snap(this.gestureOrigY + dy));
             this.streamLayoutService.updateItem(this.gestureId, { x, y });
         } else {
-            const w = Math.max(20, snap(this.gestureOrigW + dx));
-            const h = Math.max(16, snap(this.gestureOrigH + dy));
+            const item = this.layout.items.find((i) => i.id === this.gestureId);
+            const minW = item ? streamItemMinW(item.type) : 20;
+            const minH = item ? streamItemMinH(item.type) : 16;
+            const w = Math.max(minW, snap(this.gestureOrigW + dx));
+            const h = Math.max(minH, snap(this.gestureOrigH + dy));
             this.streamLayoutService.updateItem(this.gestureId, { w, h });
         }
     }
