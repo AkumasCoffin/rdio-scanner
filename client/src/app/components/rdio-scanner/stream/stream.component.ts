@@ -589,11 +589,13 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             const lenIn = Math.hypot(inX, inY) || 1, lenOut = Math.hypot(outX, outY) || 1;
             const uinX = inX / lenIn, uinY = inY / lenIn;
             const uoutX = outX / lenOut, uoutY = outY / lenOut;
-            const r = Math.max(0, Math.min(radius, lenIn / 2, lenOut / 2));
+            const turn = uinX * uoutY - uinY * uoutX;
+            // A point that lies (near) straight on its edge isn't a real corner —
+            // don't round it, or it bulges into a semicircle on the flat edge.
+            const r = Math.abs(turn) < 0.02 ? 0 : Math.max(0, Math.min(radius, lenIn / 2, lenOut / 2));
             rad.push(r);
             pin.push({ x: v.x - uinX * r, y: v.y - uinY * r });
             pout.push({ x: v.x + uoutX * r, y: v.y + uoutY * r });
-            const turn = uinX * uoutY - uinY * uoutX;
             sweep.push(Math.sign(turn) === orient ? 1 : 0);
         }
         const f = (p: { x: number; y: number }) => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
