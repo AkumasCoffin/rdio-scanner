@@ -165,20 +165,22 @@
                     <input type="range" min="0" max="60" [value]="ctxItem.cornerRadius"
                         (input)="setCornerRadius($any($event.target).valueAsNumber)">
                 </label>
-                <label class="ctx-row">
-                    <span>Link mode</span>
-                    <input type="checkbox" [checked]="ctxItem.linkMode"
-                        (change)="setLinkMode($any($event.target).checked)">
-                </label>
-                <div class="ctx-hint" *ngIf="ctxItem.linkMode">
-                    Merges with touching frames that also have Link mode on into
-                    one outline; their colours blend smoothly across the modules.
-                </div>
-                <label class="ctx-row" *ngIf="ctxItem.linkMode">
-                    <span>Keep dividers</span>
-                    <input type="checkbox" [checked]="ctxItem.linkDivider"
-                        (change)="setLinkDivider($any($event.target).checked)">
-                </label>
+                <ng-container *ngIf="ctxItem.type === 'frameLink'">
+                    <label class="ctx-row">
+                        <span>Link mode</span>
+                        <input type="checkbox" [checked]="ctxItem.linkMode"
+                            (change)="setLinkMode($any($event.target).checked)">
+                    </label>
+                    <div class="ctx-hint" *ngIf="ctxItem.linkMode">
+                        Merges with touching Linked Frames into one outline; their
+                        colours blend smoothly across the modules.
+                    </div>
+                    <label class="ctx-row" *ngIf="ctxItem.linkMode">
+                        <span>Keep dividers</span>
+                        <input type="checkbox" [checked]="ctxItem.linkDivider"
+                            (change)="setLinkDivider($any($event.target).checked)">
+                    </label>
+                </ng-container>
 
                 <div class="ctx-sep"></div>
                 <label class="ctx-row">

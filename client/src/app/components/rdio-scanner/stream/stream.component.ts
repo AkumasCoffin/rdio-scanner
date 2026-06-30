@@ -370,7 +370,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     private isLinkGrouped(item: StreamItem): boolean {
-        if (!streamIsFrame(item.type) || !item.linkMode) {
+        if (item.type !== 'frameLink' || !item.linkMode) {
             return false;
         }
         this.recomputeLinks();
@@ -385,7 +385,7 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     }
 
     private recomputeLinks(): void {
-        const frames = this.layout.items.filter((i) => streamIsFrame(i.type) && i.linkMode);
+        const frames = this.layout.items.filter((i) => i.type === 'frameLink' && i.linkMode);
         const sig = frames
             .map((f) => `${f.id}:${f.x},${f.y},${f.w},${f.h},${f.borderWidth},${f.cornerRadius},${f.color},${f.useLedColor ? 1 : 0},${f.linkDivider ? 1 : 0}`)
             .join('|') + '#' + (this.ledColor() ?? '');
