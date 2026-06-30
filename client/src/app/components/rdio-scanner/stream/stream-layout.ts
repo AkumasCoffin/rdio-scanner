@@ -40,10 +40,13 @@ export interface StreamItem {
     // Free text for the 'text' (custom text box) type; unused otherwise.
     text: string;
     // Optional title/label shown before the value (e.g. "System: ...") with its
-    // own color + bold. Unsupported for flags, frames and custom text.
+    // own fully-independent styling. Unsupported for flags, frames, custom text.
     titleEnabled: boolean;
     titleColor: string;
     titleBold: boolean;
+    titleUseLed: boolean;
+    titleFontSize: number;
+    titleFontFamily: string;
     // When true the element's color follows the playing talkgroup's LCD (LED)
     // color instead of `color`.
     useLedColor: boolean;
@@ -225,6 +228,7 @@ export function defaultStreamLayout(): StreamLayout {
             id, type: 'frame', x, y, w, h, color: STREAM_DEFAULT_BORDER_COLOR,
             fontSize: 18, fontFamily: '', bold: true, text: '',
             titleEnabled: false, titleColor: STREAM_DEFAULT_TITLE_COLOR, titleBold: true,
+            titleUseLed: false, titleFontSize: 18, titleFontFamily: '',
             useLedColor: false, align: 'left', autoScroll: true, historyCols: [],
             histRowLines: true, histColLines: false, histLineWidth: 1, histLineColor: '#888888',
             borderWidth: 2, centerFill: false, centerColor: '#000000', centerUseLed: false,
@@ -241,6 +245,9 @@ export function defaultStreamLayout(): StreamLayout {
             titleEnabled: streamItemTypeDef(type)?.titleOn ?? false,
             titleColor: STREAM_DEFAULT_TITLE_COLOR,
             titleBold: true,
+            titleUseLed: false,
+            titleFontSize: streamItemTypeDef(type)?.fontSize ?? 18,
+            titleFontFamily: '',
             useLedColor: false,
             align: 'left',
             autoScroll: true,

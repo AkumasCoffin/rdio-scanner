@@ -63,7 +63,9 @@
             <ng-template #titledContent>
                 <span class="item-title"
                     *ngIf="item.titleEnabled && titleOf(item.type) && hasContent(item)"
-                    [style.color]="item.titleColor"
+                    [style.color]="titleColorOf(item)"
+                    [style.font-size.px]="item.titleFontSize"
+                    [style.font-family]="item.titleFontFamily || null"
                     [style.font-weight]="item.titleBold ? 700 : 400">{{ titleOf(item.type) }}: </span>
                 <span class="item-value" [ngSwitch]="item.type">
                     <span *ngSwitchCase="'text'">{{ item.text }}</span>
@@ -151,13 +153,13 @@
                         (input)="setCenterColor($any($event.target).value)">
                 </label>
                 <label class="ctx-row" *ngIf="ctxItem.centerFill">
-                    <span>Inner: match LCD</span>
+                    <span>Inner: match call color</span>
                     <input type="checkbox" [checked]="ctxItem.centerUseLed"
                         (change)="setCenterUseLed($any($event.target).checked)">
                 </label>
             </ng-container>
             <label class="ctx-row" *ngIf="ctxItem.type !== 'history'">
-                <span>Match LCD color</span>
+                <span>{{ ctxItem.type === 'frame' ? 'Outline: match call color' : 'Match call color' }}</span>
                 <input type="checkbox" [checked]="ctxItem.useLedColor"
                     (change)="setCtxItemLed($any($event.target).checked)">
             </label>
@@ -252,21 +254,40 @@
             </label>
             <ng-container *ngIf="titleOf(ctxItem.type)">
                 <div class="ctx-sep"></div>
+                <div class="ctx-head">Title</div>
                 <label class="ctx-row">
-                    <span>Title</span>
+                    <span>Show title</span>
                     <input type="checkbox" [checked]="ctxItem.titleEnabled"
                         (change)="setCtxItemTitleEnabled($any($event.target).checked)">
                 </label>
-                <label class="ctx-row">
-                    <span>Title color</span>
-                    <input type="color" [value]="ctxItem.titleColor"
-                        (input)="setCtxItemTitleColor($any($event.target).value)">
-                </label>
-                <label class="ctx-row">
-                    <span>Title bold</span>
-                    <input type="checkbox" [checked]="ctxItem.titleBold"
-                        (change)="setCtxItemTitleBold($any($event.target).checked)">
-                </label>
+                <ng-container *ngIf="ctxItem.titleEnabled">
+                    <label class="ctx-row">
+                        <span>Match call color</span>
+                        <input type="checkbox" [checked]="ctxItem.titleUseLed"
+                            (change)="setCtxItemTitleUseLed($any($event.target).checked)">
+                    </label>
+                    <label class="ctx-row">
+                        <span>Title color</span>
+                        <input type="color" [value]="ctxItem.titleColor"
+                            (input)="setCtxItemTitleColor($any($event.target).value)">
+                    </label>
+                    <label class="ctx-row">
+                        <span>Title size</span>
+                        <input type="number" min="6" max="200" [value]="ctxItem.titleFontSize"
+                            (input)="setCtxItemTitleSize($any($event.target).valueAsNumber)">
+                    </label>
+                    <label class="ctx-row">
+                        <span>Title font</span>
+                        <select [value]="ctxItem.titleFontFamily" (change)="setCtxItemTitleFont($any($event.target).value)">
+                            <option *ngFor="let f of fonts" [value]="f.value">{{ f.label }}</option>
+                        </select>
+                    </label>
+                    <label class="ctx-row">
+                        <span>Title bold</span>
+                        <input type="checkbox" [checked]="ctxItem.titleBold"
+                            (change)="setCtxItemTitleBold($any($event.target).checked)">
+                    </label>
+                </ng-container>
             </ng-container>
             <button class="ctx-btn danger" (click)="removeCtxItem()">
                 <mat-icon>delete</mat-icon> Remove

@@ -277,6 +277,14 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return item.centerColor;
     }
 
+    // Title colour (optionally LED-driven, independent of the value colour).
+    titleColorOf(item: StreamItem): string {
+        if (item.titleUseLed) {
+            return this.ledColor() ?? item.titleColor;
+        }
+        return item.titleColor;
+    }
+
     // Whether a conditionally-empty element currently has a value to show — so
     // its title isn't shown standing alone when there's nothing after it.
     hasContent(item: StreamItem): boolean {
@@ -592,6 +600,20 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
 
     setCtxItemTitleBold(titleBold: boolean): void {
         this.applyToTargets({ titleBold });
+    }
+
+    setCtxItemTitleUseLed(titleUseLed: boolean): void {
+        this.applyToTargets({ titleUseLed });
+    }
+
+    setCtxItemTitleSize(value: number): void {
+        if (Number.isFinite(value)) {
+            this.applyToTargets({ titleFontSize: Math.max(6, Math.min(200, Math.round(value))) });
+        }
+    }
+
+    setCtxItemTitleFont(titleFontFamily: string): void {
+        this.applyToTargets({ titleFontFamily });
     }
 
     trackHistCol(_index: number, col: StreamHistoryCol): string {
