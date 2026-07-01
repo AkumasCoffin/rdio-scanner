@@ -368,7 +368,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // geometry or styling changes, and recomputed only when needed (sig check).
     private shapeSig = '';
     private shapeDirty = false;
-    private shapeRenders: { outline: string; bands: { color: string; width: number }[]; dividerPaths: string[]; dividerBands: { color: string; width: number }[] }[] = [];
+    private shapeRenders: {
+        outline: string;
+        bands: { color: string; width: number }[];
+        dividers: { d: string; width: number; x1: number; y1: number; x2: number; y2: number; stops: { off: number; color: string }[] }[];
+    }[] = [];
 
     ngAfterViewChecked(): void {
         this.recomputeShapes();
@@ -446,7 +450,11 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
     // only its inside half shows. Widest (outer colour) first, narrower bands
     // painted over it — giving outer/middle/inner bands aligned to the outline.
     // No polygon offsetting, so corners (including reflex bumps) can't spike.
-    private shapeRender(item: StreamItem): { outline: string; bands: { color: string; width: number }[]; dividerPaths: string[]; dividerBands: { color: string; width: number }[] } | null {
+    private shapeRender(item: StreamItem): {
+        outline: string;
+        bands: { color: string; width: number }[];
+        dividers: { d: string; width: number; x1: number; y1: number; x2: number; y2: number; stops: { off: number; color: string }[] }[];
+    } | null {
         const abs = this.absShapePoints(item);
         const outline = this.roundedPath(abs, item.cornerRadius);
         if (!outline) {
@@ -466,35 +474,41 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         if (wi > 0) {
             bands.push({ color: this.innerColor(item), width: 2 * wi });
         }
-        // Internal dividers: full-extent lines clipped to the interior and drawn
-        // under the bands so they meet the inner edge of the border cleanly.
-        const dividerPaths: string[] = [];
-        for (const dv of this.shapeDividers(item)) {
-            if (dv.axis === 'v') {
-                const x = item.x + dv.pos * item.w;
-                dividerPaths.push(`M ${x.toFixed(2)} ${(item.y - 2).toFixed(2)} L ${x.toFixed(2)} ${(item.y + item.h + 2).toFixed(2)}`);
-            } else {
-                const y = item.y + dv.pos * item.h;
-                dividerPaths.push(`M ${(item.x - 2).toFixed(2)} ${y.toFixed(2)} L ${(item.x + item.w + 2).toFixed(2)} ${y.toFixed(2)}`);
+        // Internal dividers: ONE line the thickness of the border, drawn under the
+        // bands so it meets the inner edge cleanly. Its colour is a smooth
+        // gradient across the width — inner at each edge (matching the border's
+        // interior edge), middle, then outer down the centre — so the band
+        // colours blend instead of reading as two hard-edged lines.
+        const dividers: { d: string; width: number; x1: number; y1: number; x2: number; y2: number; stops: { off: number; color: string }[] }[] = [];
+        const dvs = this.shapeDividers(item);
+        if (dvs.length && total > 0) {
+            const half: string[] = [];
+            if (wi > 0) { half.push(this.innerColor(item)); }
+            if (wm > 0) { half.push(this.middleColorOf(item)); }
+            if (wo > 0) { half.push(this.itemColor(item)); }
+            const colors = half.length > 1 ? [...half, ...half.slice(0, -1).reverse()] : half;
+            const stops = colors.map((color, i) => ({
+                off: colors.length > 1 ? +(i / (colors.length - 1)).toFixed(4) : 0,
+                color,
+            }));
+            const h = total / 2;
+            for (const dv of dvs) {
+                if (dv.axis === 'v') {
+                    const x = item.x + dv.pos * item.w;
+                    dividers.push({
+                        d: `M ${x.toFixed(2)} ${(item.y - 2).toFixed(2)} L ${x.toFixed(2)} ${(item.y + item.h + 2).toFixed(2)}`,
+                        width: total, x1: x - h, y1: item.y, x2: x + h, y2: item.y, stops,
+                    });
+                } else {
+                    const y = item.y + dv.pos * item.h;
+                    dividers.push({
+                        d: `M ${(item.x - 2).toFixed(2)} ${y.toFixed(2)} L ${(item.x + item.w + 2).toFixed(2)} ${y.toFixed(2)}`,
+                        width: total, x1: item.x, y1: y - h, x2: item.x, y2: y + h, stops,
+                    });
+                }
             }
         }
-        // A divider's cross-section mirrors the border on each side: the band
-        // touching each section is the inner colour (as on the border's interior
-        // edge), then middle, with the outer colour down the centre — two borders
-        // back to back. Painted widest-first so the colours stack correctly.
-        const dividerBands: { color: string; width: number }[] = [];
-        if (dividerPaths.length && total > 0) {
-            if (wi > 0) {
-                dividerBands.push({ color: this.innerColor(item), width: 2 * total });
-            }
-            if (wm > 0) {
-                dividerBands.push({ color: this.middleColorOf(item), width: 2 * (wo + wm) });
-            }
-            if (wo > 0) {
-                dividerBands.push({ color: this.itemColor(item), width: 2 * wo });
-            }
-        }
-        return bands.length ? { outline, bands, dividerPaths, dividerBands } : null;
+        return bands.length ? { outline, bands, dividers } : null;
     }
 
     // Rebuild the #linkLayer SVG children directly (correct SVG namespace, so it
@@ -525,20 +539,39 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
             clip.appendChild(clipPath);
             defs.appendChild(clip);
             // Dividers first (under the bands), clipped to the shape interior.
-            // Each divider is stroked widest-band first so the band colours stack
-            // into a symmetric outer/middle/inner stripe along the line.
-            for (const dPath of r.dividerPaths) {
-                for (const band of r.dividerBands) {
-                    const line = this.document.createElementNS(NS, 'path');
-                    line.setAttribute('d', dPath);
-                    line.setAttribute('fill', 'none');
-                    line.setAttribute('stroke', band.color);
-                    line.setAttribute('stroke-width', String(band.width));
-                    line.setAttribute('clip-path', `url(#${clipId})`);
-                    line.style.clipPath = `url(#${clipId})`;
-                    svg.appendChild(line);
+            // Each is a single line stroked with a gradient across its width so
+            // the band colours blend smoothly instead of stacking as hard bands.
+            r.dividers.forEach((dv, di) => {
+                let stroke: string;
+                if (dv.stops.length <= 1) {
+                    stroke = dv.stops[0]?.color ?? '#000000';
+                } else {
+                    const gradId = `rdio-shape-divgrad-${index}-${di}`;
+                    const grad = this.document.createElementNS(NS, 'linearGradient');
+                    grad.setAttribute('id', gradId);
+                    grad.setAttribute('gradientUnits', 'userSpaceOnUse');
+                    grad.setAttribute('x1', String(dv.x1));
+                    grad.setAttribute('y1', String(dv.y1));
+                    grad.setAttribute('x2', String(dv.x2));
+                    grad.setAttribute('y2', String(dv.y2));
+                    for (const s of dv.stops) {
+                        const stop = this.document.createElementNS(NS, 'stop');
+                        stop.setAttribute('offset', String(s.off));
+                        stop.setAttribute('stop-color', s.color);
+                        grad.appendChild(stop);
+                    }
+                    defs.appendChild(grad);
+                    stroke = `url(#${gradId})`;
                 }
-            }
+                const line = this.document.createElementNS(NS, 'path');
+                line.setAttribute('d', dv.d);
+                line.setAttribute('fill', 'none');
+                line.setAttribute('stroke', stroke);
+                line.setAttribute('stroke-width', String(dv.width));
+                line.setAttribute('clip-path', `url(#${clipId})`);
+                line.style.clipPath = `url(#${clipId})`;
+                svg.appendChild(line);
+            });
             for (const band of r.bands) {
                 const path = this.document.createElementNS(NS, 'path');
                 path.setAttribute('d', r.outline);
