@@ -73,7 +73,7 @@ type Options struct {
 	// (https://github.com/owner/repo). Empty = use DefaultUpdateRepo.
 	UpdateUrl                   string `json:"updateUrl"`
 	// UpdatePrereleases selects the update channel: false = stable releases
-	// only, true = include prereleases. Defaults to true (see Read()).
+	// only (the default), true = include prereleases. See Read().
 	UpdatePrereleases           bool   `json:"updatePrereleases"`
 	adminPassword               string
 	adminPasswordNeedChange     bool
@@ -282,7 +282,7 @@ func (options *Options) Read(db *Database) error {
 	options.TranscriptionWhisperModel = defaults.options.transcriptionWhisperModel
 	options.TranscriptionLanguage = defaults.options.transcriptionLanguage
 	options.TranscriptionPrompt = defaults.options.transcriptionPrompt
-	options.UpdatePrereleases = true
+	options.UpdatePrereleases = false
 
 	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'adminPassword'").Scan(&s)
 	if err == nil {

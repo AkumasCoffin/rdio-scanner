@@ -83,11 +83,24 @@ WantedBy=multi-user.target
 
 ```bash
 sudo useradd -r -s /bin/false rdio
+# Own the whole folder (not just the binary) with the service account — the
+# in-app auto-updater renames files *inside* this folder, which needs write
+# access to the directory itself, not only the binary.
 sudo chown -R rdio:rdio /opt/rdio-scanner
 sudo systemctl daemon-reload
 sudo systemctl enable --now rdio-scanner
 journalctl -u rdio-scanner -f
 ```
+
+> **Auto-updates & permissions.** The in-app updater (Admin → Tools → Updates)
+> downloads the new binary, swaps it into place and restarts. For that to work
+> the account running rdio-scanner must own / be able to **write to the binary's
+> folder** (e.g. `/opt/rdio-scanner`) — the `chown -R rdio:rdio` above provides
+> this. Each update backs the previous binary up as `rdio-scanner.old` in the
+> same folder, and a download that hasn't been applied yet is staged as
+> `rdio-scanner.pending`. Read-only or package-managed installs can't
+> self-update — the updater reports the error rather than half-applying, and you
+> update the binary the same way you installed it.
 
 ---
 

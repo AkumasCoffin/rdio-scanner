@@ -30,7 +30,7 @@ export class RdioScannerAdminUpdatesComponent implements OnInit {
     updates: AdminUpdates | undefined;
 
     customUrl = '';
-    prereleases = true;
+    prereleases = false;
 
     loading = false;
     busy = false;
