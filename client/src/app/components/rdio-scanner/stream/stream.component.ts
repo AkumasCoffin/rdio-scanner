@@ -1672,7 +1672,19 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
                 const top = Math.max(0, Math.min(1, est / dur)) * maxV;
                 writes.push(() => { content.scrollTop = top; });
 
-            } else if (type !== 'history' && !streamIsBorder(type) && type !== 'text') {
+            } else if (type === 'text') {
+                // Custom text wraps, so it overflows vertically — marquee down.
+                const maxV = content.scrollHeight - content.clientHeight;
+                if (!auto || maxV <= 1) {
+                    if (content.scrollTop !== 0) {
+                        writes.push(() => { content.scrollTop = 0; });
+                    }
+                    return;
+                }
+                const top = this.marqueePos(now, maxV);
+                writes.push(() => { content.scrollTop = top; });
+
+            } else if (type !== 'history' && !streamIsBorder(type)) {
                 // Single-line value: marquee horizontally when it overflows.
                 const maxH = content.scrollWidth - content.clientWidth;
                 if (!auto || maxH <= 1) {

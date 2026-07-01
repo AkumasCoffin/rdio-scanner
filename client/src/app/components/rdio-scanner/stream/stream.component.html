@@ -332,7 +332,7 @@
                     </div>
                 </div>
             </ng-container>
-            <label class="ctx-row" *ngIf="!isBorder(ctxItem.type) && ctxItem.type !== 'history' && ctxItem.type !== 'text'">
+            <label class="ctx-row" *ngIf="!isBorder(ctxItem.type) && ctxItem.type !== 'history'">
                 <span>Auto-scroll if too big</span>
                 <input type="checkbox" [checked]="ctxItem.autoScroll"
                     (change)="setCtxItemAutoScroll($any($event.target).checked)">
