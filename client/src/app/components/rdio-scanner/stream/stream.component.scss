@@ -138,6 +138,10 @@
         overflow: hidden;
 
         .item-content {
+            /* Fill the box height so overflowing text can be scrolled (the rAF
+               loop marquees it vertically); without a fixed height it would just
+               grow to fit and never overflow within itself. */
+            height: 100%;
             white-space: pre-wrap;
             word-break: break-word;
             overflow: hidden;
