@@ -687,3 +687,15 @@ a:hover {
 	border: 1px solid var(--border-subtle) !important;
 	backdrop-filter: blur(8px) !important;
 }
+
+/* iOS Safari zooms the whole page in when a focused input's font-size is under
+   16px. Keep form controls at 16px on touch devices so tapping a field (search,
+   PIN, admin) doesn't jerk the page into a zoomed-in state. */
+@media (hover: none) and (pointer: coarse) {
+	input,
+	textarea,
+	select,
+	.mat-mdc-input-element {
+		font-size: 16px;
+	}
+}

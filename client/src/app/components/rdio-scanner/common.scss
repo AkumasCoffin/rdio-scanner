@@ -19,15 +19,24 @@
   position: relative;
   text-overflow: clip;
   white-space: normal;
+  cursor: pointer;
+  /* Tap immediately (no 300ms wait / double-tap zoom hijack) so taps register. */
+  touch-action: manipulation;
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   transition: all 0.2s ease;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 
-  &:hover {
-    background: rgba(30, 41, 59, 0.9);
-    border-color: rgba(148, 163, 184, 0.5);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  /* Only apply hover styling on devices with a real pointer. On touch (iOS
+     Safari especially) a :hover style makes the FIRST tap apply hover instead
+     of firing click — the button animates but the action never runs. */
+  @media (hover: hover) {
+    &:hover {
+      background: rgba(30, 41, 59, 0.9);
+      border-color: rgba(148, 163, 184, 0.5);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
   }
 
   &:active,
