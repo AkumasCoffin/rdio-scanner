@@ -88,20 +88,6 @@ class CallPlayer(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var flashJob: Job? = null
 
-    init {
-        // Drive the per-second countdown + auto-jump re-evaluation.
-        scope.launch {
-            while (true) {
-                if (player.mediaItemCount > 0) {
-                    refreshDelay()
-                } else if (_delayMs.value != 0L) {
-                    _delayMs.value = 0L
-                }
-                delay(1000)
-            }
-        }
-    }
-
     fun setAutoJump(enabled: Boolean) {
         autoJumpEnabled = enabled
         refreshDelay()
@@ -189,6 +175,23 @@ class CallPlayer(private val context: Context) {
             playWhenReady = true
             addListener(playerListener)
         }
+
+    // Must stay below `player`: initializers run in declaration order, and
+    // Dispatchers.Main.immediate runs this body inline on the constructing
+    // thread, so a ticker declared above would read `player` while it's null.
+    init {
+        // Drive the per-second countdown + auto-jump re-evaluation.
+        scope.launch {
+            while (true) {
+                if (player.mediaItemCount > 0) {
+                    refreshDelay()
+                } else if (_delayMs.value != 0L) {
+                    _delayMs.value = 0L
+                }
+                delay(1000)
+            }
+        }
+    }
 
     fun enqueue(
         call: CallDto,
