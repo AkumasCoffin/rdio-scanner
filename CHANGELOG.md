@@ -8,6 +8,14 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.13.2
+
+Hotfix for an Android startup crash introduced with the queue-delay readout.
+
+### Android
+
+- **Fixed: app crashed immediately on launch.** `CallPlayer` started its per-second delay/auto-jump ticker from an `init` block declared above the `ExoPlayer` field. Kotlin runs initializers in declaration order, and because the ticker launches on `Dispatchers.Main.immediate` — which skips dispatch when already on the main thread — the loop body ran inline inside the constructor and read `player.mediaItemCount` while `player` was still null. The resulting `NullPointerException` propagated out of `RdioApplication.onCreate`, killing the process before `MainActivity` started, so every launch attempt crashed. The ticker now initializes after the player.
+
 ## Version 6.12.0
 
 Live-feed queue-delay readout and an optional auto-jump catch-up. The LCD now shows how far behind live you are and can automatically trim a runaway backlog back down to a buffer you choose.
