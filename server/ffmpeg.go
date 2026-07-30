@@ -17,6 +17,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -24,7 +25,19 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// ffmpegTimeout caps a single audio conversion. Convert runs synchronously on
+// the one ingest goroutine, so an ffmpeg that never exits — a malformed or
+// truncated upload is enough — stopped every subsequent call from being
+// processed for as long as the process stayed up. Scanner clips are seconds
+// long; a minute is far more than any legitimate conversion needs.
+const ffmpegTimeout = time.Minute
+
+// ffmpegVersionTimeout caps the capability probe at startup, which otherwise
+// blocks the boot path.
+const ffmpegVersionTimeout = 10 * time.Second
 
 type FFMpeg struct {
 	available bool
@@ -37,7 +50,10 @@ func NewFFMpeg() *FFMpeg {
 
 	stdout := bytes.NewBuffer([]byte(nil))
 
-	cmd := exec.Command("ffmpeg", "-version")
+	ctx, cancel := context.WithTimeout(context.Background(), ffmpegVersionTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-version")
 	cmd.Stdout = stdout
 
 	if err := cmd.Run(); err == nil {
@@ -104,7 +120,10 @@ func (ffmpeg *FFMpeg) Convert(call *Call, systems *Systems, tags *Tags, mode uin
 
 	args = append(args, "-c:a", "aac", "-b:a", "32k", "-movflags", "frag_keyframe+empty_moov", "-f", "ipod", "-")
 
-	cmd := exec.Command("ffmpeg", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), ffmpegTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	cmd.Stdin = bytes.NewReader(call.Audio)
 
 	stdout := bytes.NewBuffer([]byte(nil))
@@ -121,6 +140,12 @@ func (ffmpeg *FFMpeg) Convert(call *Call, systems *Systems, tags *Tags, mode uin
 		case string:
 			call.AudioName = fmt.Sprintf("%v.m4a", strings.TrimSuffix(v, path.Ext((v))))
 		}
+
+	} else if ctx.Err() == context.DeadlineExceeded {
+		// Killed by the deadline. The call keeps its original audio and still
+		// gets ingested — losing the conversion beats losing the call, and
+		// beats stalling every call behind it.
+		fmt.Printf("ffmpeg timed out after %v converting %v, keeping original audio\n", ffmpegTimeout, call.AudioName)
 
 	} else {
 		fmt.Println(stderr.String())
