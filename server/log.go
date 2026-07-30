@@ -50,9 +50,25 @@ func NewLogs() *Logs {
 	}
 }
 
+// logMessageMaxLen matches the width of rdioScannerLogs.message. Postgres
+// rejects an over-long value outright ("value too long for type character
+// varying(255)"), and since callers almost universally discard LogEvent's
+// error, such a line was simply lost. That bit hardest exactly when it mattered
+// most: the longest messages are the diagnostic ones — errors that embed a
+// query or an upstream response body, and the configuration-save failure line,
+// which concatenates a per-section error map. SQLite ignores the declared width
+// and MySQL silently truncates, so this only ever showed up on Postgres.
+const logMessageMaxLen = 255
+
 func (logs *Logs) LogEvent(level string, message string) error {
+	// The mutex covers the ordered writes to the process logger only. It used
+	// to be held across the database insert as well, which serialized every
+	// logging goroutine in the server behind one round-trip — LogEvent runs
+	// several times per ingested call, and a stalled insert therefore stalled
+	// unrelated goroutines (including per-client websocket writers) rather than
+	// just its own caller. database/sql is safe for concurrent use, so the
+	// insert needs no lock of its own.
 	logs.mutex.Lock()
-	defer logs.mutex.Unlock()
 
 	if logs.daemon != nil {
 		switch level {
@@ -68,11 +84,13 @@ func (logs *Logs) LogEvent(level string, message string) error {
 		log.Println(message)
 	}
 
+	logs.mutex.Unlock()
+
 	if logs.database != nil {
 		l := Log{
 			DateTime: time.Now().UTC(),
 			Level:    level,
-			Message:  message,
+			Message:  truncateLogMessage(message),
 		}
 
 		if _, err := logs.database.Exec("insert into `rdioScannerLogs` (`dateTime`, `level`, `message`) values (?, ?, ?)", l.DateTime, l.Level, l.Message); err != nil {
@@ -81,6 +99,25 @@ func (logs *Logs) LogEvent(level string, message string) error {
 	}
 
 	return nil
+}
+
+// truncateLogMessage clips a message to what the column can hold, counting
+// runes rather than bytes so a multi-byte character is never cut in half. The
+// full text still reaches the process log / journal; only the database copy is
+// shortened, and it is marked so a reader knows to look there.
+func truncateLogMessage(message string) string {
+	if len(message) <= logMessageMaxLen {
+		return message
+	}
+
+	const ellipsis = "..."
+
+	runes := []rune(message)
+	if len(runes) <= logMessageMaxLen {
+		return message
+	}
+
+	return string(runes[:logMessageMaxLen-len(ellipsis)]) + ellipsis
 }
 
 func (logs *Logs) Prune(db *Database, pruneDays uint) error {
