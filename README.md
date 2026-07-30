@@ -38,6 +38,31 @@ Grab the binary for your platform from the
 
 The binary embeds the web app — no separate front-end deploy.
 
+## Optional dependency: ffmpeg
+
+Rdio Scanner runs without ffmpeg, but the **Audio Conversion** option needs it.
+With no ffmpeg on `PATH`, calls are stored exactly as uploaded and no conversion
+happens. Nothing else is affected.
+
+The server checks at startup and, if it can't find one, logs the command to
+install it for your platform. The admin UI also flags it on the Audio Conversion
+setting whenever conversion is switched on but no binary is available.
+
+| Platform            | Install                                                 |
+| ------------------- | ------------------------------------------------------- |
+| Debian / Ubuntu     | `sudo apt install ffmpeg`                               |
+| Fedora              | `sudo dnf install ffmpeg-free` (or enable RPM Fusion)    |
+| RHEL / Rocky / Alma | `sudo dnf install ffmpeg` (needs EPEL + RPM Fusion)      |
+| Arch                | `sudo pacman -S ffmpeg`                                 |
+| Alpine              | `apk add ffmpeg`                                        |
+| openSUSE            | `sudo zypper install ffmpeg`                            |
+| macOS               | `brew install ffmpeg`                                   |
+| FreeBSD             | `sudo pkg install ffmpeg`                               |
+| Windows             | `winget install Gyan.FFmpeg`, then reopen your terminal  |
+
+Restart Rdio Scanner after installing so the startup probe picks it up. The
+container image already includes ffmpeg — nothing to do there.
+
 ```bash
 # Linux: drop in place, persist config, run.
 sudo install -d /opt/rdio-scanner
@@ -213,8 +238,14 @@ settings, Umami analytics) is set via the admin UI at `/admin`.
   handshakes before Angular bootstraps, cached CFG and stats with startup warm.
 - **Reliability** — audio decode generation counter (no stale-decode replay),
   config save wrapped in a single Postgres transaction (no 524 timeouts),
-  instant listener count, buffered WS sends, share-link UI advances without
-  user gesture.
+  instant listener count, share-link UI advances without user gesture.
+- **Hardening against stalls** — non-blocking WebSocket sends, so one
+  unresponsive listener can't wedge the broadcast path or ingest behind it;
+  timeouts on database writes and on ffmpeg, so neither can block the ingest
+  goroutine indefinitely; Postgres sequences realigned at startup, so a
+  restored dump doesn't turn every admin save into a duplicate-key rollback;
+  admin saves abort on the first real error instead of cascading through an
+  aborted transaction.
 - **Optional Umami analytics** with admin-configurable URL + website ID.
 
 Per-version detail in the

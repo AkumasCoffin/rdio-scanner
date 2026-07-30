@@ -12,9 +12,22 @@ A: Due to the ACME protocol used by Let's Encrypt, ports 80 and 443 must be open
 
 A: Force a refresh of the web application from the browser (usually with ctrl-shift-r) to resolve the issue. Alternatively, you can click on the icon just to the left of the URL address and select website settings, then clear all website data.
 
-**Q: How do I install FFMPEG on Windows**
+**Q: Do I need FFMPEG, and how do I install it**
 
-A: Please follow instructions at this address: [https://www.wikihow.com/Install-FFmpeg-on-Windows](https://www.wikihow.com/Install-FFmpeg-on-Windows)
+A: Only for the **Audio Conversion** option. Without ffmpeg on `PATH`, calls are stored exactly as uploaded and nothing else is affected. The server probes for it at startup and logs the install command for your platform if it can't find one; the admin UI also flags it on the Audio Conversion setting when conversion is enabled but no binary is available. Per-platform commands are listed in the [README](https://github.com/AkumasCoffin/rdio-scanner#optional-dependency-ffmpeg) — in short, `sudo apt install ffmpeg` on Debian/Ubuntu, `sudo pacman -S ffmpeg` on Arch, `brew install ffmpeg` on macOS, and `winget install Gyan.FFmpeg` on Windows. Restart Rdio Scanner afterwards so the startup probe sees it. The container image already includes ffmpeg.
+
+**Q: On Windows, `winget` isn't available or ffmpeg still isn't found**
+
+A: `winget` ships with Windows 10 (1809+) and Windows 11; on older builds, install ffmpeg manually by following the instructions at [https://www.wikihow.com/Install-FFmpeg-on-Windows](https://www.wikihow.com/Install-FFmpeg-on-Windows). Either way the folder containing `ffmpeg.exe` must be on `PATH`, and you need to reopen your terminal (or restart the service) before the change is visible to Rdio Scanner.
+
+**Q: PostgreSQL — saving from the admin page fails with an HTTP 500 and my changes are lost**
+
+A: The usual cause is a sequence that has fallen behind its table, so the next insert collides with a row that already exists (`duplicate key value violates unique constraint`). On PostgreSQL that error also aborts the surrounding transaction, so one collision rolls back the whole save. This happens most often after restoring a dump taken from SQLite or MySQL, where every row arrives with its key and the sequences stay at 1. Recent versions realign the sequences automatically at startup, so restarting the server is usually enough — it logs `realigned postgres sequences behind their table` when it fixes something. To check by hand, compare the two values below for any of the `rdioScanner*` tables; the sequence should be greater than or equal to the maximum key:
+
+```sql
+SELECT max("_id") FROM "rdioScannerTalkgroups";
+SELECT last_value FROM "rdioScannerTalkgroups__id_seq";
+```
 
 **Q: How do I configure a reverse-proxy in front of Rdio Scanner**
 

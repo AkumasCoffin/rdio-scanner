@@ -2,7 +2,97 @@
 
 ## Unreleased
 
-_(nothing yet — bullets land here as work is merged to master)_
+Reliability work driven by two field reports: a server that had to be restarted
+every 24 hours or it stopped processing calls, and admin saves that failed with
+an HTTP 500 and lost the changes.
+
+### Server
+
+- **Fixed: one unresponsive listener could wedge the whole server.** Calls
+  stopped being broadcast *and* stopped being ingested, while the admin page
+  kept showing the last known listener count — so the process looked healthy.
+  `Clients.EmitCall` did a blocking channel send while holding the clients read
+  lock, and a per-client writer goroutine that exits on a write error (a
+  half-open socket reaching its 10s write deadline is enough) left its 8192-deep
+  send buffer with no consumer. Once that buffer filled, the emit path blocked
+  forever holding the read lock, which stopped `Clients.Remove` from ever taking
+  the write lock to reap the dead client; the shared emit dispatcher wedged and
+  the single ingest goroutine blocked behind it. All sends to clients are now
+  non-blocking and drop for a client that can't keep up, the writer goroutine
+  marks itself closed and drains its buffer on exit, and dropped counts are
+  reported once on disconnect. This was the 24-hour restart.
+- **Fixed: a leaked database connection could stall every query in the
+  process.** `Systems.Read` returned early from inside an open cursor when
+  reading a system's talkgroups or units failed, and a leaked `*sql.Rows` holds
+  its pooled connection permanently. Twenty-five of those exhausted the pool,
+  and with no query timeouts anywhere every subsequent database call blocked
+  indefinitely instead of failing — a second, independent route to the same
+  "calls stop, server stays up" symptom. The remaining 30 query sites were
+  audited for the same pattern.
+- **Fixed: one bad section wiped an entire admin save.** The per-section writes
+  run in a single transaction, and a failure used to be recorded and stepped
+  over — leaving the rest to run against a transaction PostgreSQL had already
+  aborted, so every later section returned `current transaction is aborted` and
+  the real cause was buried among seven decoys. The first error now aborts the
+  transaction (which rolled back regardless, so no atomicity is lost) and the
+  reported error names the actual failure.
+- **Fixed: options were not reloaded after a failed save.** Every other section
+  was re-read from the database once the transaction closed; options was written
+  but never re-read. Since the in-memory struct is updated before the write, a
+  rolled-back save left the server running on settings that had never been
+  persisted — they appeared to take effect, then vanished on the next restart.
+- **PostgreSQL sequences are realigned at startup.** Keys are `serial`, but an
+  insert that carries an explicit key does not advance the sequence, and
+  restoring a dump taken from SQLite or MySQL does that for every row at once.
+  The next sequence-assigned insert then collides with an existing row, which on
+  PostgreSQL also aborts the surrounding transaction — one collision during a
+  configuration save took every section down with it. Each sequence is now
+  realigned with its table's maximum key at boot: one indexed `max()` per table,
+  idempotent, and it self-heals databases that are already skewed.
+- **Writes are bounded by a timeout.** Nothing used a context, so a database
+  that accepted a statement and never answered, or a pool with no free
+  connection, blocked the caller forever. Writes now run under a 5 minute
+  deadline, with `statement_timeout` set on the PostgreSQL connection and
+  `readTimeout` for MySQL/MariaDB.
+- **Fixed: a hung ffmpeg stopped ingest permanently.** Audio conversion ran with
+  no deadline, synchronously on the single ingest goroutine, so one malformed or
+  truncated upload could stop every subsequent call from being processed until
+  the process was restarted. Conversions are now capped at 1 minute and the
+  startup capability probe at 10 seconds. On timeout the call keeps its original
+  audio and is still ingested.
+- **Fixed: long log lines were silently discarded on PostgreSQL.**
+  `rdioScannerLogs.message` is `varchar(255)`, PostgreSQL rejects an over-long
+  value rather than truncating it, and the error was discarded — so the longest
+  messages, which are the diagnostic ones, were exactly the ones that never
+  reached the log table. The line explaining a failed configuration save is 763
+  characters. Messages are now clipped to the column width (counting characters,
+  not bytes) with the full text still going to the process log. SQLite ignores
+  the declared width and MySQL truncates silently, which is why this only ever
+  showed up on PostgreSQL.
+- **Log inserts no longer serialize every logging goroutine.** `LogEvent` held a
+  global mutex across its database insert, so a slow insert stalled unrelated
+  goroutines rather than just its own caller. The mutex now covers only the
+  ordered writes to the process logger.
+- **A missing ffmpeg is now reported properly.** It was announced by a single
+  lazily-emitted log line, fired once per process at whatever moment the first
+  convertible call arrived, so an admin who wasn't watching the log right then
+  never learned why audio was never converted. It is now reported at startup
+  next to the boot banner, and the message names the command to install ffmpeg
+  on that host — resolved from the platform, and on Linux from `/etc/os-release`
+  so a derivative distribution gets its family's package manager.
+
+### Webapp
+
+- **The Audio Conversion setting says when ffmpeg is missing**, with the install
+  command for the server's platform. Shown only when conversion is switched on —
+  "Disabled" with no ffmpeg is a consistent state — and never shown against a
+  server too old to report it.
+
+### Documentation
+
+- ffmpeg is documented as an optional dependency with per-platform install
+  commands, and the FAQ covers what needs it, the Windows `winget` case, and
+  diagnosing a PostgreSQL sequence that has fallen behind its table.
 
 ---
 
