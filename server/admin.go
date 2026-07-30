@@ -178,78 +178,87 @@ func (admin *Admin) ConfigHandler(w http.ResponseWriter, r *http.Request) {
 			admin.Controller.Dirwatches.Stop()
 
 			sectionErrs := map[string]string{}
-			track := func(section string, err error) {
+			track := func(section string, err error) error {
 				if err != nil {
 					logError(fmt.Errorf("%s: %v", section, err))
 					sectionErrs[section] = err.Error()
 				}
+				return err
 			}
 
 			// Run all the per-section writes inside one transaction so Postgres
 			// commits once at the end instead of fsync'ing every row. On large
 			// configs this takes the save from ~30s down to ~1s.
+			//
+			// The FIRST section error aborts the closure. This used to record
+			// the error and carry on to the next section, which on Postgres is
+			// actively harmful: a failed statement puts the transaction in an
+			// aborted state, so every later section came back with
+			//
+			//	pq: current transaction is aborted, commands ignored until
+			//	end of transaction block
+			//
+			// burying the one real cause under seven bogus ones. The whole
+			// transaction rolls back either way — no atomicity is lost by
+			// stopping early, and the reported error now names the actual
+			// failure.
 			txErr := admin.Controller.Database.WithTx(func(tx *Database) error {
 				if v, ok := m["access"].([]any); ok {
 					admin.Controller.Accesses.FromMap(v)
-					if err := admin.Controller.Accesses.Write(tx); err != nil {
-						track("access", err)
+					if err := track("access", admin.Controller.Accesses.Write(tx)); err != nil {
+						return err
 					}
 				}
 
 				if v, ok := m["apiKeys"].([]any); ok {
 					admin.Controller.Apikeys.FromMap(v)
-					if err := admin.Controller.Apikeys.Write(tx); err != nil {
-						track("apiKeys", err)
+					if err := track("apiKeys", admin.Controller.Apikeys.Write(tx)); err != nil {
+						return err
 					}
 				}
 
 				if v, ok := m["dirWatch"].([]any); ok {
 					admin.Controller.Dirwatches.FromMap(v)
-					if err := admin.Controller.Dirwatches.Write(tx); err != nil {
-						track("dirWatch", err)
+					if err := track("dirWatch", admin.Controller.Dirwatches.Write(tx)); err != nil {
+						return err
 					}
 				}
 
 				if v, ok := m["downstreams"].([]any); ok {
 					admin.Controller.Downstreams.FromMap(v)
-					if err := admin.Controller.Downstreams.Write(tx); err != nil {
-						track("downstreams", err)
+					if err := track("downstreams", admin.Controller.Downstreams.Write(tx)); err != nil {
+						return err
 					}
 				}
 
 				if v, ok := m["groups"].([]any); ok {
 					admin.Controller.Groups.FromMap(v)
-					if err := admin.Controller.Groups.Write(tx); err != nil {
-						track("groups", err)
+					if err := track("groups", admin.Controller.Groups.Write(tx)); err != nil {
+						return err
 					}
 				}
 
 				if v, ok := m["options"].(map[string]any); ok {
 					admin.Controller.Options.FromMap(v)
-					if err := admin.Controller.Options.Write(tx); err != nil {
-						track("options", err)
+					if err := track("options", admin.Controller.Options.Write(tx)); err != nil {
+						return err
 					}
 				}
 
 				if v, ok := m["systems"].([]any); ok {
 					admin.Controller.Systems.FromMap(v)
-					if err := admin.Controller.Systems.Write(tx); err != nil {
-						track("systems", err)
+					if err := track("systems", admin.Controller.Systems.Write(tx)); err != nil {
+						return err
 					}
 				}
 
 				if v, ok := m["tags"].([]any); ok {
 					admin.Controller.Tags.FromMap(v)
-					if err := admin.Controller.Tags.Write(tx); err != nil {
-						track("tags", err)
+					if err := track("tags", admin.Controller.Tags.Write(tx)); err != nil {
+						return err
 					}
 				}
 
-				// If any section errored, roll the whole tx back — partial
-				// commits are what made "configs save wrong" previously.
-				if len(sectionErrs) > 0 {
-					return fmt.Errorf("section errors: %v", sectionErrs)
-				}
 				return nil
 			})
 			if txErr != nil && len(sectionErrs) == 0 {
@@ -282,6 +291,16 @@ func (admin *Admin) ConfigHandler(w http.ResponseWriter, r *http.Request) {
 			if _, ok := m["groups"]; ok {
 				if err := admin.Controller.Groups.Read(db); err != nil {
 					track("groups", err)
+				}
+			}
+			// Options were written inside the tx like everything else, so they
+			// have to be re-read like everything else. Leaving this out meant a
+			// rolled-back save left the process running on settings that were
+			// never persisted (FromMap mutates in-memory state before the
+			// write) — they appeared to take effect, then vanished on restart.
+			if _, ok := m["options"]; ok {
+				if err := admin.Controller.Options.Read(db); err != nil {
+					track("options", err)
 				}
 			}
 			if _, ok := m["systems"]; ok {
