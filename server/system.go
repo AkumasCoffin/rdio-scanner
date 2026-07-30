@@ -379,6 +379,16 @@ func (systems *Systems) Read(db *Database) error {
 		return formatError(err)
 	}
 
+	// Drain the systems cursor completely before reading each system's
+	// talkgroups and units. Two reasons this is split into phases:
+	//
+	//  1. The nested reads used to run with this cursor still open, and their
+	//     error paths returned without closing it. A leaked *sql.Rows holds
+	//     its pooled connection forever, so 25 of those (SetMaxOpenConns)
+	//     exhausted the pool and every later query in the process blocked
+	//     indefinitely — no query timeouts anywhere to break the stall.
+	//  2. Even on the success path, querying while the outer cursor was open
+	//     needed two pool slots at once for the duration of the read.
 	for rows.Next() {
 		system := &System{
 			Talkgroups: NewTalkgroups(),
@@ -411,14 +421,6 @@ func (systems *Systems) Read(db *Database) error {
 			system.Order = uint(order.Float64)
 		}
 
-		if err = system.Talkgroups.Read(db, system.Id); err != nil {
-			return err
-		}
-
-		if err = system.Units.Read(db, system.Id); err != nil {
-			return err
-		}
-
 		systems.List = append(systems.List, system)
 	}
 
@@ -426,6 +428,18 @@ func (systems *Systems) Read(db *Database) error {
 
 	if err != nil {
 		return formatError(err)
+	}
+
+	// Cursor is closed and its connection returned to the pool — safe to run
+	// the per-system reads now, and safe for them to return early on error.
+	for _, system := range systems.List {
+		if err = system.Talkgroups.Read(db, system.Id); err != nil {
+			return err
+		}
+
+		if err = system.Units.Read(db, system.Id); err != nil {
+			return err
+		}
 	}
 
 	sort.Slice(systems.List, func(i int, j int) bool {
