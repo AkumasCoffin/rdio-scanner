@@ -547,7 +547,7 @@ func (controller *Controller) ProcessMessage(client *Client, message *Message) e
 		controller.ProcessMessageCommandVersion(client)
 
 	} else if controller.Accesses.IsRestricted() && client.Access.Systems == nil && message.Command != MessageCommandPin {
-		client.Send <- &Message{Command: MessageCommandPin}
+		client.enqueue(&Message{Command: MessageCommandPin})
 
 	} else if message.Command == MessageCommandCall {
 		if err := controller.ProcessMessageCommandCall(client, message); err != nil {
@@ -613,10 +613,10 @@ func (controller *Controller) ProcessMessageCommandTranscript(client *Client, me
 		}
 	}
 
-	client.Send <- &Message{
+	client.enqueue(&Message{
 		Command: MessageCommandTranscript,
 		Payload: map[string]any{"id": id, "transcript": transcript},
-	}
+	})
 	return nil
 }
 
@@ -666,7 +666,7 @@ func (controller *Controller) ProcessMessageCommandCall(client *Client, message 
 		return nil
 	}
 
-	client.Send <- &Message{Command: MessageCommandCall, Payload: call, Flag: message.Flag}
+	client.enqueue(&Message{Command: MessageCommandCall, Payload: call, Flag: message.Flag})
 
 	return nil
 }
@@ -677,7 +677,7 @@ func (controller *Controller) ProcessMessageCommandListCall(client *Client, mess
 		searchOptions := CallsSearchOptions{searchPatchedTalkgroups: controller.Options.SearchPatchedTalkgroups}
 		searchOptions.fromMap(v)
 		if searchResults, err := controller.Calls.Search(&searchOptions, client); err == nil {
-			client.Send <- &Message{Command: MessageCommandListCall, Payload: searchResults}
+			client.enqueue(&Message{Command: MessageCommandListCall, Payload: searchResults})
 		} else {
 			return fmt.Errorf("controller.processmessage.commandlistcall: %v", err)
 		}
@@ -687,7 +687,7 @@ func (controller *Controller) ProcessMessageCommandListCall(client *Client, mess
 
 func (controller *Controller) ProcessMessageCommandLivefeedMap(client *Client, message *Message) {
 	client.Livefeed.FromMap(message.Payload)
-	client.Send <- &Message{Command: MessageCommandLivefeedMap, Payload: !client.Livefeed.IsAllOff()}
+	client.enqueue(&Message{Command: MessageCommandLivefeedMap, Payload: !client.Livefeed.IsAllOff()})
 }
 
 func (controller *Controller) ProcessMessageCommandPin(client *Client, message *Message) error {
@@ -702,7 +702,7 @@ func (controller *Controller) ProcessMessageCommandPin(client *Client, message *
 
 		client.AuthCount++
 		if client.AuthCount > maxAuthCount {
-			client.Send <- &Message{Command: MessageCommandPin}
+			client.enqueue(&Message{Command: MessageCommandPin})
 			return nil
 		}
 
@@ -712,19 +712,19 @@ func (controller *Controller) ProcessMessageCommandPin(client *Client, message *
 				client.Access = access
 			} else {
 				controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("invalid access code %s for ip %s", code, client.GetRemoteAddr()))
-				client.Send <- &Message{Command: MessageCommandPin}
+				client.enqueue(&Message{Command: MessageCommandPin})
 				return nil
 			}
 
 			if client.AuthCount == maxAuthCount {
 				controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("locked access for ident %s locked", client.Access.Ident))
-				client.Send <- &Message{Command: MessageCommandPin}
+				client.enqueue(&Message{Command: MessageCommandPin})
 				return nil
 			}
 
 			if client.Access.HasExpired() {
 				controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("expired access for ident %s", client.Access.Ident))
-				client.Send <- &Message{Command: MessageCommandExpired}
+				client.enqueue(&Message{Command: MessageCommandExpired})
 				return nil
 			}
 
@@ -732,7 +732,7 @@ func (controller *Controller) ProcessMessageCommandPin(client *Client, message *
 			case uint:
 				if controller.Clients.AccessCount(client) > int(v) {
 					controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("too many concurrent connections for ident %s, limit is %d", client.Access.Ident, client.Access.Limit))
-					client.Send <- &Message{Command: MessageCommandMax}
+					client.enqueue(&Message{Command: MessageCommandMax})
 					return nil
 				}
 			}
@@ -757,7 +757,7 @@ func (controller *Controller) ProcessMessageCommandVersion(client *Client) {
 		p["email"] = controller.Options.Email
 	}
 
-	client.Send <- &Message{Command: MessageCommandVersion, Payload: p}
+	client.enqueue(&Message{Command: MessageCommandVersion, Payload: p})
 }
 
 func (controller *Controller) Start() error {

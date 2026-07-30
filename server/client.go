@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"path"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -43,6 +44,42 @@ type Client struct {
 	// calls, but is excluded from the listener count so a user running both
 	// the main page and /stream isn't counted twice.
 	Overlay bool
+	// closed is set by the writer goroutine as it exits, so enqueue stops
+	// handing messages to a channel nobody is draining any more.
+	closed atomic.Bool
+	// dropped counts messages shed by enqueue because the send buffer was
+	// full. Reported once on disconnect — never logged from the emit path,
+	// which runs under Clients.mutex.
+	dropped atomic.Uint64
+}
+
+// enqueue hands a message to this client's writer goroutine. It NEVER blocks:
+// if the send buffer is full (a stalled socket, or a writer goroutine that has
+// already exited) the message is dropped and false returned.
+//
+// Blocking here used to deadlock the whole server. The emit helpers below run
+// under Clients.mutex.RLock(), so a blocked send held that read lock forever,
+// which in turn blocked Clients.Remove() on the write lock — so the stalled
+// client could never be reaped, and Go's RWMutex then starves every subsequent
+// RLock() too. The shared clientEmitQueue dispatcher wedged, its 8192-deep
+// buffer filled, and the single ingest goroutine blocked behind it: no calls
+// stored, no calls broadcast, while the frozen client map kept reporting the
+// last known listener count. One unresponsive listener was enough.
+//
+// Dropping a message only degrades the one client that can't keep up. Its
+// socket is torn down by the read/write deadlines soon after regardless.
+func (client *Client) enqueue(message *Message) bool {
+	if client.closed.Load() {
+		return false
+	}
+
+	select {
+	case client.Send <- message:
+		return true
+	default:
+		client.dropped.Add(1)
+		return false
+	}
 }
 
 func (client *Client) Init(controller *Controller, request *http.Request, conn *websocket.Conn) error {
@@ -75,11 +112,19 @@ func (client *Client) Init(controller *Controller, request *http.Request, conn *
 		defer func() {
 			controller.Unregister <- client
 
+			// Surface shed messages here rather than from enqueue: this runs
+			// once per disconnect, off the emit path and outside
+			// Clients.mutex, so it can afford LogEvent's database write.
+			dropped := ""
+			if n := client.dropped.Load(); n > 0 {
+				dropped = fmt.Sprintf(" (%d message(s) dropped, send buffer full)", n)
+			}
+
 			if len(client.Access.Ident) > 0 {
-				controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("listener disconnected from ip %s with ident %s", client.GetRemoteAddr(), client.Access.Ident))
+				controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("listener disconnected from ip %s with ident %s%s", client.GetRemoteAddr(), client.Access.Ident, dropped))
 
 			} else {
-				controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("listener disconnected from ip %s", client.GetRemoteAddr()))
+				controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("listener disconnected from ip %s%s", client.GetRemoteAddr(), dropped))
 			}
 
 			client.Conn.Close()
@@ -125,7 +170,25 @@ func (client *Client) Init(controller *Controller, request *http.Request, conn *
 				timer.Stop()
 			}
 
+			// Mark the client dead before draining so enqueue stops adding to
+			// a channel that no longer has a consumer. Closing client.Send is
+			// deliberately NOT done — concurrent senders would panic on a
+			// closed channel; enqueue's non-blocking default case is what
+			// keeps them safe instead.
+			client.closed.Store(true)
+
 			client.Conn.Close()
+
+			// Shed anything already buffered (including sends that raced the
+			// flag above) so the queued *Message values, each holding a call
+			// payload, don't sit around until the Client itself is collected.
+			for {
+				select {
+				case <-client.Send:
+				default:
+					return
+				}
+			}
 		}()
 
 		for {
@@ -225,7 +288,7 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 		payload["umamiWebsiteId"] = options.UmamiWebsiteId
 	}
 
-	client.Send <- &Message{Command: MessageCommandConfig, Payload: payload}
+	client.enqueue(&Message{Command: MessageCommandConfig, Payload: payload})
 
 	// Send the listener count immediately so the LCD doesn't show an empty
 	// "L:" counter for the 3-15 s debounce window used by the controller's
@@ -241,10 +304,10 @@ func isString(v any) bool {
 }
 
 func (client *Client) SendListenersCount(count int) {
-	client.Send <- &Message{
+	client.enqueue(&Message{
 		Command: MessagecommandListenersCount,
 		Payload: count,
-	}
+	})
 }
 
 type Clients struct {
@@ -311,7 +374,7 @@ func (clients *Clients) EmitCall(call *Call, restricted bool) {
 
 	for c := range clients.Map {
 		if (!restricted || c.Access.HasAccess(call)) && c.Livefeed.IsEnabled(call) {
-			c.Send <- &Message{Command: MessageCommandCall, Payload: call}
+			c.enqueue(&Message{Command: MessageCommandCall, Payload: call})
 		}
 	}
 }
@@ -329,7 +392,7 @@ func (clients *Clients) EmitConfig(groups *Groups, options *Options, systems *Sy
 
 	for c := range clients.Map {
 		if restricted {
-			c.Send <- &Message{Command: MessageCommandPin}
+			c.enqueue(&Message{Command: MessageCommandPin})
 		} else {
 			c.SendConfig(groups, options, systems, tags)
 		}
@@ -360,12 +423,7 @@ func (clients *Clients) EmitTranscript(id uint, system uint, talkgroup uint, tra
 		if restricted && c.Access != nil && !c.Access.HasAccess(probe) {
 			continue
 		}
-		select {
-		case c.Send <- &Message{Command: MessageCommandTranscript, Payload: payload}:
-		default:
-			// Drop if the client's send buffer is full rather than
-			// blocking the ingest path.
-		}
+		c.enqueue(&Message{Command: MessageCommandTranscript, Payload: payload})
 	}
 }
 
