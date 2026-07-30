@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,13 @@ import (
 	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
 )
+
+// statementTimeout bounds a single write so a wedged database can't stall a
+// caller forever. Deliberately generous: the goal is to turn "blocks until the
+// process is restarted" into "eventually returns an error", not to police slow
+// queries. Legitimate heavy writes (call pruning on a large table, a big
+// configuration save) finish well inside this.
+const statementTimeout = 5 * time.Minute
 
 type Database struct {
 	Config         *Config
@@ -42,6 +50,7 @@ type Database struct {
 // transparently run inside or outside a transaction.
 type dbExecutor interface {
 	Exec(query string, args ...any) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
 }
@@ -64,7 +73,15 @@ func NewDatabase(config *Config) *Database {
 	case DbTypeMariadb, DbTypeMysql:
 		database.DateTimeFormat = "2006-01-02 15:04:05"
 
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", config.DbUsername, config.DbPassword, config.DbHost, config.DbPort, config.DbName)
+		// readTimeout is a driver-level I/O deadline, so a server that accepts
+		// a statement and then never answers can't pin the caller forever.
+		// Deliberately NOT using max_execution_time: go-sql-driver turns
+		// unrecognised DSN parameters into a SET of a session variable, and
+		// MariaDB has no such variable (it uses max_statement_time), so that
+		// would fail every connection with "Error 1193: Unknown system
+		// variable". readTimeout is handled by the driver and works on both.
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?readTimeout=%s",
+			config.DbUsername, config.DbPassword, config.DbHost, config.DbPort, config.DbName, statementTimeout)
 
 		if database.Sql, err = sql.Open("mysql", dsn); err != nil {
 			log.Fatal(err)
@@ -73,8 +90,13 @@ func NewDatabase(config *Config) *Database {
 	case DbTypePostgres:
 		database.DateTimeFormat = "2006-01-02 15:04:05"
 
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-			config.DbHost, config.DbPort, config.DbUsername, config.DbPassword, config.DbName)
+		// statement_timeout is a Postgres run-time parameter; lib/pq forwards
+		// any such parameter from the connection string to the backend at
+		// startup. The server then cancels a statement that overruns it,
+		// instead of the client waiting on it indefinitely.
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable statement_timeout=%d",
+			config.DbHost, config.DbPort, config.DbUsername, config.DbPassword, config.DbName,
+			statementTimeout.Milliseconds())
 
 		if database.Sql, err = sql.Open("postgres", dsn); err != nil {
 			log.Fatal(err)
@@ -96,7 +118,98 @@ func NewDatabase(config *Config) *Database {
 		log.Fatal(err)
 	}
 
+	if err = database.repairSequences(); err != nil {
+		// Non-fatal: a desynced sequence only breaks inserts into the affected
+		// table, and refusing to boot over it would be worse than running.
+		log.Printf("warning: %v\n", err)
+	}
+
 	return database
+}
+
+// postgresSerialColumns lists the (table, column) pairs backed by a Postgres
+// sequence, for repairSequences.
+var postgresSerialColumns = [][2]string{
+	{"rdioScannerAccesses", "_id"},
+	{"rdioScannerApiKeys", "_id"},
+	{"rdioScannerCalls", "id"},
+	{"rdioScannerConfigs", "_id"},
+	{"rdioScannerDirWatches", "_id"},
+	{"rdioScannerDownstreams", "_id"},
+	{"rdioScannerGroups", "_id"},
+	{"rdioScannerLogs", "_id"},
+	{"rdioScannerSystems", "_id"},
+	{"rdioScannerTags", "_id"},
+	{"rdioScannerTalkgroups", "_id"},
+	{"rdioScannerUnits", "_id"},
+}
+
+// repairSequences realigns each Postgres sequence with the largest key already
+// present in its table. No-op on SQLite and MySQL, whose autoincrement
+// counters are derived from the table rather than kept beside it.
+//
+// Why this is needed: several writers insert an explicit key when the payload
+// carries one (Systems.Write, Groups.Write, Tags.Write), and an explicit insert
+// does not advance the sequence. Restoring a dump taken from another backend
+// has the same effect, on a larger scale — every row arrives with its key and
+// the sequence stays at 1. Either way the next sequence-assigned insert
+// collides with an existing row:
+//
+//	pq: duplicate key value violates unique constraint "rdioScannerGroups_pkey"
+//
+// On Postgres that error also aborts the surrounding transaction, so a single
+// collision during a configuration save takes every section down with it (see
+// Admin.ConfigHandler). Realigning at startup is cheap — one indexed max() per
+// table — idempotent, and self-heals databases that are already skewed.
+func (db *Database) repairSequences() error {
+	if db.Config.DbType != DbTypePostgres {
+		return nil
+	}
+
+	repaired := []string{}
+
+	for _, tc := range postgresSerialColumns {
+		table, column := tc[0], tc[1]
+
+		var (
+			maxId sql.NullInt64
+			last  sql.NullInt64
+		)
+
+		// A table absent from this schema version (or a column that never got
+		// a sequence) is not an error — skip it and carry on.
+		q := fmt.Sprintf(`select max("%s"), pg_sequence_last_value(pg_get_serial_sequence('"%s"', '%s'))`, column, table, column)
+		if err := db.Sql.QueryRow(q).Scan(&maxId, &last); err != nil {
+			continue
+		}
+
+		// Empty table: leave the sequence untouched so the first insert still
+		// gets key 1.
+		if !maxId.Valid || maxId.Int64 < 1 {
+			continue
+		}
+
+		if last.Valid && last.Int64 >= maxId.Int64 {
+			continue
+		}
+
+		s := fmt.Sprintf(`select setval(pg_get_serial_sequence('"%s"', '%s'), (select max("%s") from "%s"))`, table, column, column, table)
+		if _, err := db.Sql.Exec(s); err != nil {
+			return fmt.Errorf("repairsequences: %s.%s: %v", table, column, err)
+		}
+
+		from := "unused"
+		if last.Valid {
+			from = fmt.Sprintf("%d", last.Int64)
+		}
+		repaired = append(repaired, fmt.Sprintf("%s.%s (%s -> %d)", table, column, from, maxId.Int64))
+	}
+
+	if len(repaired) > 0 {
+		log.Printf("realigned postgres sequences behind their table: %s\n", strings.Join(repaired, ", "))
+	}
+
+	return nil
 }
 
 func (db *Database) ParseDateTime(f any) (time.Time, error) {
@@ -161,10 +274,25 @@ func (db *Database) runner() dbExecutor {
 	return db.Sql
 }
 
+// Exec bounds every write with statementTimeout. The deadline covers waiting
+// for a pooled connection as well as the statement itself, so an exhausted
+// pool (SetMaxOpenConns) surfaces as an error instead of blocking the caller
+// indefinitely — which is how a single leaked *sql.Rows used to take the whole
+// process down.
 func (db *Database) Exec(query string, args ...any) (sql.Result, error) {
-	return db.runner().Exec(db.formatQuery(query), args...)
+	ctx, cancel := context.WithTimeout(context.Background(), statementTimeout)
+	defer cancel()
+
+	return db.runner().ExecContext(ctx, db.formatQuery(query), args...)
 }
 
+// Query and QueryRow intentionally do NOT take a Go-side deadline. The context
+// would have to outlive the call — cancelling it on return (the only thing a
+// wrapper this shape can do) invalidates the *sql.Rows / *sql.Row before the
+// caller has scanned it. Bounding these properly means returning a wrapper
+// that cancels on Close, which would touch all 34 query sites; until then the
+// server-side timeouts configured on the DSN in NewDatabase are what stop a
+// runaway read.
 func (db *Database) Query(query string, args ...any) (*sql.Rows, error) {
 	return db.runner().Query(db.formatQuery(query), args...)
 }
