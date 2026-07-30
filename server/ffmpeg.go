@@ -20,9 +20,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -77,6 +79,121 @@ func NewFFMpeg() *FFMpeg {
 	return ffmpeg
 }
 
+// Available reports whether an ffmpeg binary was found at startup. Surfaced in
+// the admin config payload so the Audio Conversion setting can say when it has
+// nothing to run.
+func (ffmpeg *FFMpeg) Available() bool {
+	return ffmpeg.available
+}
+
+// UnavailableMessage explains that ffmpeg is missing and gives the command to
+// install it on this host. Kept short enough to survive the log table's column
+// width (see logMessageMaxLen).
+func (ffmpeg *FFMpeg) UnavailableMessage() string {
+	return ffmpegUnavailableMessage(ffmpegInstallCommand())
+}
+
+// ffmpegUnavailableMessage is split out from UnavailableMessage so the wording
+// can be length-checked against every platform's install command, not just the
+// one this binary happens to be built for.
+func ffmpegUnavailableMessage(installCommand string) string {
+	return fmt.Sprintf("ffmpeg not found — audio conversion is disabled and calls are stored as uploaded. Install it with: %s", installCommand)
+}
+
+// ffmpegInstallCommand is the best guess at how to install ffmpeg here. On
+// Linux the package manager is inferred from /etc/os-release; anything
+// unrecognised falls back to naming the package rather than guessing a command
+// that won't exist.
+func ffmpegInstallCommand() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "brew install ffmpeg"
+
+	case "freebsd":
+		return "sudo pkg install ffmpeg"
+
+	case "windows":
+		return `winget install Gyan.FFmpeg  (then reopen your terminal so PATH is picked up)`
+
+	case "linux":
+		return linuxFFmpegInstallCommand(readOsReleaseIds())
+	}
+
+	return "your platform's ffmpeg package"
+}
+
+// linuxFFmpegInstallCommand maps os-release ID / ID_LIKE values to a package
+// manager. ids is checked in order, so the distro's own ID wins over the
+// family it declares compatibility with.
+func linuxFFmpegInstallCommand(ids []string) string {
+	for _, id := range ids {
+		switch id {
+		case "debian", "ubuntu", "raspbian", "linuxmint", "pop":
+			return "sudo apt install ffmpeg"
+
+		case "fedora":
+			// Fedora's own repo carries ffmpeg-free; the full build needs
+			// RPM Fusion, which most scanner setups will want.
+			return "sudo dnf install ffmpeg-free  (or enable RPM Fusion for the full build)"
+
+		case "rhel", "centos", "rocky", "almalinux":
+			return "sudo dnf install ffmpeg  (needs EPEL + RPM Fusion)"
+
+		case "arch", "manjaro", "endeavouros":
+			return "sudo pacman -S ffmpeg"
+
+		case "alpine":
+			return "apk add ffmpeg"
+
+		case "opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse", "sles":
+			return "sudo zypper install ffmpeg"
+
+		case "void":
+			return "sudo xbps-install -S ffmpeg"
+
+		case "gentoo":
+			return "sudo emerge media-video/ffmpeg"
+		}
+	}
+
+	return "your distribution's ffmpeg package"
+}
+
+// readOsReleaseIds returns the ID followed by each ID_LIKE value from
+// /etc/os-release, lowercased. Empty when the file is absent or unreadable.
+func readOsReleaseIds() []string {
+	b, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return nil
+	}
+
+	var id string
+	var like []string
+
+	for _, line := range strings.Split(string(b), "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		if !found {
+			continue
+		}
+
+		value = strings.ToLower(strings.Trim(strings.TrimSpace(value), `"'`))
+
+		switch key {
+		case "ID":
+			id = value
+		case "ID_LIKE":
+			like = strings.Fields(value)
+		}
+	}
+
+	ids := []string{}
+	if id != "" {
+		ids = append(ids, id)
+	}
+
+	return append(ids, like...)
+}
+
 func (ffmpeg *FFMpeg) Convert(call *Call, systems *Systems, tags *Tags, mode uint) error {
 	var (
 		args = []string{"-i", "-"}
@@ -91,7 +208,7 @@ func (ffmpeg *FFMpeg) Convert(call *Call, systems *Systems, tags *Tags, mode uin
 		if !ffmpeg.warned {
 			ffmpeg.warned = true
 
-			return errors.New("ffmpeg is not available, no audio conversion will be performed")
+			return errors.New(ffmpeg.UnavailableMessage())
 		}
 		return nil
 	}

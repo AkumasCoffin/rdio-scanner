@@ -775,6 +775,14 @@ func (controller *Controller) Start() error {
 		log.Printf("base folder is %s\n", controller.Config.BaseDir)
 	}
 
+	// Report a missing ffmpeg here, next to the boot banner, rather than only
+	// on the first call that wanted converting. That lazy warning fires once
+	// per process at an arbitrary moment, so an admin who wasn't watching the
+	// log right then never learned why their audio was never converted.
+	if !controller.FFMpeg.Available() {
+		controller.Logs.LogEvent(LogLevelWarn, controller.FFMpeg.UnavailableMessage())
+	}
+
 	if err = controller.Accesses.Read(controller.Database); err != nil {
 		return err
 	}

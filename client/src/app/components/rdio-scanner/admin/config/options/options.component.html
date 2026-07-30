@@ -25,6 +25,14 @@
         <p>
             <span class="mat-body">Audio Conversion</span><br>
             <span class="mat-caption">Convert incoming audio files to H.264 m4a with ffmpeg.</span>
+            <span class="mat-caption setting-warning" *ngIf="ffmpegMissingAndNeeded">
+                <mat-icon color="warn">warning</mat-icon>
+                <span>
+                    ffmpeg was not found on this server, so no conversion is performed and calls are stored as
+                    uploaded.<ng-container *ngIf="ffmpegInstallHint">
+                        Install it with <code>{{ ffmpegInstallHint }}</code>, then restart Rdio Scanner.</ng-container>
+                </span>
+            </span>
         </p>
         <mat-form-field floatLabel="never">
             <mat-select formControlName="audioConversion" placeholder="Audio Conversion">

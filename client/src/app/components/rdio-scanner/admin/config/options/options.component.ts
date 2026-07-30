@@ -22,10 +22,25 @@ import { FormGroup } from '@angular/forms';
 
 @Component({
     selector: 'rdio-scanner-admin-options',
+    styleUrls: ['./options.component.scss'],
     templateUrl: './options.component.html',
 })
 export class RdioScannerAdminOptionsComponent {
     @Input() form: FormGroup | undefined;
+
+    // Reported by the server. Audio conversion is a no-op without an ffmpeg
+    // binary on PATH, and nothing in the UI used to say so — the only signal
+    // was a single line in the log.
+    @Input() ffmpegAvailable = true;
+
+    // Platform-appropriate install command, resolved server-side.
+    @Input() ffmpegInstallHint = '';
+
+    // Only worth warning about when conversion is actually switched on;
+    // "Disabled" plus no ffmpeg is a consistent state, not a problem.
+    get ffmpegMissingAndNeeded(): boolean {
+        return !this.ffmpegAvailable && this.form?.get('audioConversion')?.value !== 0;
+    }
 
     // Reading the provider via a getter (instead of inlining
     // form?.get('transcriptionProvider')?.value in every binding) ensures the

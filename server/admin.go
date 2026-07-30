@@ -365,10 +365,16 @@ func (admin *Admin) GetConfig() map[string]any {
 		"apiKeys":     admin.Controller.Apikeys.List,
 		"dirWatch":    admin.Controller.Dirwatches.List,
 		"downstreams": admin.Controller.Downstreams.List,
-		"groups":      admin.Controller.Groups.List,
-		"options":     admin.Controller.Options,
-		"systems":     systems,
-		"tags":        admin.Controller.Tags.List,
+		// Read-only: lets the Audio Conversion setting say when there is no
+		// ffmpeg for it to run, and name the command that installs it. The PUT
+		// path only reads the section keys, so the webapp echoing these back
+		// is harmless.
+		"ffmpegAvailable":   admin.Controller.FFMpeg.Available(),
+		"ffmpegInstallHint": ffmpegInstallCommand(),
+		"groups":          admin.Controller.Groups.List,
+		"options":         admin.Controller.Options,
+		"systems":         systems,
+		"tags":            admin.Controller.Tags.List,
 	}
 }
 

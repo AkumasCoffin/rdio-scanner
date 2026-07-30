@@ -86,6 +86,11 @@ export interface Config {
     apiKeys?: ApiKey[];
     dirWatch?: DirWatch[];
     downstreams?: Downstream[];
+    // Read-only, reported by the server: whether an ffmpeg binary was found,
+    // and the command that installs it on that host. Audio conversion silently
+    // does nothing without one.
+    ffmpegAvailable?: boolean;
+    ffmpegInstallHint?: string;
     groups?: Group[];
     options?: Options;
     systems?: System[];

@@ -66,6 +66,19 @@ export class RdioScannerAdminConfigComponent implements OnDestroy, OnInit {
         return this.form?.get('tags') as FormArray;
     }
 
+    // Read off config rather than mirrored into a field, so it tracks every
+    // reassignment of this.config (login, config event, manual refresh)
+    // without three separate assignments to keep in sync. Absent means an
+    // older server that doesn't report it — assume ffmpeg is fine rather than
+    // showing a warning we can't substantiate.
+    get ffmpegAvailable(): boolean {
+        return this.config?.ffmpegAvailable !== false;
+    }
+
+    get ffmpegInstallHint(): string {
+        return this.config?.ffmpegInstallHint ?? '';
+    }
+
     private config: Config | undefined;
 
     private eventSubscription = this.adminService.event.subscribe(async (event: AdminEvent) => {
