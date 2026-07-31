@@ -64,6 +64,7 @@ type DefaultOptions struct {
 	searchPatchedTalkgroups     bool
 	showListenersCount          bool
 	sortByGroups               bool
+	sortByTags                 bool
 	sortTalkgroups              bool
 	tagsToggle                  bool
 	time12hFormat               bool
@@ -122,6 +123,7 @@ var defaults Defaults = Defaults{
 		searchPatchedTalkgroups:     false,
 		showListenersCount:          false,
 		sortByGroups:               false,
+		sortByTags:                 false,
 		sortTalkgroups:              false,
 		tagsToggle:                  false,
 		time12hFormat:               false,

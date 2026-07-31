@@ -61,6 +61,14 @@ export class RdioScannerSelectComponent implements OnDestroy, OnInit {
         };
     } = {};
 
+    tagSections: GroupSection[] = [];
+
+    tagMap: {
+        [tag: string]: {
+            [system: number]: number[];
+        };
+    } = {};
+
     categories: RdioScannerCategory[] | undefined;
 
     map: RdioScannerLivefeedMap = {};
@@ -70,6 +78,8 @@ export class RdioScannerSelectComponent implements OnDestroy, OnInit {
     systems: RdioScannerSystem[] | undefined;
 
     sortByGroups = false;
+
+    sortByTags = false;
 
     tagsToggle: boolean | undefined;
 
@@ -115,9 +125,12 @@ export class RdioScannerSelectComponent implements OnDestroy, OnInit {
         if (cfg) {
             this.tagsToggle = cfg.tagsToggle;
             this.groupMap = cfg.groups;
+            this.tagMap = cfg.tags;
             this.sortByGroups = cfg.sortByGroups;
+            this.sortByTags = cfg.sortByTags;
             this.systems = cfg.systems;
             this.rebuildGroupSections();
+            this.rebuildTagSections();
         }
         const cats = this.rdioScannerService.getCategories();
         if (cats && !this.categories) {
@@ -153,6 +166,16 @@ export class RdioScannerSelectComponent implements OnDestroy, OnInit {
                     : RdioScannerCategoryStatus.On,
             });
         }
+    }
+
+    setTagStatus(section: GroupSection, active: boolean): void {
+        this.toggle({
+            label: section.label,
+            type: RdioScannerCategoryType.Tag,
+            status: active
+                ? RdioScannerCategoryStatus.Off
+                : RdioScannerCategoryStatus.On,
+        });
     }
 
     createPreset(): void {
@@ -286,6 +309,47 @@ export class RdioScannerSelectComponent implements OnDestroy, OnInit {
         this.groupSections = sections;
     }
 
+    private rebuildTagSections(): void {
+        const sections: GroupSection[] = [];
+        const systems = this.systems || [];
+
+        Object.keys(this.tagMap)
+            .sort((a, b) => a.localeCompare(b))
+            .forEach((label) => {
+                const talkgroups: GroupedTalkgroup[] = [];
+                const systemMap = this.tagMap[label];
+
+                Object.keys(systemMap).forEach((systemId) => {
+                    const id = Number(systemId);
+                    const system = systems.find((item) => item.id === id);
+
+                    if (!system) return;
+
+                    systemMap[id].forEach((talkgroupId) => {
+                        const talkgroup = system.talkgroups.find(
+                            (item) => item.id === talkgroupId
+                        );
+
+                        if (talkgroup) {
+                            talkgroups.push({
+                                system,
+                                talkgroup,
+                            });
+                        }
+                    });
+                });
+
+                if (talkgroups.length) {
+                    sections.push({
+                        label,
+                        talkgroups,
+                    });
+                }
+            });
+
+        this.tagSections = sections;
+    }
+
     private loadPresets(): void {
         this.presets = this.rdioScannerService.getPresets();
     }
@@ -294,9 +358,12 @@ export class RdioScannerSelectComponent implements OnDestroy, OnInit {
         if (event.config) {
             this.tagsToggle = event.config.tagsToggle;
             this.groupMap = event.config.groups;
+            this.tagMap = event.config.tags;
             this.sortByGroups = event.config.sortByGroups;
+            this.sortByTags = event.config.sortByTags;
             this.systems = event.config.systems;
             this.rebuildGroupSections();
+            this.rebuildTagSections();
         }
         if (event.categories) this.categories = event.categories;
         if (event.map) {

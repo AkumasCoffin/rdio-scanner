@@ -104,6 +104,7 @@ export interface RdioScannerConfig {
     playbackGoesLive: boolean;
     showListenersCount: boolean;
     sortByGroups: boolean;
+    sortByTags: boolean;
     systems: RdioScannerSystem[];
     tags: { [key: string]: { [key: number]: number[] } };
     tagsToggle: boolean;

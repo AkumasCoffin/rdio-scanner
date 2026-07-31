@@ -171,6 +171,7 @@ export interface Options {
     searchPatchedTalkgroups?: boolean;
     showListenersCount?: boolean;
     sortByGroups?: boolean;
+    sortByTags?: boolean;
     sortTalkgroups?: boolean;
     tagsToggle?: boolean;
     time12hFormat?: boolean;
@@ -682,6 +683,7 @@ export class RdioScannerAdminService implements OnDestroy {
 			searchPatchedTalkgroups: [options?.searchPatchedTalkgroups],
 			showListenersCount: [options?.showListenersCount],
             sortByGroups: [options?.sortByGroups ?? false],
+            sortByTags: [options?.sortByTags ?? false],
             sortTalkgroups: [options?.sortTalkgroups],
             tagsToggle: [options?.tagsToggle],
             time12hFormat: [options?.time12hFormat],
