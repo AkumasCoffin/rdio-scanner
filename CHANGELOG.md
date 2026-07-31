@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+_(nothing yet — bullets land here as work is merged to master)_
+
+---
+
+## Released
+
+## Version 6.13.3
+
 Reliability work driven by two field reports: a server that had to be restarted
 every 24 hours or it stopped processing calls, and admin saves that failed with
 an HTTP 500 and lost the changes.
@@ -107,10 +115,6 @@ an HTTP 500 and lost the changes.
 - ffmpeg is documented as an optional dependency with per-platform install
   commands, and the FAQ covers what needs it, the Windows `winget` case, and
   diagnosing a PostgreSQL sequence that has fallen behind its table.
-
----
-
-## Released
 
 ## Version 6.13.2
 
