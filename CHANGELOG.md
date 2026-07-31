@@ -8,6 +8,38 @@ _(nothing yet — bullets land here as work is merged to master)_
 
 ## Released
 
+## Version 6.13.4
+
+Talkgroup selector layouts and a conditional transcript panel, contributed by
+[@s3m1s0n1c](https://github.com/s3m1s0n1c) in
+[#4](https://github.com/AkumasCoffin/rdio-scanner/pull/4).
+
+### Webapp
+
+- **Sort By Groups.** Lays the talkgroup selector out in sections keyed by the
+  configured Groups map instead of a flat list, with a control to toggle a whole
+  section on or off at once.
+- **Sort By Tags.** The same, keyed by Tags. Mutually exclusive with Sort By
+  Groups — switching one on turns the other off, and turning either off returns
+  the selector to the ungrouped list.
+- **The live transcript panel is hidden when transcription is disabled**, rather
+  than sitting empty on the main screen. The client also stops polling for
+  transcripts that are never coming.
+
+### Server
+
+- Both selector options are persisted as ordinary per-option rows
+  (`option.sortByGroups`, `option.sortByTags`) and published in the client
+  config, so no schema change or migration is involved — an existing database
+  with no row falls back to the default.
+
+### Build
+
+- Raised the Angular initial-bundle budget (warning 1700kb, error 1800kb). The
+  new selector layouts pushed the bundle 52 bytes past the previous hard limit
+  of 1600kb, which failed the production build outright; the warning and error
+  thresholds are now separated so there is runway to warn before breaking.
+
 ## Version 6.13.3
 
 Reliability work driven by two field reports: a server that had to be restarted
