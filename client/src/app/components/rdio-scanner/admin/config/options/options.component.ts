@@ -27,6 +27,13 @@ import { FormGroup } from '@angular/forms';
 export class RdioScannerAdminOptionsComponent {
     @Input() form: FormGroup | undefined;
 
+    selectSortMode(mode: 'groups' | 'tags', checked: boolean): void {
+        if (!checked) return;
+
+        const otherControl = mode === 'groups' ? 'sortByTags' : 'sortByGroups';
+        this.form?.get(otherControl)?.setValue(false);
+    }
+
     // Reading the provider via a getter (instead of inlining
     // form?.get('transcriptionProvider')?.value in every binding) ensures the
     // template re-evaluates predictably on each change-detection cycle when
