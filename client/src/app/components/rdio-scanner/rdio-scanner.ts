@@ -109,6 +109,7 @@ export interface RdioScannerConfig {
     tags: { [key: string]: { [key: number]: number[] } };
     tagsToggle: boolean;
     time12hFormat: boolean;
+    transcriptionEnabled: boolean;
     umamiUrl?: string;
     umamiWebsiteId?: string;
     waitForTranscript?: boolean;
