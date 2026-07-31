@@ -71,7 +71,7 @@
             <span class="flag" [ngClass]="{ flaged: patched }">PATCH</span>
         </div>
     </div>
-    <div class="live-transcript" [class.empty]="!displayCall?.transcript"
+    <div *ngIf="transcriptionEnabled" class="live-transcript" [class.empty]="!displayCall?.transcript"
         [ngClass]="liveTranscriptColor">
         <div class="live-transcript-label">
             <mat-icon class="live-icon">graphic_eq</mat-icon>
