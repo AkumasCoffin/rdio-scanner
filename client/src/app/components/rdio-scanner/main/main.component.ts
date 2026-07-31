@@ -140,6 +140,10 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         return this.config?.showListenersCount || false;
     }
 
+    get transcriptionEnabled(): boolean {
+        return this.config?.transcriptionEnabled || false;
+    }
+
     // True when auto-jump is enabled by the user but temporarily suspended
     // because a system/talkgroup hold is active. Drives the yellow button state.
     get autoJumpSuspended(): boolean {
@@ -386,6 +390,8 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     }
 
     private pollMissingTranscripts(): void {
+        if (!this.transcriptionEnabled) return;
+
         const targets: RdioScannerCall[] = [];
         if (this.call && !this.call.transcript) targets.push(this.call);
         if (this.callPrevious && !this.callPrevious.transcript && this.callPrevious.id !== this.call?.id) {

@@ -41,6 +41,8 @@ type Options struct {
 	LogPruneCount               uint   `json:"logPruneCount"`
 	SearchPatchedTalkgroups     bool   `json:"searchPatchedTalkgroups"`
 	ShowListenersCount          bool   `json:"showListenersCount"`
+	SortByGroups               bool   `json:"sortByGroups"`
+	SortByTags                 bool   `json:"sortByTags"`
 	SortTalkgroups              bool   `json:"sortTalkgroups"`
 	TagsToggle                  bool   `json:"tagsToggle"`
 	Time12hFormat               bool   `json:"time12hFormat"`
@@ -161,6 +163,11 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	setUint("logPruneCount", &options.LogPruneCount)
 	setBool("searchPatchedTalkgroups", &options.SearchPatchedTalkgroups)
 	setBool("showListenersCount", &options.ShowListenersCount)
+	setBool("sortByGroups", &options.SortByGroups)
+	setBool("sortByTags", &options.SortByTags)
+	if options.SortByGroups && options.SortByTags {
+		options.SortByGroups = false
+	}
 	setBool("sortTalkgroups", &options.SortTalkgroups)
 	setBool("tagsToggle", &options.TagsToggle)
 	setBool("time12hFormat", &options.Time12hFormat)
@@ -216,6 +223,8 @@ func (options *Options) optionKeyValuePairs() []struct {
 		{"logPruneCount", options.LogPruneCount},
 		{"searchPatchedTalkgroups", options.SearchPatchedTalkgroups},
 		{"showListenersCount", options.ShowListenersCount},
+		{"sortByGroups", options.SortByGroups},
+		{"sortByTags", options.SortByTags},
 		{"sortTalkgroups", options.SortTalkgroups},
 		{"tagsToggle", options.TagsToggle},
 		{"time12hFormat", options.Time12hFormat},
@@ -270,6 +279,8 @@ func (options *Options) Read(db *Database) error {
 	options.LogPruneCount = defaults.options.logPruneCount
 	options.SearchPatchedTalkgroups = defaults.options.searchPatchedTalkgroups
 	options.ShowListenersCount = defaults.options.showListenersCount
+	options.SortByGroups = defaults.options.sortByGroups
+	options.SortByTags = defaults.options.sortByTags
 	options.SortTalkgroups = defaults.options.sortTalkgroups
 	options.TagsToggle = defaults.options.tagsToggle
 	options.TranscriptionEnabled = defaults.options.transcriptionEnabled
@@ -352,6 +363,11 @@ func (options *Options) Read(db *Database) error {
 		applyUint("logPruneCount", &options.LogPruneCount)
 		applyBool("searchPatchedTalkgroups", &options.SearchPatchedTalkgroups)
 		applyBool("showListenersCount", &options.ShowListenersCount)
+		applyBool("sortByGroups", &options.SortByGroups)
+		applyBool("sortByTags", &options.SortByTags)
+		if options.SortByGroups && options.SortByTags {
+			options.SortByGroups = false
+		}
 		applyBool("sortTalkgroups", &options.SortTalkgroups)
 		applyBool("tagsToggle", &options.TagsToggle)
 		applyBool("time12hFormat", &options.Time12hFormat)

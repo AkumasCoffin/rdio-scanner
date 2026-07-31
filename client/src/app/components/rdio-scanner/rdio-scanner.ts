@@ -103,10 +103,13 @@ export interface RdioScannerConfig {
     keypadBeeps: RdioScannerKeypadBeeps | false;
     playbackGoesLive: boolean;
     showListenersCount: boolean;
+    sortByGroups: boolean;
+    sortByTags: boolean;
     systems: RdioScannerSystem[];
     tags: { [key: string]: { [key: number]: number[] } };
     tagsToggle: boolean;
     time12hFormat: boolean;
+    transcriptionEnabled: boolean;
     umamiUrl?: string;
     umamiWebsiteId?: string;
     waitForTranscript?: boolean;

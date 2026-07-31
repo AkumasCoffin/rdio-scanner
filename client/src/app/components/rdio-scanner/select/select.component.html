@@ -54,28 +54,144 @@
         </button>
     </div>
 </fieldset>
-<ng-container *ngFor="let system of systems">
-    <fieldset *ngIf="system.talkgroups.length" class="fieldset">
-        <legend>
-            {{ system.label }}
-        </legend>
-        <div>
-            <button *ngFor="let talkgroup of system.talkgroups" class="rdio-button"
-                [ngClass]="{ off: !(map[system.id] && map[system.id][talkgroup.id]).active, on: map[system.id] && map[system.id][talkgroup.id].active, blink: map[system.id][talkgroup.id].minutes }"
-                (click)="avoid({ system: system, talkgroup: talkgroup })">
-                {{ talkgroup.label }}
-            </button>
-            <ng-container *ngIf="system.talkgroups.length > 1">
-                <button class="rdio-button-mini all-off" (click)="avoid({ system: system, status: false })">
-                    OFF
+<!-- Original system-based layout -->
+<ng-container *ngIf="!sortByGroups && !sortByTags">
+    <ng-container *ngFor="let system of systems">
+        <fieldset *ngIf="system.talkgroups.length" class="fieldset">
+            <legend>
+                {{ system.label }}
+            </legend>
+            <div>
+                <button *ngFor="let talkgroup of system.talkgroups"
+                    class="rdio-button"
+                    [ngClass]="{
+                        off: !(map[system.id] &&
+                            map[system.id][talkgroup.id] &&
+                            map[system.id][talkgroup.id].active),
+                        on: map[system.id] &&
+                            map[system.id][talkgroup.id] &&
+                            map[system.id][talkgroup.id].active,
+                        blink: map[system.id] &&
+                            map[system.id][talkgroup.id] &&
+                            map[system.id][talkgroup.id].minutes
+                    }"
+                    (click)="avoid({
+                        system: system,
+                        talkgroup: talkgroup
+                    })">
+                    {{ talkgroup.label }}
                 </button>
-                <button class="rdio-button-mini all-on" (click)="avoid({ system: system, status: true })">
-                    ON
-                </button>
-            </ng-container>
-        </div>
-    </fieldset>
+
+                <ng-container *ngIf="system.talkgroups.length > 1">
+                    <button class="rdio-button-mini all-off"
+                        (click)="avoid({
+                            system: system,
+                            status: false
+                        })">
+                        OFF
+                    </button>
+                    <button class="rdio-button-mini all-on"
+                        (click)="avoid({
+                            system: system,
+                            status: true
+                        })">
+                        ON
+                    </button>
+                </ng-container>
+            </div>
+        </fieldset>
+    </ng-container>
 </ng-container>
-<ng-container *ngIf="systems?.length === 0">
+
+<!-- Optional group-based layout -->
+<ng-container *ngIf="sortByGroups && !sortByTags">
+    <ng-container *ngFor="let section of groupSections">
+        <fieldset *ngIf="section.talkgroups.length" class="fieldset">
+            <legend>
+                {{ section.label }}
+            </legend>
+            <div>
+                <button *ngFor="let item of section.talkgroups"
+                    class="rdio-button"
+                    [ngClass]="{
+                        off: !(map[item.system.id] &&
+                            map[item.system.id][item.talkgroup.id] &&
+                            map[item.system.id][item.talkgroup.id].active),
+                        on: map[item.system.id] &&
+                            map[item.system.id][item.talkgroup.id] &&
+                            map[item.system.id][item.talkgroup.id].active,
+                        blink: map[item.system.id] &&
+                            map[item.system.id][item.talkgroup.id] &&
+                            map[item.system.id][item.talkgroup.id].minutes
+                    }"
+                    (click)="avoid({
+                        system: item.system,
+                        talkgroup: item.talkgroup
+                    })">
+                    {{ item.talkgroup.label }}
+                </button>
+
+                <ng-container *ngIf="section.talkgroups.length > 1">
+                    <button class="rdio-button-mini all-off"
+                        (click)="setGroupStatus(section, false)">
+                        OFF
+                    </button>
+                    <button class="rdio-button-mini all-on"
+                        (click)="setGroupStatus(section, true)">
+                        ON
+                    </button>
+                </ng-container>
+            </div>
+        </fieldset>
+    </ng-container>
+</ng-container>
+
+<!-- Optional tag-based layout -->
+<ng-container *ngIf="sortByTags">
+    <ng-container *ngFor="let section of tagSections">
+        <fieldset *ngIf="section.talkgroups.length" class="fieldset">
+            <legend>
+                {{ section.label }}
+            </legend>
+            <div>
+                <button *ngFor="let item of section.talkgroups"
+                    class="rdio-button"
+                    [ngClass]="{
+                        off: !(map[item.system.id] &&
+                            map[item.system.id][item.talkgroup.id] &&
+                            map[item.system.id][item.talkgroup.id].active),
+                        on: map[item.system.id] &&
+                            map[item.system.id][item.talkgroup.id] &&
+                            map[item.system.id][item.talkgroup.id].active,
+                        blink: map[item.system.id] &&
+                            map[item.system.id][item.talkgroup.id] &&
+                            map[item.system.id][item.talkgroup.id].minutes
+                    }"
+                    (click)="avoid({
+                        system: item.system,
+                        talkgroup: item.talkgroup
+                    })">
+                    {{ item.talkgroup.label }}
+                </button>
+
+                <ng-container *ngIf="section.talkgroups.length > 1">
+                    <button class="rdio-button-mini all-off"
+                        (click)="setTagStatus(section, false)">
+                        OFF
+                    </button>
+                    <button class="rdio-button-mini all-on"
+                        (click)="setTagStatus(section, true)">
+                        ON
+                    </button>
+                </ng-container>
+            </div>
+        </fieldset>
+    </ng-container>
+</ng-container>
+<ng-container *ngIf="
+    (!sortByGroups && !sortByTags && systems?.length === 0) ||
+    (sortByGroups && !sortByTags && groupSections.length === 0) ||
+    (sortByTags && tagSections.length === 0)
+">
     No talkgroup configured!
 </ng-container>

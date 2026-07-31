@@ -250,10 +250,13 @@ export class RdioScannerService implements OnDestroy {
         keypadBeeps: false,
         playbackGoesLive: false,
         showListenersCount: false,
+        sortByGroups: false,
+        sortByTags: false,
         systems: [],
         tags: {},
         tagsToggle: false,
         time12hFormat: false,
+        transcriptionEnabled: false,
     };
 
     private instanceId = 'default';
@@ -2333,10 +2336,13 @@ export class RdioScannerService implements OnDestroy {
                         keypadBeeps: config.keypadBeeps !== null && typeof config.keypadBeeps === 'object' ? config.keypadBeeps : {},
                         playbackGoesLive: typeof config.playbackGoesLive === 'boolean' ? config.playbackGoesLive : false,
                         showListenersCount: typeof config.showListenersCount === 'boolean' ? config.showListenersCount : false,
+                        sortByGroups: typeof config.sortByGroups === 'boolean' ? config.sortByGroups : false,
+                        sortByTags: typeof config.sortByTags === 'boolean' ? config.sortByTags : false,
                         systems: Array.isArray(config.systems) ? config.systems.slice() : [],
                         tags: typeof config.tags !== null && typeof config.tags === 'object' ? config.tags : {},
                         tagsToggle: typeof config.tagsToggle === 'boolean' ? config.tagsToggle : false,
                         time12hFormat: typeof config.time12hFormat === 'boolean' ? config.time12hFormat : false,
+                        transcriptionEnabled: typeof config.transcriptionEnabled === 'boolean' ? config.transcriptionEnabled : false,
                         umamiUrl: typeof config.umamiUrl === 'string' ? config.umamiUrl : undefined,
                         umamiWebsiteId: typeof config.umamiWebsiteId === 'string' ? config.umamiWebsiteId : undefined,
                         showRetranscribeButton: typeof config.showRetranscribeButton === 'boolean' ? config.showRetranscribeButton : false,

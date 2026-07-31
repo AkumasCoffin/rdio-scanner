@@ -28,6 +28,15 @@ import { FormGroup } from '@angular/forms';
 export class RdioScannerAdminOptionsComponent {
     @Input() form: FormGroup | undefined;
 
+    // Groups and Tags sorting are mutually exclusive: switching one on turns
+    // the other off, so the selector is either ungrouped or grouped one way.
+    selectSortMode(mode: 'groups' | 'tags', checked: boolean): void {
+        if (!checked) return;
+
+        const otherControl = mode === 'groups' ? 'sortByTags' : 'sortByGroups';
+        this.form?.get(otherControl)?.setValue(false);
+    }
+
     // Reported by the server. Audio conversion is a no-op without an ffmpeg
     // binary on PATH, and nothing in the UI used to say so — the only signal
     // was a single line in the log.

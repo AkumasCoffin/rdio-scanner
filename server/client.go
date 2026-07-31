@@ -271,10 +271,13 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 		"keypadBeeps":        GetKeypadBeeps(options),
 		"playbackGoesLive":   options.PlaybackGoesLive,
 		"showListenersCount": options.ShowListenersCount,
+		"sortByGroups":       options.SortByGroups,
+		"sortByTags":         options.SortByTags,
 		"systems":            client.SystemsMap,
 		"tags":               client.TagsMap,
 		"tagsToggle":         options.TagsToggle,
 		"time12hFormat":      options.Time12hFormat,
+		"transcriptionEnabled": options.TranscriptionEnabled,
 		"waitForTranscript":  options.WaitForTranscript,
 		"showRetranscribeButton": options.ShowRetranscribeButton,
 	}
