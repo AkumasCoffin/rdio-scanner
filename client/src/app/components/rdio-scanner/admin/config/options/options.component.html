@@ -221,7 +221,19 @@
         </p>
         <div>
             <mat-slide-toggle color="primary"
-                formControlName="sortByGroups"></mat-slide-toggle>
+                formControlName="sortByGroups"
+                (change)="selectSortMode('groups', $event.checked)"></mat-slide-toggle>
+        </div>
+    </div>
+    <div class="row">
+        <p>
+            <span class="mat-body">Sort By Tag</span><br>
+            <span class="mat-caption">Group talkgroups by their tag.</span>
+        </p>
+        <div>
+            <mat-slide-toggle color="primary"
+                formControlName="sortByTags"
+                (change)="selectSortMode('tags', $event.checked)"></mat-slide-toggle>
         </div>
     </div>
     <div class="row">
