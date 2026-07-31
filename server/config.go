@@ -54,6 +54,9 @@ type Config struct {
 	SslListen        string
 	daemon           *Daemon
 	newAdminPassword string
+	importSqlite     string
+	importCalls      bool
+	importForce      bool
 }
 
 func NewConfig() *Config {
@@ -100,6 +103,9 @@ func NewConfig() *Config {
 	flag.StringVar(&config.ConfigFile, "config", defaultConfigFile, "server config file")
 	flag.StringVar(&config.Listen, "listen", defaultListen, "listening address")
 	flag.StringVar(&config.newAdminPassword, "admin_password", "", "change admin password")
+	flag.StringVar(&config.importSqlite, "import_sqlite", "", "migrate an rdio-scanner sqlite database file into the configured database, then exit")
+	flag.BoolVar(&config.importCalls, "import_calls", false, "with -import_sqlite, also copy recorded calls (large: every audio blob)")
+	flag.BoolVar(&config.importForce, "import_force", false, "with -import_sqlite, replace the target configuration even if it already has systems")
 	flag.StringVar(&config.SslAutoCert, "ssl_auto_cert", "", "domain name for Let's Encrypt automatic certificate")
 	flag.StringVar(&config.SslCertFile, "ssl_cert_file", "", "ssl PEM formated certificate")
 	flag.StringVar(&config.SslKeyFile, "ssl_key_file", "", "ssl PEM formated key")

@@ -73,6 +73,16 @@ func main() {
 	fmt.Printf("\nRdio Scanner v%s\n", Version)
 	fmt.Printf("----------------------------------\n")
 
+	// Runs against the already-migrated target schema, then exits — the
+	// server itself never starts, so nothing is ingesting while the copy runs.
+	if config.importSqlite != "" {
+		if err := ImportSqlite(controller.Database, config.importSqlite, config.importCalls, config.importForce); err != nil {
+			log.Fatal(err)
+		}
+
+		os.Exit(0)
+	}
+
 	if err := controller.Start(); err != nil {
 		log.Fatal(err)
 	}
