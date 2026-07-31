@@ -63,6 +63,7 @@ type DefaultOptions struct {
 	logPruneCount               uint
 	searchPatchedTalkgroups     bool
 	showListenersCount          bool
+	sortByGroups               bool
 	sortTalkgroups              bool
 	tagsToggle                  bool
 	time12hFormat               bool
@@ -120,6 +121,7 @@ var defaults Defaults = Defaults{
 		logPruneCount:               250000,
 		searchPatchedTalkgroups:     false,
 		showListenersCount:          false,
+		sortByGroups:               false,
 		sortTalkgroups:              false,
 		tagsToggle:                  false,
 		time12hFormat:               false,
