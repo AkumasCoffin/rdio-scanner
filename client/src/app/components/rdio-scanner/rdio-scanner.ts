@@ -103,6 +103,7 @@ export interface RdioScannerConfig {
     keypadBeeps: RdioScannerKeypadBeeps | false;
     playbackGoesLive: boolean;
     showListenersCount: boolean;
+    sortByGroups: boolean;
     systems: RdioScannerSystem[];
     tags: { [key: string]: { [key: number]: number[] } };
     tagsToggle: boolean;
