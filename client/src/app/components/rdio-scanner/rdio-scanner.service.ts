@@ -256,6 +256,7 @@ export class RdioScannerService implements OnDestroy {
         tags: {},
         tagsToggle: false,
         time12hFormat: false,
+        transcriptionEnabled: false,
     };
 
     private instanceId = 'default';
@@ -2341,6 +2342,7 @@ export class RdioScannerService implements OnDestroy {
                         tags: typeof config.tags !== null && typeof config.tags === 'object' ? config.tags : {},
                         tagsToggle: typeof config.tagsToggle === 'boolean' ? config.tagsToggle : false,
                         time12hFormat: typeof config.time12hFormat === 'boolean' ? config.time12hFormat : false,
+                        transcriptionEnabled: typeof config.transcriptionEnabled === 'boolean' ? config.transcriptionEnabled : false,
                         umamiUrl: typeof config.umamiUrl === 'string' ? config.umamiUrl : undefined,
                         umamiWebsiteId: typeof config.umamiWebsiteId === 'string' ? config.umamiWebsiteId : undefined,
                         showRetranscribeButton: typeof config.showRetranscribeButton === 'boolean' ? config.showRetranscribeButton : false,
