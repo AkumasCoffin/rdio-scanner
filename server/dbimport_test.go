@@ -257,3 +257,50 @@ func TestTruthyHandlesSqliteBooleans(t *testing.T) {
 		}
 	}
 }
+
+// A bare filename must resolve against the directory holding the executable,
+// which is where a default install keeps rdio-scanner.db — so the command
+// works without a full path and regardless of the current directory.
+func TestImportResolvesBareFilenameNextToBinary(t *testing.T) {
+	dir := t.TempDir()
+	seedSource(t, dir, "rdio-scanner.db", 2)
+
+	config := &Config{BaseDir: dir + string(filepath.Separator), DbType: DbTypeSqlite, DbFile: "target.db"}
+
+	if got := resolveImportPath(config, "rdio-scanner.db"); got != filepath.Join(dir, "rdio-scanner.db") {
+		t.Errorf("bare filename did not resolve beside the binary: got %q", got)
+	}
+
+	// An absolute path is returned untouched.
+	abs := filepath.Join(dir, "rdio-scanner.db")
+	if got := resolveImportPath(config, abs); got != abs {
+		t.Errorf("absolute path was rewritten: got %q, want %q", got, abs)
+	}
+
+	// Something that exists nowhere comes back as typed, so the error names
+	// what the user actually asked for.
+	if got := resolveImportPath(config, "missing.db"); got != "missing.db" {
+		t.Errorf("unresolvable path should be returned as given: got %q", got)
+	}
+}
+
+// End to end: a bare filename actually imports.
+func TestImportSqliteAcceptsBareFilename(t *testing.T) {
+	dir := t.TempDir()
+	seedSource(t, dir, "rdio-scanner.db", 3)
+
+	target := newSqliteAt(t, dir, "target.db")
+	defer target.Sql.Close()
+
+	if err := ImportSqlite(target, "rdio-scanner.db", true, false); err != nil {
+		t.Fatalf("bare filename import failed: %v", err)
+	}
+
+	var calls uint
+	if err := target.QueryRow("select count(*) from `rdioScannerCalls`").Scan(&calls); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 {
+		t.Errorf("expected 3 calls, got %d", calls)
+	}
+}

@@ -16,6 +16,7 @@
 package main
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -107,6 +108,60 @@ func TestStalledClientCanStillBeRemoved(t *testing.T) {
 
 	if n := clients.Count(); n != 0 {
 		t.Errorf("expected 0 clients after Remove, got %d", n)
+	}
+}
+
+// The production deadlock needed concurrency to appear: emits holding the read
+// lock while registrations queued for the write lock. Hammer that interleaving
+// with a permanently stalled client present throughout, and require the whole
+// thing to drain within a deadline.
+func TestEmitUnderConcurrentChurnDoesNotDeadlock(t *testing.T) {
+	clients := NewClients()
+	clients.Add(stalledClient(3, 300))
+
+	call := &Call{System: 3, Talkgroup: 300}
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < 200; n++ {
+				clients.EmitCall(call, false)
+				clients.EmitListenersCount()
+			}
+		}()
+	}
+
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < 200; n++ {
+				c := &Client{Access: &Access{}, Livefeed: NewLivefeed(), Send: make(chan *Message, 4)}
+				c.Livefeed.Matrix[3] = map[uint]bool{300: true}
+				clients.Add(c)
+				clients.Count()
+				clients.Remove(c)
+			}
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("emit/register churn deadlocked with a stalled client present")
+	}
+
+	if n := clients.Count(); n != 1 {
+		t.Errorf("expected only the stalled client to remain, got %d", n)
 	}
 }
 

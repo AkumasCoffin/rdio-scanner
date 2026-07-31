@@ -95,6 +95,8 @@ var importCallsTable = importTable{
 // Primary keys are preserved throughout, which on Postgres leaves the
 // sequences behind their tables; they are realigned before returning.
 func ImportSqlite(target *Database, sqliteFile string, withCalls bool, force bool) error {
+	sqliteFile = resolveImportPath(target.Config, sqliteFile)
+
 	if _, err := os.Stat(sqliteFile); err != nil {
 		return fmt.Errorf("import: cannot read %s: %v", sqliteFile, err)
 	}
@@ -167,6 +169,30 @@ func ImportSqlite(target *Database, sqliteFile string, withCalls bool, force boo
 	fmt.Printf("import complete\n")
 
 	return nil
+}
+
+// resolveImportPath finds the source file the way a user expects: a bare
+// `-import_sqlite rdio-scanner.db` should work when the database sits beside
+// the executable, which is where a default install keeps it, regardless of
+// which directory the command was run from.
+//
+// The path as typed is tried first, so an absolute path always wins. That
+// ordering also sidesteps Config.GetPath, which tests with path.IsAbs and so
+// does not recognise a Windows drive-letter path as absolute.
+func resolveImportPath(config *Config, given string) string {
+	if _, err := os.Stat(given); err == nil {
+		return given
+	}
+
+	if config != nil {
+		if beside := config.GetPath(given); beside != given {
+			if _, err := os.Stat(beside); err == nil {
+				return beside
+			}
+		}
+	}
+
+	return given
 }
 
 // checkTargetEmpty refuses to replace the configuration of a target that is

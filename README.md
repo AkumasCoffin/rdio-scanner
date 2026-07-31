@@ -186,6 +186,48 @@ host (e.g. `host rdio_scanner rdio 192.168.1.0/24 scram-sha-256`) and set
 Point rdio-scanner at it with `--db_type postgres --db_host … --db_user … --db_pass … --db_name … --config_save`. Schema migrations run automatically on
 first start (BRIN index, pg_trgm GIN index, composite search index, etc).
 
+## Migrating an existing SQLite install to PostgreSQL
+
+Point the config at the new database first (the target schema is created on
+first run), then import the old file:
+
+```bash
+# Configuration only — systems, talkgroups, keys, downstreams, options.
+rdio-scanner -import_sqlite rdio-scanner.db
+
+# ...and the recorded calls. Slow: this is every audio blob.
+rdio-scanner -import_sqlite rdio-scanner.db -import_calls
+```
+
+A bare filename is looked up next to the executable, which is where a default
+install keeps `rdio-scanner.db`, so no full path is needed when the old
+database is sitting beside the binary — and it works from any directory.
+Absolute paths are used as given.
+
+The import runs against the configured database and exits without starting the
+server, so nothing is ingesting while it copies. It reads the SQLite file
+without modifying it.
+
+| Flag              | Effect                                                                |
+| ----------------- | --------------------------------------------------------------------- |
+| `-import_sqlite`  | Source `.db` file. Required.                                          |
+| `-import_calls`   | Also copy recorded calls. Off by default — the table holds all audio.  |
+| `-import_force`   | Replace the target's configuration even if it already has systems.     |
+
+Configuration tables are **replaced**, so the result matches the source rather
+than merging with the defaults a fresh install seeds — including the admin
+password, which comes across with everything else. That half runs in a single
+transaction, so a failure leaves the target untouched. Because it is
+destructive, importing into a target that already has systems configured
+requires `-import_force`.
+
+Calls are **appended** and the copy resumes after the highest call id already
+present, so an interrupted run continues instead of duplicating. Call ids are
+preserved, so existing share links keep working.
+
+Not copied: log history, and the internal schema-version and delayed-call
+tables (the target maintains its own).
+
 ---
 
 # Configuration reference

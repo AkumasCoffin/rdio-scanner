@@ -8,6 +8,20 @@ an HTTP 500 and lost the changes.
 
 ### Server
 
+- **Built-in SQLite → PostgreSQL/MySQL migration.** There was no supported way
+  to move off SQLite: `config-get` / `config-set` copy only what the admin UI
+  exposes, over HTTP, against a running server, and nothing at all moved the
+  call history — so switching backends silently meant starting over with an
+  empty database. `-import_sqlite <file>` migrates the configuration;
+  `-import_calls` additionally copies recorded calls, kept opt-in because that
+  table holds every audio blob. Configuration tables are replaced inside one
+  transaction (so a failure leaves the target untouched, and `-import_force` is
+  required to overwrite a target that already has systems); calls are appended
+  and resume after the highest id already present, preserving call ids so share
+  links keep working. Timestamps are re-parsed and booleans converted, since
+  SQLite stores the former as text in its own layout and the latter as 0/1
+  integers — both of which PostgreSQL rejects outright.
+
 - **Fixed: one unresponsive listener could wedge the whole server.** Calls
   stopped being broadcast *and* stopped being ingested, while the admin page
   kept showing the last known listener count — so the process looked healthy.
