@@ -56,6 +56,12 @@ type Call struct {
 	// true, local transcription is suppressed — the upstream will push the
 	// transcript via /api/call-transcript once Whisper finishes.
 	transcriptPending bool
+	// pluginFields holds values contributed by plugins through
+	// rdio.calls.extendField, merged into the wire payload by MarshalJSON.
+	// Populated by Controller.ApplyPluginFields on the paths that serve a call
+	// to a client; nil on every install with no field-extending plugin, which
+	// is why this costs nothing when unused.
+	pluginFields map[string]any
 }
 
 func NewCall() *Call {
@@ -120,6 +126,15 @@ func (call *Call) MarshalJSON() ([]byte, error) {
 
 	if call.Delayed {
 		out["delayed"] = true
+	}
+
+	// Plugin-contributed fields go on last but never displace a core key, so a
+	// plugin cannot reshape the call protocol out from under existing clients.
+	for key, value := range call.pluginFields {
+		if _, taken := out[key]; taken {
+			continue
+		}
+		out[key] = value
 	}
 
 	return json.Marshal(out)

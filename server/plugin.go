@@ -209,6 +209,9 @@ func (plugins *Plugins) Read(db *Database, config *Config) error {
 		return formatError(err)
 	}
 
+	// Plugins discovered on disk with no registry row, to be persisted below.
+	discovered := []*Plugin{}
+
 	for pluginId, scanned := range found {
 		plugin, ok := byPluginId[pluginId]
 		if !ok {
@@ -222,6 +225,7 @@ func (plugins *Plugins) Read(db *Database, config *Config) error {
 			}
 			byPluginId[pluginId] = plugin
 			list = append(list, plugin)
+			discovered = append(discovered, plugin)
 		}
 
 		plugin.Present = scanned.err == nil
@@ -250,6 +254,19 @@ func (plugins *Plugins) Read(db *Database, config *Config) error {
 	sort.Slice(list, func(i, j int) bool { return list[i].PluginId < list[j].PluginId })
 
 	plugins.List = list
+
+	// Persist anything found on disk that wasn't registered yet, so the admin
+	// panel's enable toggle has a row to update and the plugin's state survives
+	// a restart. Only ever inserts a disabled row — discovering files must not
+	// start anything on its own.
+	for _, plugin := range discovered {
+		if plugin.Manifest == nil {
+			continue
+		}
+		if err := plugins.Write(db, plugin); err != nil {
+			return formatError(err)
+		}
+	}
 
 	return nil
 }

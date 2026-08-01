@@ -291,6 +291,24 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 		payload["umamiWebsiteId"] = options.UmamiWebsiteId
 	}
 
+	// Keys plugins asked to publish. Merged last but never allowed to overwrite
+	// a core key — a plugin must not be able to change what the webapp thinks
+	// its own settings are.
+	if client.Controller != nil {
+		for key, value := range client.Controller.PluginExposedConfig() {
+			if _, taken := payload[key]; taken {
+				continue
+			}
+			payload[key] = value
+		}
+
+		// The webapp needs to know which plugins have frontend code to load,
+		// and it asks for this before it has an admin session.
+		if entries := client.Controller.PluginWebEntries(); len(entries) > 0 {
+			payload["plugins"] = entries
+		}
+	}
+
 	client.enqueue(&Message{Command: MessageCommandConfig, Payload: payload})
 
 	// Send the listener count immediately so the LCD doesn't show an empty

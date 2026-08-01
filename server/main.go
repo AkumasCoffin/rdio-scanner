@@ -158,6 +158,23 @@ func main() {
 	http.HandleFunc("/api/v1/calls", gzipHandler(controller.PublicApi.CallsRouter))
 	http.HandleFunc("/api/v1/calls/", gzipHandler(controller.PublicApi.CallsRouter))
 
+	http.HandleFunc("/api/admin/plugins", gzipHandler(controller.Admin.PluginsHandler))
+	http.HandleFunc("/api/admin/plugins/", controller.Admin.PluginsActionHandler)
+
+	http.HandleFunc("/api/plugin/", gzipHandler(controller.PluginApiHandler))
+
+	// Plugin assets are served from disk, not from the embedded webapp, so a
+	// plugin installed after the binary was built still has somewhere to serve
+	// its frontend code from.
+	http.HandleFunc("/plugins/", controller.PluginAssetHandler)
+
+	// Absolute routes a plugin claimed. Registered once at startup because
+	// DefaultServeMux panics on duplicate patterns and has no removal — the
+	// paths are read from plugins that have already been loaded by this point.
+	for _, pattern := range controller.PluginAbsolutePatterns() {
+		http.HandleFunc(pattern, gzipHandler(controller.PluginAbsoluteHandler))
+	}
+
 	http.HandleFunc("/", gzipHandler(func(w http.ResponseWriter, r *http.Request) {
 		url := r.URL.Path[1:]
 

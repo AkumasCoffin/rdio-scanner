@@ -77,6 +77,11 @@ type Options struct {
 	// UpdatePrereleases selects the update channel: false = stable releases
 	// only (the default), true = include prereleases. See Read().
 	UpdatePrereleases           bool   `json:"updatePrereleases"`
+	// PluginRepos is the JSON-encoded list of user-added plugin repositories.
+	// Stored as JSON in a single option row rather than its own table because
+	// it is a short, wholly-replaced list that only the plugin store reads.
+	// The official repository is implicit and never stored here.
+	PluginRepos                 string `json:"pluginRepos"`
 	adminPassword               string
 	adminPasswordNeedChange     bool
 	mutex                       sync.Mutex
@@ -192,6 +197,7 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	setStr("umamiWebsiteId", &options.UmamiWebsiteId)
 	setStr("updateUrl", &options.UpdateUrl)
 	setBool("updatePrereleases", &options.UpdatePrereleases)
+	setStr("pluginRepos", &options.PluginRepos)
 
 	return options
 }
@@ -249,6 +255,7 @@ func (options *Options) optionKeyValuePairs() []struct {
 		{"umamiWebsiteId", options.UmamiWebsiteId},
 		{"updateUrl", options.UpdateUrl},
 		{"updatePrereleases", options.UpdatePrereleases},
+		{"pluginRepos", options.PluginRepos},
 	}
 }
 
@@ -392,6 +399,7 @@ func (options *Options) Read(db *Database) error {
 		applyStr("umamiWebsiteId", &options.UmamiWebsiteId)
 		applyStr("updateUrl", &options.UpdateUrl)
 		applyBool("updatePrereleases", &options.UpdatePrereleases)
+		applyStr("pluginRepos", &options.PluginRepos)
 	}
 
 	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'secret'").Scan(&s)

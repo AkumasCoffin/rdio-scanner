@@ -45,6 +45,7 @@ type Controller struct {
 	Logs        *Logs
 	Options     *Options
 	Plugins     *Plugins
+	PluginStore *PluginStore
 	Scheduler   *Scheduler
 	Stats       *Stats
 	Systems     *Systems
@@ -114,6 +115,7 @@ func NewController(config *Config) *Controller {
 	controller.PublicApi = NewPublicApi(controller)
 	controller.Database = NewDatabase(config)
 	controller.Delayer = NewDelayer(controller)
+	controller.PluginStore = NewPluginStore(controller)
 	controller.Scheduler = NewScheduler(controller)
 	controller.Stats = NewStats(controller)
 	controller.Transcriber = NewTranscriber(controller)
@@ -722,6 +724,11 @@ func (controller *Controller) ProcessMessageCommandCall(client *Client, message 
 		}
 		return nil
 	}
+
+	// Fill in any plugin-contributed fields before serving the call. This is
+	// the replay path, where a plugin's value has almost certainly been
+	// computed by now even if it wasn't ready when the call was first emitted.
+	controller.ApplyPluginFields(call)
 
 	client.enqueue(&Message{Command: MessageCommandCall, Payload: call, Flag: message.Flag})
 

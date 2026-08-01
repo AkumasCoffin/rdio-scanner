@@ -156,9 +156,11 @@ func (rt *PluginRuntime) Start() error {
 
 	var startErr error
 
-	// Run (not RunOnLoop) so setup completes before Start returns and the
-	// plugin is reported as running.
-	rt.loop.Run(func(vm *goja.Runtime) {
+	// Setup is scheduled on the loop and waited for, so Start doesn't return
+	// until main.js has been evaluated and the plugin is genuinely ready. Note
+	// this cannot use loop.Run: that starts a loop of its own and panics on one
+	// that is already running.
+	if err := rt.runOnLoopAndWait(pluginStartupTimeout+5*time.Second, func(vm *goja.Runtime) {
 		rt.vm = vm
 
 		// Field names in JS are conventionally camelCase; without this, Go
@@ -176,7 +178,9 @@ func (rt *PluginRuntime) Start() error {
 		if _, err := vm.RunScript(rt.manifest.Main, source); err != nil {
 			startErr = fmt.Errorf("%s: %v", rt.manifest.Main, err)
 		}
-	})
+	}); err != nil {
+		return err
+	}
 
 	if startErr != nil {
 		return startErr
@@ -185,6 +189,37 @@ func (rt *PluginRuntime) Start() error {
 	rt.Emit(PluginEventStartup, nil)
 
 	return nil
+}
+
+// runOnLoopAndWait schedules work on the loop and blocks until it finishes or
+// the deadline passes. Used for the few operations that genuinely need to be
+// synchronous — startup and shutdown — never on the ingest path.
+func (rt *PluginRuntime) runOnLoopAndWait(timeout time.Duration, fn func(vm *goja.Runtime)) error {
+	done := make(chan struct{})
+
+	scheduled := rt.loop.RunOnLoop(func(vm *goja.Runtime) {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				rt.controller.Logs.LogEvent(
+					LogLevelError,
+					fmt.Sprintf("plugin %s panicked: %v", rt.manifest.Id, r),
+				)
+			}
+		}()
+		fn(vm)
+	})
+
+	if !scheduled {
+		return fmt.Errorf("plugin %s event loop is not running", rt.manifest.Id)
+	}
+
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("plugin %s timed out during startup", rt.manifest.Id)
+	}
 }
 
 func (rt *PluginRuntime) readMain() (string, error) {
@@ -301,7 +336,7 @@ func (rt *PluginRuntime) dispatchSync(event string, payload any) {
 		return
 	}
 
-	rt.loop.Run(func(vm *goja.Runtime) {
+	rt.runOnLoopAndWait(pluginCallTimeout, func(vm *goja.Runtime) {
 		stop := rt.armWatchdog(vm, event, pluginCallTimeout)
 		defer stop()
 
