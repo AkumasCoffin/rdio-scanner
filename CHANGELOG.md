@@ -2,27 +2,62 @@
 
 ## Unreleased
 
-### Server
+_(nothing yet — bullets land here as work is merged to master)_
 
-- **Fixed: no audio on iOS.** Every converted call was silent in Safari and any
-  other iOS browser — all of them WebKit — while playing normally in Chrome, on
-  Android and on desktop. The cause was server-side. Conversion piped ffmpeg's
-  output through stdout, and because MP4 has to seek backwards to write its
-  sample index, piping forced `-movflags frag_keyframe+empty_moov` — producing a
-  fragmented MP4 whose `moov` declares zero samples, with the real index in a
-  trailing `moof`. ffprobe and Chrome read that; WebKit's `decodeAudioData()`
-  resolves samples from the `moov` sample tables, finds none, and fails. ffmpeg
-  now writes to a temp file, which is seekable, so the output is an ordinary
-  MP4 that decodes everywhere. Same codec and bitrate, and slightly smaller.
-  Note this only affects newly ingested calls — audio already stored stays
-  fragmented and remains silent on iOS.
+---
+
+## Released
+
+## Version 6.13.5
+
+Audio playback on iOS, and the talkgroup selector layouts from 6.13.4 brought
+across to Android.
 
 ### Webapp
 
-- Audio decode failures are now logged with the call id and the rejected audio
-  type. The playback path already skipped an undecodable call, so the feed kept
-  moving, but it said nothing — making a browser-specific decode failure
+- **Fixed: no audio on iOS.** Calls were silent on an iPhone running iOS 27.0
+  while the same server played normally on iOS 26.5.2 — keypad beeps worked,
+  the call arrived, the transcript rendered, but nothing played.
+
+  WebKit decodes PCM itself and hands AAC to the operating system codec, and on
+  iOS 27.0 that codec is unreachable from Web Audio: `decodeAudioData()`
+  rejects AAC with `EncodingError: Decoding failed` at every sample rate and in
+  every container, while the identical file plays through the media stack (it
+  opens fine in Files). Since keypad beeps are synthesized rather than decoded,
+  they kept working, which is what made this look like a format problem rather
+  than a decoder one.
+
+  Playback now falls back to an `<audio>` element — the media stack rather than
+  Web Audio — whenever a decode fails. Nothing changes for browsers that decode
+  normally, and because the fix is client-side it applies to calls already
+  stored, not just newly ingested ones.
+
+  Two details the fallback depends on. iOS grants autoplay permission per media
+  element rather than per page, so one element is created and unlocked during
+  the same user gesture that starts the audio contexts and then reused for
+  every call; building one per call left them unplayable. And a `play()`
+  rejection is not treated as fatal, because on a live feed the common one is
+  an `AbortError` from the previous call's load being replaced — transient
+  rejections retry once the element reports it has data, and only a second
+  failure skips the call.
+
+- Audio decode failures are logged with the call id and the rejected audio
+  type. The playback path already skipped an undecodable call so the feed kept
+  moving, but it said nothing, making a browser-specific decode failure
   indistinguishable from "audio is broken".
+
+### Server
+
+- **Converted audio is no longer a fragmented MP4.** Conversion piped ffmpeg's
+  output through stdout, and since MP4 has to seek backwards to write its
+  sample index, piping forced `-movflags frag_keyframe+empty_moov` — producing
+  a `moov` that declares zero samples with the real index in a trailing `moof`.
+  ffmpeg now writes to a seekable temp file and emits an ordinary MP4, which is
+  both marginally smaller and more widely compatible.
+
+  Found while investigating the iOS silence. It turned out not to be the cause
+  — iOS 27 rejects plain and fragmented MP4 alike — but a fragmented file is
+  the more fragile thing to be storing, so the change stands on its own.
 
 ### Android
 
@@ -34,10 +69,6 @@
   single update. Ordering and skip rules mirror the webapp so both clients lay
   out the same config identically. Presentational only — the livefeed sent to
   the server is unchanged.
-
----
-
-## Released
 
 ## Version 6.13.4
 
