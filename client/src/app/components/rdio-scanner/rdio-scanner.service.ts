@@ -1732,13 +1732,22 @@ export class RdioScannerService implements OnDestroy {
             return false;
         }
 
-        // Release the previous call's blob before adopting this one.
-        if (this.audioElementUrl) {
-            URL.revokeObjectURL(this.audioElementUrl);
-        }
+        const previousUrl = this.audioElementUrl;
 
         element.volume = this.muted ? 0 : Math.min(1, Math.max(0, this.volume));
+        element.pause();
         element.src = url;
+        // Commit the new source immediately. Without this the element can still
+        // be working through the previous call's load, and the abort of that
+        // load surfaces against this call instead.
+        element.load();
+
+        // Only now that the element has let go of it — revoking while it is
+        // still the current src makes Safari fail the load it is about to
+        // abandon anyway, and logs a spurious error.
+        if (previousUrl) {
+            URL.revokeObjectURL(previousUrl);
+        }
 
         this.audioElementUrl = url;
         this.mediaPlaying = true;
@@ -1776,18 +1785,49 @@ export class RdioScannerService implements OnDestroy {
             ? this.scheduleAlert(alertName, this.audioContext.currentTime)
             : 0;
 
-        const start = () => {
-            if (stale()) return;
+        // play() can reject for reasons that have nothing to do with this clip
+        // being unplayable. On a live feed the common one is AbortError: the
+        // element was still loading the previous call when this src replaced
+        // it, so the in-flight play was cancelled. Treating every rejection as
+        // fatal is what made random calls vanish — one transient abort and the
+        // call was skipped. Retry once the element says it has data, and only
+        // give up if it fails again.
+        let retried = false;
+
+        const attempt = () => {
+            if (stale() || element.src !== url) return;
 
             const played = element.play();
 
-            if (played && typeof played.catch === 'function') {
-                played.catch((e: unknown) => {
-                    if (stale()) return;
-                    console.warn(`Media element playback rejected for call ${call.id}: ${e}`);
-                    this.skip({ delay: false });
-                });
-            }
+            if (!played || typeof played.catch !== 'function') return;
+
+            played.catch((e: unknown) => {
+                if (stale() || element.src !== url) return;
+
+                const name = (e as { name?: string })?.name;
+
+                if (!retried && (name === 'AbortError' || name === 'NotAllowedError')) {
+                    retried = true;
+
+                    // Wait until it actually has something to play rather than
+                    // hammering play() at an element mid-load.
+                    if (element.readyState >= 2) {
+                        attempt();
+                    } else {
+                        element.addEventListener('canplay', attempt, { once: true });
+                    }
+
+                    return;
+                }
+
+                console.warn(`Media element playback rejected for call ${call.id}: ${e}`);
+                this.skip({ delay: false });
+            });
+        };
+
+        const start = () => {
+            if (stale()) return;
+            attempt();
         };
 
         if (alertDuration > 0) {
