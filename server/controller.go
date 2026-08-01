@@ -728,8 +728,18 @@ func (controller *Controller) Start() error {
 	// from serving calls.
 	if err = controller.Plugins.Read(controller.Database, controller.Config); err != nil {
 		controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("plugins read: %v", err))
-	} else if err = controller.Plugins.Start(controller); err != nil {
-		controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("plugins start: %v", err))
+	} else {
+		// Reinstate features that used to ship in the server and have since
+		// moved to a plugin. Runs before Start, and the registry is re-read
+		// afterwards, so anything fetched here comes up in this same boot
+		// rather than needing a second restart.
+		controller.RestoreLegacyPlugins()
+
+		if err = controller.Plugins.Read(controller.Database, controller.Config); err != nil {
+			controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("plugins reread: %v", err))
+		} else if err = controller.Plugins.Start(controller); err != nil {
+			controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("plugins start: %v", err))
+		}
 	}
 
 	if err = controller.Admin.Start(); err != nil {

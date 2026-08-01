@@ -256,23 +256,6 @@ export interface Options {
     sortTalkgroups?: boolean;
     tagsToggle?: boolean;
     time12hFormat?: boolean;
-    transcriptionEnabled?: boolean;
-    transcriptionProvider?: string;
-    transcriptionBaseUrl?: string;
-    transcriptionApiKey?: string;
-    transcriptionModel?: string;
-    transcriptionOpenAIBaseUrl?: string;
-    transcriptionOpenAIApiKey?: string;
-    transcriptionOpenAIModel?: string;
-    transcriptionWhisperBaseUrl?: string;
-    transcriptionWhisperApiKey?: string;
-    transcriptionWhisperModel?: string;
-    transcriptionLanguage?: string;
-    transcriptionPrompt?: string;
-    transcriptionMaxPerMinute?: number;
-    transcriptionMinAudioBytes?: number;
-    waitForTranscript?: boolean;
-    showRetranscribeButton?: boolean;
     umamiUrl?: string;
     umamiWebsiteId?: string;
 }
@@ -286,8 +269,6 @@ export interface System {
     led?: string | null;
     order?: number | null;
     talkgroups?: Talkgroup[];
-    transcribe?: boolean;
-    transcriptionPrompt?: string;
     units?: Unit[];
     delay?: number;
     alert?: string | null;
@@ -307,7 +288,6 @@ export interface Talkgroup {
     name?: string;
     order?: number;
     tagId?: number;
-    transcribe?: boolean;
     delay?: number;
     alert?: string | null;
 }
@@ -713,8 +693,6 @@ export class RdioScannerAdminService implements OnDestroy {
             led: [system?.led],
             order: [system?.order],
             talkgroups: this.ngFormBuilder.array(system?.talkgroups?.map((talkgroup) => this.newTalkgroupForm(talkgroup)) || []),
-            transcribe: [system?.transcribe ?? true],
-            transcriptionPrompt: [system?.transcriptionPrompt ?? ''],
             units: this.ngFormBuilder.array(system?.units?.map((unit) => this.newUnitForm(unit)) || []),
             delay: [system?.delay ?? 0, Validators.min(0)],
             alert: [system?.alert ?? null],
@@ -731,7 +709,6 @@ export class RdioScannerAdminService implements OnDestroy {
             name: [talkgroup?.name, Validators.required],
             order: [talkgroup?.order],
             tagId: [talkgroup?.tagId, [Validators.required, this.validateTag()]],
-            transcribe: [talkgroup?.transcribe ?? true],
             delay: [talkgroup?.delay ?? 0, Validators.min(0)],
             alert: [talkgroup?.alert ?? null],
         });
@@ -768,23 +745,6 @@ export class RdioScannerAdminService implements OnDestroy {
             sortTalkgroups: [options?.sortTalkgroups],
             tagsToggle: [options?.tagsToggle],
             time12hFormat: [options?.time12hFormat],
-            transcriptionEnabled: [options?.transcriptionEnabled ?? false],
-            transcriptionProvider: [options?.transcriptionProvider ?? 'groq'],
-            transcriptionBaseUrl: [options?.transcriptionBaseUrl ?? 'https://api.groq.com/openai/v1'],
-            transcriptionApiKey: [options?.transcriptionApiKey ?? ''],
-            transcriptionModel: [options?.transcriptionModel ?? 'whisper-large-v3-turbo'],
-            transcriptionOpenAIBaseUrl: [options?.transcriptionOpenAIBaseUrl ?? 'https://api.openai.com/v1'],
-            transcriptionOpenAIApiKey: [options?.transcriptionOpenAIApiKey ?? ''],
-            transcriptionOpenAIModel: [options?.transcriptionOpenAIModel ?? 'whisper-1'],
-            transcriptionWhisperBaseUrl: [options?.transcriptionWhisperBaseUrl ?? ''],
-            transcriptionWhisperApiKey: [options?.transcriptionWhisperApiKey ?? ''],
-            transcriptionWhisperModel: [options?.transcriptionWhisperModel ?? 'whisper-1'],
-            transcriptionLanguage: [options?.transcriptionLanguage ?? ''],
-            transcriptionPrompt: [options?.transcriptionPrompt ?? ''],
-            transcriptionMaxPerMinute: [options?.transcriptionMaxPerMinute ?? 0, Validators.min(0)],
-            transcriptionMinAudioBytes: [options?.transcriptionMinAudioBytes ?? 0, Validators.min(0)],
-            waitForTranscript: [options?.waitForTranscript ?? false],
-            showRetranscribeButton: [options?.showRetranscribeButton ?? false],
             umamiUrl: [options?.umamiUrl],
             umamiWebsiteId: [options?.umamiWebsiteId],
         });
