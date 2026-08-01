@@ -47,6 +47,17 @@ func TestPluginAudioRoundTrip(t *testing.T) {
 		t.Fatalf("cannot bind call: %v", err)
 	}
 
+	// Plugins gate on the audio length before deciding to upload, so the
+	// wrapper has to expose one. Without this a size check silently compares
+	// undefined and never filters anything.
+	length, err := vm.RunString(`call.audio.length`)
+	if err != nil {
+		t.Fatalf("cannot read call.audio.length from javascript: %v", err)
+	}
+	if n := length.ToInteger(); n != int64(len(original)) {
+		t.Fatalf("call.audio.length was %d in javascript, expected %d", n, len(original))
+	}
+
 	// A plugin would do exactly this: read call.audio and pass it straight to
 	// the multipart helper.
 	result, err := vm.RunString(`call.audio`)
