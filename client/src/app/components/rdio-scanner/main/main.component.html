@@ -84,6 +84,7 @@
         <div class="live-transcript-text" *ngIf="displayCall?.transcript">{{ displayCall?.transcript }}</div>
         <div class="live-transcript-text placeholder" *ngIf="!displayCall?.transcript">—</div>
     </div>
+    <rdio-plugin-slot name="lcd-below" [data]="displayCall"></rdio-plugin-slot>
     <div class="wrapper">
         <div class="auth" [ngClass]="{ visible: auth }">
             <form class="mat-elevation-z8" autocomplete="off" [formGroup]="authForm" (ngSubmit)="authenticate()">

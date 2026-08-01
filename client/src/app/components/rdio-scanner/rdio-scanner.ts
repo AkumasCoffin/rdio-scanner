@@ -114,6 +114,21 @@ export interface RdioScannerConfig {
     umamiWebsiteId?: string;
     waitForTranscript?: boolean;
     showRetranscribeButton?: boolean;
+    /**
+     * Frontend entry points of the plugins enabled on this server, plus any
+     * keys those plugins chose to expose. Arrives on the config payload so the
+     * webapp can load plugin code without needing an admin session.
+     */
+    plugins?: RdioScannerPluginEntry[];
+    [key: string]: unknown;
+}
+
+export interface RdioScannerPluginEntry {
+    id: string;
+    name: string;
+    version: string;
+    entry: string;
+    base: string;
 }
 
 export interface RdioScannerEvent {

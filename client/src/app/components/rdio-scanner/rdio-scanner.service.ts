@@ -23,6 +23,7 @@ import { Router } from '@angular/router';
 import { interval, Subscription, timer } from 'rxjs';
 import { takeWhile } from 'rxjs/operators';
 import { AppUpdateService } from '../../shared/update/update.service';
+import { RdioScannerPluginHostService } from './plugins/plugin-host.service';
 import {
     RdioScannerAvoidOptions,
     RdioScannerBeepStyle,
@@ -46,6 +47,35 @@ declare global {
         webkitAudioContext: typeof AudioContext;
     }
 }
+
+/**
+ * Keys the server always sends on the config payload. Anything outside this set
+ * was put there by a plugin via rdio.config.expose, and is forwarded to the
+ * plugin host rather than ignored.
+ */
+const RDIO_CORE_CONFIG_KEYS = new Set([
+    'afs',
+    'alerts',
+    'branding',
+    'dimmerDelay',
+    'email',
+    'groups',
+    'keypadBeeps',
+    'playbackGoesLive',
+    'plugins',
+    'showListenersCount',
+    'showRetranscribeButton',
+    'sortByGroups',
+    'sortByTags',
+    'systems',
+    'tags',
+    'tagsToggle',
+    'time12hFormat',
+    'transcriptionEnabled',
+    'umamiUrl',
+    'umamiWebsiteId',
+    'waitForTranscript',
+]);
 
 enum WebsocketCallFlag {
     Download = 'd',
@@ -309,8 +339,13 @@ export class RdioScannerService implements OnDestroy {
     constructor(
         appUpdateService: AppUpdateService,
         private router: Router,
+        private pluginHost: RdioScannerPluginHostService,
         @Inject(DOCUMENT) private document: Document,
     ) {
+        // Give plugins a way to send on the socket this service owns, so they
+        // don't each open one of their own.
+        this.pluginHost.setWebsocketSender((command, payload) => this.sendtoWebsocket(command as any, payload));
+
         this.loadVolumeSettings();
         this.loadAutoJumpSetting();
         this.bootstrapAudio();
@@ -1605,6 +1640,10 @@ export class RdioScannerService implements OnDestroy {
             : this.callQueue.length;
         this.event.emit({ call: this.call, queue, queueTime: this.computeDelay() });
 
+        // Same moment the LCD learns about the call, so a plugin rendering
+        // beside it stays in step rather than lagging a frame behind.
+        this.pluginHost.emit('call', this.call);
+
         this.beginAudioPlayback();
     }
 
@@ -2627,6 +2666,12 @@ export class RdioScannerService implements OnDestroy {
                         this.config['afs'] = config.afs;
                     }
 
+                    // Plugins: load whatever the server says is enabled, and
+                    // hand them any keys those plugins exposed. Done before the
+                    // config event so a plugin's config handler sees the same
+                    // payload the rest of the app is about to react to.
+                    this.syncPlugins(config);
+
                     this.rebuildLivefeedMap();
 
                     if (this.livefeedMode === RdioScannerLivefeedMode.Online) {
@@ -2751,8 +2796,39 @@ export class RdioScannerService implements OnDestroy {
 
                     break;
                 }
+
+                default: {
+                    // Not a command core knows. Offer it to the plugins — this
+                    // mirrors the server side, and is what lets a plugin add its
+                    // own protocol messages over the socket that is already open.
+                    const command = typeof message[0] === 'string' ? message[0] : '';
+                    if (command && this.pluginHost.handlesWebsocket(command)) {
+                        this.pluginHost.emitWebsocket(command, message[1]);
+                    }
+                    break;
+                }
             }
         }
+    }
+
+    /**
+     * Hands the plugin host the current plugin list and any keys plugins
+     * exposed. Everything that isn't a known core config key is passed through,
+     * since a plugin picks its own names.
+     */
+    private syncPlugins(config: { [key: string]: any }): void {
+        const entries = Array.isArray(config['plugins']) ? config['plugins'] : [];
+
+        const exposed: { [key: string]: unknown } = {};
+        for (const key of Object.keys(config)) {
+            if (!RDIO_CORE_CONFIG_KEYS.has(key)) {
+                exposed[key] = config[key];
+            }
+        }
+
+        this.pluginHost.setExposedConfig(exposed);
+        this.pluginHost.sync(entries);
+        this.pluginHost.emit('config', { ...exposed, plugins: entries });
     }
 
     private playbackNextCall(): void {

@@ -1,0 +1,391 @@
+/*
+ * Copyright (C) 2019-2022 Chrystian Huot <chrystian.huot@saubeo.solutions>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ */
+
+import { Injectable, NgZone } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+
+/**
+ * The webapp is AOT-compiled and embedded in the server binary, so a plugin
+ * cannot ship Angular components — there is no compiler at runtime to build
+ * them. Plugin frontend code is therefore plain JavaScript that renders into
+ * DOM containers the app hands it.
+ *
+ * This service is the whole contract: it loads each enabled plugin's script,
+ * gives it an API bound to its own id, and brokers between plugin-owned DOM and
+ * Angular's change detection.
+ */
+
+/** Bump when the shape of the API passed to plugins changes incompatibly. */
+export const PLUGIN_API_VERSION = 1;
+
+export interface PluginEntry {
+    id: string;
+    name: string;
+    version: string;
+    /** Script path, relative to the app base. */
+    entry: string;
+    /** Directory the plugin's assets are served from, relative to the app base. */
+    base: string;
+}
+
+export interface PluginViewSpec {
+    id: string;
+    label: string;
+    icon?: string;
+    mount: (el: HTMLElement) => (() => void) | void;
+}
+
+/** A view contributed by a plugin, tagged with which plugin owns it. */
+export interface RegisteredPluginView extends PluginViewSpec {
+    pluginId: string;
+    /** Unique across plugins: two plugins may both call their view "map". */
+    key: string;
+}
+
+type SlotFactory = (el: HTMLElement, data?: unknown) => (() => void) | void;
+
+interface SlotRegistration {
+    pluginId: string;
+    factory: SlotFactory;
+}
+
+@Injectable()
+export class RdioScannerPluginHostService {
+    /** Views contributed by plugins, for the navigation to render. */
+    readonly views = new BehaviorSubject<RegisteredPluginView[]>([]);
+
+    private entries: PluginEntry[] = [];
+    private loaded = new Set<string>();
+
+    private slots = new Map<string, SlotRegistration[]>();
+    private slotSubscribers = new Map<string, Set<(regs: SlotRegistration[]) => void>>();
+
+    private eventHandlers = new Map<string, Map<string, ((payload: unknown) => void)[]>>();
+
+    private wsHandlers = new Map<string, ((payload: unknown) => void)[]>();
+    private wsSender?: (command: string, payload: unknown) => void;
+
+    /** Last value of each event, replayed to handlers that register late. */
+    private lastEvent = new Map<string, unknown>();
+
+    private exposedConfig: { [key: string]: unknown } = {};
+
+    constructor(private ngZone: NgZone) {
+        this.installGlobal();
+    }
+
+    /**
+     * Called with the plugin list from the server config payload. Scripts are
+     * loaded once; a plugin that disappears from the list has been disabled, so
+     * its contributions are torn down.
+     */
+    sync(entries: PluginEntry[] | undefined): void {
+        const next = entries || [];
+        this.entries = next;
+
+        const active = new Set(next.map((entry) => entry.id));
+
+        for (const id of Array.from(this.loaded)) {
+            if (!active.has(id)) {
+                this.teardown(id);
+            }
+        }
+
+        for (const entry of next) {
+            if (!this.loaded.has(entry.id)) {
+                this.load(entry);
+            }
+        }
+    }
+
+    /** Publishes an app event to plugin handlers. */
+    emit(event: string, payload: unknown): void {
+        this.lastEvent.set(event, payload);
+
+        for (const byEvent of Array.from(this.eventHandlers.values())) {
+            for (const handler of byEvent.get(event) || []) {
+                this.safely(() => handler(payload));
+            }
+        }
+    }
+
+    /** Publishes an inbound websocket message to whichever plugin claimed it. */
+    emitWebsocket(command: string, payload: unknown): void {
+        for (const handler of this.wsHandlers.get(command) || []) {
+            this.safely(() => handler(payload));
+        }
+    }
+
+    /** True when a plugin has claimed a websocket command. */
+    handlesWebsocket(command: string): boolean {
+        return (this.wsHandlers.get(command) || []).length > 0;
+    }
+
+    /** Wires the outbound websocket path. Set once by the main service. */
+    setWebsocketSender(sender: (command: string, payload: unknown) => void): void {
+        this.wsSender = sender;
+    }
+
+    setExposedConfig(config: { [key: string]: unknown }): void {
+        this.exposedConfig = config || {};
+    }
+
+    /**
+     * Subscribes a slot container to its registrations. Returns an unsubscribe
+     * function. Used by the slot component rather than by plugins.
+     */
+    observeSlot(name: string, notify: (regs: SlotRegistration[]) => void): () => void {
+        let subscribers = this.slotSubscribers.get(name);
+        if (!subscribers) {
+            subscribers = new Set();
+            this.slotSubscribers.set(name, subscribers);
+        }
+        subscribers.add(notify);
+
+        notify(this.slots.get(name) || []);
+
+        return () => subscribers?.delete(notify);
+    }
+
+    private notifySlot(name: string): void {
+        const regs = this.slots.get(name) || [];
+        for (const notify of Array.from(this.slotSubscribers.get(name) || [])) {
+            this.safely(() => notify(regs));
+        }
+    }
+
+    /**
+     * Loads one plugin's script. Failures are logged and contained: a plugin
+     * that throws must not take the scanner UI down with it.
+     */
+    private load(entry: PluginEntry): void {
+        this.loaded.add(entry.id);
+
+        const script = document.createElement('script');
+        script.src = entry.entry;
+        script.async = true;
+        script.dataset['rdioPlugin'] = entry.id;
+
+        script.onerror = () => {
+            console.error(`[rdio-scanner] plugin ${entry.id} failed to load from ${entry.entry}`);
+            this.loaded.delete(entry.id);
+        };
+
+        document.head.appendChild(script);
+    }
+
+    /** Removes everything a plugin contributed, when it is disabled. */
+    private teardown(pluginId: string): void {
+        this.loaded.delete(pluginId);
+        this.eventHandlers.delete(pluginId);
+
+        for (const [name, regs] of Array.from(this.slots.entries())) {
+            const kept = regs.filter((reg) => reg.pluginId !== pluginId);
+            if (kept.length !== regs.length) {
+                this.slots.set(name, kept);
+                this.notifySlot(name);
+            }
+        }
+
+        for (const [command, handlers] of Array.from(this.wsHandlers.entries())) {
+            this.wsHandlers.set(command, handlers.filter(() => false));
+            if ((this.wsHandlers.get(command) || []).length === 0) {
+                this.wsHandlers.delete(command);
+            }
+        }
+
+        const views = this.views.value.filter((view) => view.pluginId !== pluginId);
+        if (views.length !== this.views.value.length) {
+            this.views.next(views);
+        }
+
+        for (const node of Array.from(document.querySelectorAll(`script[data-rdio-plugin="${pluginId}"]`))) {
+            node.remove();
+        }
+        for (const node of Array.from(document.querySelectorAll(`style[data-rdio-plugin="${pluginId}"]`))) {
+            node.remove();
+        }
+    }
+
+    /**
+     * Installs window.rdioScanner.plugins. Plugin scripts call register() on it
+     * as they load, so it has to exist before any of them run.
+     */
+    private installGlobal(): void {
+        const host = this;
+
+        const globalScope = window as unknown as { rdioScanner?: { [key: string]: unknown } };
+        const root = globalScope.rdioScanner || (globalScope.rdioScanner = {});
+
+        root['plugins'] = {
+            apiVersion: PLUGIN_API_VERSION,
+
+            register(pluginId: string, definition: { init?: (ctx: unknown) => void }): void {
+                if (!pluginId || typeof definition?.init !== 'function') {
+                    console.error('[rdio-scanner] plugin register() needs an id and an init function');
+                    return;
+                }
+
+                const entry = host.entries.find((candidate) => candidate.id === pluginId);
+                if (!entry) {
+                    console.warn(`[rdio-scanner] plugin ${pluginId} registered but is not enabled on this server`);
+                    return;
+                }
+
+                host.safely(() => definition.init!(host.contextFor(entry)));
+            },
+        };
+    }
+
+    /** Builds the API object one plugin sees, bound to its own identity. */
+    private contextFor(entry: PluginEntry) {
+        const host = this;
+        const pluginId = entry.id;
+
+        const assetUrl = (path: string) => `${entry.base}${String(path).replace(/^\/+/, '')}`;
+
+        return {
+            plugin: { id: entry.id, name: entry.name, version: entry.version },
+
+            on(event: string, handler: (payload: unknown) => void): void {
+                let byEvent = host.eventHandlers.get(pluginId);
+                if (!byEvent) {
+                    byEvent = new Map();
+                    host.eventHandlers.set(pluginId, byEvent);
+                }
+                const handlers = byEvent.get(event) || [];
+                handlers.push(handler);
+                byEvent.set(event, handlers);
+
+                // Replay the latest value so a plugin that loads after the
+                // config arrived isn't left waiting for the next one.
+                if (host.lastEvent.has(event)) {
+                    host.safely(() => handler(host.lastEvent.get(event)));
+                }
+            },
+
+            slots: {
+                mount(name: string, factory: SlotFactory): void {
+                    const regs = host.slots.get(name) || [];
+                    regs.push({ pluginId, factory });
+                    host.slots.set(name, regs);
+                    host.notifySlot(name);
+                },
+            },
+
+            views: {
+                register(spec: PluginViewSpec): void {
+                    if (!spec?.id || typeof spec.mount !== 'function') {
+                        console.error(`[rdio-scanner] plugin ${pluginId} views.register() needs an id and a mount function`);
+                        return;
+                    }
+
+                    const view: RegisteredPluginView = {
+                        ...spec,
+                        pluginId,
+                        key: `${pluginId}:${spec.id}`,
+                    };
+
+                    const views = host.views.value.filter((existing) => existing.key !== view.key);
+                    views.push(view);
+
+                    // Views change navigation, which Angular renders — so this
+                    // one has to re-enter the zone.
+                    host.ngZone.run(() => host.views.next(views));
+                },
+            },
+
+            ws: {
+                on(command: string, handler: (payload: unknown) => void): void {
+                    const key = String(command).toUpperCase();
+                    const handlers = host.wsHandlers.get(key) || [];
+                    handlers.push(handler);
+                    host.wsHandlers.set(key, handlers);
+                },
+                send(command: string, payload: unknown): void {
+                    host.wsSender?.(String(command).toUpperCase(), payload);
+                },
+            },
+
+            api: {
+                get(path: string): Promise<unknown> {
+                    return fetch(`api/plugin/${pluginId}/${String(path).replace(/^\/+/, '')}`)
+                        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))));
+                },
+                post(path: string, body: unknown): Promise<unknown> {
+                    return fetch(`api/plugin/${pluginId}/${String(path).replace(/^\/+/, '')}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body ?? {}),
+                    }).then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))));
+                },
+            },
+
+            config: {
+                get(): { [key: string]: unknown } {
+                    return { ...host.exposedConfig };
+                },
+            },
+
+            assets: {
+                url: assetUrl,
+                loadScript(path: string): Promise<void> {
+                    return new Promise((resolve, reject) => {
+                        const el = document.createElement('script');
+                        el.src = assetUrl(path);
+                        el.async = true;
+                        el.dataset['rdioPlugin'] = pluginId;
+                        el.onload = () => resolve();
+                        el.onerror = () => reject(new Error(`cannot load ${path}`));
+                        document.head.appendChild(el);
+                    });
+                },
+                loadStyle(path: string): Promise<void> {
+                    return new Promise((resolve, reject) => {
+                        const el = document.createElement('link');
+                        el.rel = 'stylesheet';
+                        el.href = assetUrl(path);
+                        el.dataset['rdioPlugin'] = pluginId;
+                        el.onload = () => resolve();
+                        el.onerror = () => reject(new Error(`cannot load ${path}`));
+                        document.head.appendChild(el);
+                    });
+                },
+            },
+
+            injectCss(css: string): void {
+                const style = document.createElement('style');
+                style.dataset['rdioPlugin'] = pluginId;
+                style.textContent = css;
+                document.head.appendChild(style);
+            },
+        };
+    }
+
+    /**
+     * Runs plugin code without letting it break the app. Plugin frontend code
+     * is third-party and runs with full page privileges by design, so the most
+     * that can be done is stop an exception propagating into Angular.
+     */
+    private safely(fn: () => void): void {
+        try {
+            fn();
+        } catch (err) {
+            console.error('[rdio-scanner] plugin error', err);
+        }
+    }
+}
