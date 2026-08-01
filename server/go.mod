@@ -1,6 +1,6 @@
 module rdio-scanner/server
 
-go 1.18
+go 1.25
 
 require (
 	github.com/dhowden/tag v0.0.0-20220618230019-adf36e896086
@@ -11,21 +11,27 @@ require (
 	github.com/gorilla/websocket v1.5.0
 	github.com/kardianos/service v1.2.1
 	github.com/lib/pq v1.10.9
-	golang.org/x/crypto v0.0.0-20220926161630-eccd6366d1be
+	golang.org/x/crypto v0.25.0
 	gopkg.in/ini.v1 v1.67.0
 	modernc.org/sqlite v1.19.1
 )
 
 require (
+	github.com/dlclark/regexp2/v2 v2.5.2 // indirect
+	github.com/dop251/goja v0.0.0-20260723142020-b4aef50fa347 // indirect
+	github.com/dop251/goja_nodejs v0.0.0-20260212111938-1f56ff5bcf14 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
+	github.com/google/pprof v0.0.0-20240727154555-813a5fbdbec8 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/mattn/go-isatty v0.0.16 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20220927061507-ef77025ab5aa // indirect
 	github.com/stretchr/testify v1.7.0 // indirect
-	golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4 // indirect
-	golang.org/x/net v0.0.0-20221002022538-bcab6841153b // indirect
-	golang.org/x/sys v0.0.0-20220928140112-f11e5e49a4ec // indirect
-	golang.org/x/text v0.3.7 // indirect
-	golang.org/x/tools v0.1.12 // indirect
+	golang.org/x/mod v0.17.0 // indirect
+	golang.org/x/net v0.27.0 // indirect
+	golang.org/x/sync v0.7.0 // indirect
+	golang.org/x/sys v0.22.0 // indirect
+	golang.org/x/text v0.16.0 // indirect
+	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d // indirect
 	lukechampine.com/uint128 v1.2.0 // indirect
 	modernc.org/cc/v3 v3.40.0 // indirect
 	modernc.org/ccgo/v3 v3.16.9 // indirect

@@ -44,6 +44,7 @@ type Controller struct {
 	Groups      *Groups
 	Logs        *Logs
 	Options     *Options
+	Plugins     *Plugins
 	Scheduler   *Scheduler
 	Stats       *Stats
 	Systems     *Systems
@@ -97,6 +98,7 @@ func NewController(config *Config) *Controller {
 		Groups:      NewGroups(),
 		Logs:        NewLogs(),
 		Options:     NewOptions(),
+		Plugins:     NewPlugins(),
 		Systems:     NewSystems(),
 		Tags:        NewTags(),
 		Clients:     NewClients(),
@@ -202,6 +204,25 @@ func (controller *Controller) EmitConfig() {
 	controller.InvalidateConfigCache()
 	go controller.Clients.EmitConfig(controller.Groups, controller.Options, controller.Systems, controller.Tags, controller.Accesses.IsRestricted())
 	go controller.Admin.BroadcastConfig()
+}
+
+// PluginExposedConfig collects the keys running plugins want included in the
+// CFG payload sent to webapp clients. Keys are namespaced by nothing — a plugin
+// picks its own names — so a later plugin wins a collision, which is visible
+// and debuggable rather than silently merged.
+func (controller *Controller) PluginExposedConfig() map[string]any {
+	exposed := map[string]any{}
+
+	for _, plugin := range controller.Plugins.Enabled() {
+		if plugin.runtime == nil {
+			continue
+		}
+		for key, value := range plugin.runtime.ExposedConfig() {
+			exposed[key] = value
+		}
+	}
+
+	return exposed
 }
 
 func (controller *Controller) IngestCall(call *Call) {
@@ -403,6 +424,13 @@ func (controller *Controller) IngestCall(call *Call) {
 		controller.Logs.LogEvent(LogLevelWarn, err.Error())
 	}
 
+	// Plugins see the call before it is written. Dispatch is asynchronous
+	// inside each runtime, so this cannot stall the single ingest goroutine —
+	// which also means a plugin cannot reliably mutate what gets stored. That
+	// tradeoff is deliberate: ingest throughput matters more than giving
+	// plugins a synchronous veto.
+	controller.Plugins.EmitEvent(PluginEventCallIngested, pluginCallValue(call, false))
+
 	if id, err = controller.Calls.WriteCall(call, controller.Database); err == nil {
 		call.Id = id
 		call.systemLabel = system.Label
@@ -477,6 +505,10 @@ func (controller *Controller) IngestCall(call *Call) {
 		// downstreams receive calls at near-real-time and the transcript-push
 		// race (where small JSON beats large multipart) loses its head start.
 		controller.EmitCallToDownstreams(call)
+
+		// Now that the call has an id, plugins can key their own tables to it.
+		// This is the hook most plugins actually want.
+		controller.Plugins.EmitEvent(PluginEventCallStored, pluginCallValue(call, false))
 
 		controller.Delayer.Delay(call)
 
@@ -574,9 +606,34 @@ func (controller *Controller) ProcessMessage(client *Client, message *Message) e
 		if err := controller.ProcessMessageCommandTranscript(client, message); err != nil {
 			return err
 		}
+
+	} else {
+		// Anything core doesn't recognise is offered to the plugins. Without
+		// this the chain silently swallowed unknown commands, which is what
+		// lets a plugin add its own protocol messages over the connection the
+		// client already has open.
+		controller.ProcessMessageCommandPlugin(client, message)
 	}
 
 	return nil
+}
+
+// ProcessMessageCommandPlugin routes an unrecognised websocket command to
+// whichever plugin claimed it. Unclaimed commands are ignored, exactly as they
+// were before plugins existed.
+func (controller *Controller) ProcessMessageCommandPlugin(client *Client, message *Message) {
+	command, ok := message.Command.(string)
+	if !ok {
+		return
+	}
+
+	for _, plugin := range controller.Plugins.Enabled() {
+		if plugin.runtime == nil || !plugin.runtime.HasWsHandler(command) {
+			continue
+		}
+		plugin.runtime.DispatchWs(client, command, message.Payload)
+		return
+	}
 }
 
 func (controller *Controller) ProcessMessageCommandTranscript(client *Client, message *Message) error {
@@ -808,6 +865,16 @@ func (controller *Controller) Start() error {
 		return err
 	}
 
+	// Plugins load after everything they can reach is already populated, so a
+	// startup handler sees a fully-configured controller. A failure to read the
+	// registry is non-fatal: a broken plugin directory must not stop the server
+	// from serving calls.
+	if err = controller.Plugins.Read(controller.Database, controller.Config); err != nil {
+		controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("plugins read: %v", err))
+	} else if err = controller.Plugins.Start(controller); err != nil {
+		controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("plugins start: %v", err))
+	}
+
 	if err = controller.Admin.Start(); err != nil {
 		return err
 	}
@@ -921,6 +988,10 @@ func (controller *Controller) Start() error {
 
 func (controller *Controller) Terminate() {
 	controller.Dirwatches.Stop()
+
+	// Stop plugins before closing the database — a shutdown handler that wants
+	// to flush state needs its tables to still be reachable.
+	controller.Plugins.Stop()
 
 	if err := controller.Database.Sql.Close(); err != nil {
 		log.Println(err)

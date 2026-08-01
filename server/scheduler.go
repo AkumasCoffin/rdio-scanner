@@ -86,6 +86,11 @@ func (scheduler *Scheduler) run() {
 	if err := scheduler.pruneDatabase(); err != nil {
 		logError(err)
 	}
+
+	// Plugins share the maintenance tick rather than each running their own
+	// timer, so periodic plugin work lands on a predictable schedule alongside
+	// pruning instead of scattered across the hour.
+	scheduler.Controller.Plugins.EmitEvent(PluginEventTick, nil)
 }
 
 func (scheduler *Scheduler) Start() error {

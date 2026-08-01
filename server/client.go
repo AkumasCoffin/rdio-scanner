@@ -430,6 +430,27 @@ func (clients *Clients) EmitTranscript(id uint, system uint, talkgroup uint, tra
 	}
 }
 
+// EmitPluginMessage broadcasts a plugin-defined command. When scoped is true
+// the message is only delivered to clients allowed to see the given
+// system/talkgroup, which is what stops a plugin leaking data about restricted
+// systems to listeners who can't see them.
+//
+// Like every other emit here, delivery is best effort — enqueue drops to
+// clients that have fallen behind rather than blocking under Clients.mutex.
+func (clients *Clients) EmitPluginMessage(message *Message, scoped bool, system uint, talkgroup uint, restricted bool) {
+	probe := &Call{System: system, Talkgroup: talkgroup}
+
+	clients.mutex.RLock()
+	defer clients.mutex.RUnlock()
+
+	for c := range clients.Map {
+		if scoped && restricted && c.Access != nil && !c.Access.HasAccess(probe) {
+			continue
+		}
+		c.enqueue(message)
+	}
+}
+
 func (clients *Clients) EmitListenersCount() {
 	clients.mutex.RLock()
 	defer clients.mutex.RUnlock()

@@ -138,6 +138,7 @@ var postgresSerialColumns = [][2]string{
 	{"rdioScannerDownstreams", "_id"},
 	{"rdioScannerGroups", "_id"},
 	{"rdioScannerLogs", "_id"},
+	{"rdioScannerPlugins", "_id"},
 	{"rdioScannerSystems", "_id"},
 	{"rdioScannerTags", "_id"},
 	{"rdioScannerTalkgroups", "_id"},
@@ -413,6 +414,9 @@ func (db *Database) migrate() error {
 	}
 	if err == nil {
 		err = db.migration20260617120000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260801120000(verbose)
 	}
 
 	return err
@@ -1155,6 +1159,33 @@ func (db *Database) migration20260519110000(verbose bool) error {
 		}
 	}
 	return db.migrateWithSchema("20260519110000-create-delayed-table", queries, verbose)
+}
+
+// migration20260801120000 creates the plugin registry. One row per installed
+// plugin; the plugin's own tables are created separately from its manifest and
+// namespaced under `plugin_<id>_`.
+//
+// manifest holds a copy of the plugin.json that was installed. It is redundant
+// with the copy on disk by design: it lets the admin panel still describe a
+// plugin whose files have gone missing, and tells the purge action which tables
+// to drop when the manifest is no longer readable.
+func (db *Database) migration20260801120000(verbose bool) error {
+	var queries []string
+	switch db.Config.DbType {
+	case DbTypeSqlite:
+		queries = []string{
+			"create table `rdioScannerPlugins` (`_id` integer primary key autoincrement, `pluginId` varchar(32) not null unique, `name` text, `version` varchar(32), `source` text, `branch` varchar(255), `enabled` boolean not null default 0, `installedAt` datetime, `manifest` text)",
+		}
+	case DbTypePostgres:
+		queries = []string{
+			`create table "rdioScannerPlugins" ("_id" serial primary key, "pluginId" varchar(32) not null unique, "name" text, "version" varchar(32), "source" text, "branch" varchar(255), "enabled" boolean not null default false, "installedAt" timestamptz, "manifest" text)`,
+		}
+	default:
+		queries = []string{
+			"create table `rdioScannerPlugins` (`_id` integer not null auto_increment, `pluginId` varchar(32) not null, `name` text, `version` varchar(32), `source` text, `branch` varchar(255), `enabled` boolean not null default 0, `installedAt` datetime, `manifest` text, primary key (`_id`), unique key `rdio_scanner_plugins_plugin_id` (`pluginId`))",
+		}
+	}
+	return db.migrateWithSchema("20260801120000-create-plugins-table", queries, verbose)
 }
 
 // migration20260615120000 adds indexes that make the admin logs page filters

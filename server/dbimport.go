@@ -66,6 +66,12 @@ var importTables = []importTable{
 	{name: "rdioScannerApiKeys", key: "_id", booleans: []string{"disabled"}},
 	{name: "rdioScannerDirWatches", key: "_id", booleans: []string{"deleteAfter", "disabled", "usePolling"}},
 	{name: "rdioScannerDownstreams", key: "_id", booleans: []string{"disabled"}},
+	// The registry moves, but the plugins' own `plugin_*` tables do not: they
+	// are created from each manifest on the target when the plugin starts, and
+	// enumerating them here would mean importing tables this code knows nothing
+	// about. A migrated install re-downloads its plugins and keeps its settings
+	// only if those tables are copied separately.
+	{name: "rdioScannerPlugins", key: "_id", booleans: []string{"enabled"}, dateTimes: []string{"installedAt"}},
 }
 
 var importCallsTable = importTable{
