@@ -31,7 +31,6 @@ const (
 	MessageCommandPin            = "PIN"
 	MessageCommandPushId         = "PID"
 	MessageCommandServer         = "SRV"
-	MessageCommandTranscript     = "TRX"
 	MessageCommandVersion        = "VER"
 )
 

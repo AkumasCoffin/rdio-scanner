@@ -716,11 +716,15 @@ func pluginCallValue(call *Call, withAudio bool) map[string]any {
 	}
 
 	value := map[string]any{
-		"id":          call.Id,
-		"meta":        meta,
+		"id":   call.Id,
+		"meta": meta,
+		// RFC3339 UTC, the same form the wire protocol and every server-to-server
+		// endpoint use. Handing over a Go time here would stringify differently
+		// in JavaScript, so a plugin correlating a call with an inbound push
+		// would silently never match.
+		"dateTime":    call.DateTime.UTC().Format(time.RFC3339),
 		"system":      call.System,
 		"talkgroup":   call.Talkgroup,
-		"dateTime":    call.DateTime,
 		"frequency":   call.Frequency,
 		"frequencies": call.Frequencies,
 		"patches":     call.Patches,

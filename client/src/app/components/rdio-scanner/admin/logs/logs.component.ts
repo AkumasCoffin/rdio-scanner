@@ -44,7 +44,7 @@ export class RdioScannerAdminLogsComponent implements OnDestroy {
     readonly categories = [
         { value: 'connections', label: 'Listener connections' },
         { value: 'access', label: 'Access & login' },
-        { value: 'transcription', label: 'Transcription' },
+        { value: 'plugin', label: 'Plugins' },
         { value: 'sharelink', label: 'Share-link requests' },
         { value: 'config', label: 'Configuration' },
         { value: 'lifecycle', label: 'Server lifecycle' },
