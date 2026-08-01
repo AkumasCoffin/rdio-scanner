@@ -157,8 +157,21 @@ func decodePluginBody(r *http.Request, dest any) error {
 	return json.NewDecoder(r.Body).Decode(dest)
 }
 
+// wantsFreshListing reports whether the caller explicitly asked to bypass the
+// listing cache. Pressing Refresh should really re-fetch — otherwise a plugin
+// pushed a minute ago stays invisible for the rest of the cache TTL, which
+// reads as the feature being broken.
+func wantsFreshListing(r *http.Request) bool {
+	v := r.URL.Query().Get("refresh")
+	return v == "1" || v == "true"
+}
+
 func (admin *Admin) pluginBranches(w http.ResponseWriter, r *http.Request) {
 	repoUrl := r.URL.Query().Get("repo")
+
+	if wantsFreshListing(r) {
+		admin.Controller.PluginStore.InvalidateCache()
+	}
 
 	branches, err := admin.Controller.PluginStore.Branches(repoUrl)
 	if err != nil {
@@ -173,7 +186,12 @@ func (admin *Admin) pluginAvailable(w http.ResponseWriter, r *http.Request) {
 	repoUrl := r.URL.Query().Get("repo")
 	branch := r.URL.Query().Get("branch")
 
-	available, err := admin.Controller.PluginStore.Available(repoUrl, branch)
+	fresh := wantsFreshListing(r)
+	if fresh {
+		admin.Controller.PluginStore.InvalidateCache()
+	}
+
+	available, err := admin.Controller.PluginStore.Available(repoUrl, branch, fresh)
 	if err != nil {
 		writeJsonError(w, http.StatusBadGateway, err.Error())
 		return

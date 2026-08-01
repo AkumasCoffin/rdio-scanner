@@ -26,6 +26,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -314,7 +315,12 @@ type AvailablePlugin struct {
 }
 
 // Available lists the plugins a repository offers on a given branch.
-func (store *PluginStore) Available(rawUrl string, branch string) ([]*AvailablePlugin, error) {
+//
+// fresh defeats caching all the way down, including GitHub's own CDN in front
+// of raw.githubusercontent.com. Without that last part, pressing Refresh
+// straight after pushing a plugin still shows the old manifest for several
+// minutes, which reads as the button not working.
+func (store *PluginStore) Available(rawUrl string, branch string, fresh bool) ([]*AvailablePlugin, error) {
 	repo, err := store.findRepo(rawUrl)
 	if err != nil {
 		return nil, err
@@ -359,6 +365,10 @@ func (store *PluginStore) Available(rawUrl string, branch string) ([]*AvailableP
 			raw := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/plugins/%s/%s",
 				url.PathEscape(owner), url.PathEscape(name), url.PathEscape(branch),
 				url.PathEscape(entry.Name), PluginManifestName)
+
+			if fresh {
+				raw += "?rdio-refresh=" + strconv.FormatInt(time.Now().UnixNano(), 36)
+			}
 
 			manifestResponse, err := store.githubRequest(repo, raw)
 			if err != nil {

@@ -97,6 +97,82 @@ export interface Config {
     tags?: Tag[];
 }
 
+export interface PluginConfigField {
+    key: string;
+    type: 'text' | 'password' | 'number' | 'boolean' | 'select' | 'textarea' | 'system' | 'talkgroup';
+    label: string;
+    help?: string;
+    default?: unknown;
+    options?: { value: unknown; label: string }[];
+    min?: number;
+    max?: number;
+    maxLength?: number;
+    required?: boolean;
+    placeholder?: string;
+}
+
+export interface PluginManifest {
+    id: string;
+    name: string;
+    version: string;
+    description: string;
+    author?: string;
+    license?: string;
+    homepage?: string;
+    minServerVersion?: string;
+    maxServerVersion?: string;
+    main?: string;
+    web?: string;
+    permissions?: string[];
+    config?: PluginConfigField[];
+    tables?: { name: string; columns: unknown[] }[];
+}
+
+export interface AdminPlugin {
+    pluginId: string;
+    name: string;
+    version: string;
+    source: string;
+    branch: string;
+    enabled: boolean;
+    installedAt: string;
+    manifest?: PluginManifest;
+    error?: string;
+    present: boolean;
+    running: boolean;
+    config?: { [key: string]: unknown };
+    restartRequired: boolean;
+}
+
+export interface AdminAvailablePlugin {
+    repo: string;
+    branch: string;
+    official: boolean;
+    manifest: PluginManifest;
+    compatible: boolean;
+    incompatible?: string;
+    installed: boolean;
+    updateAvailable: boolean;
+}
+
+export interface AdminPluginRepo {
+    url: string;
+    official: boolean;
+    hasToken: boolean;
+}
+
+export interface AdminPluginRepoInput {
+    url: string;
+    token?: string;
+}
+
+export interface AdminPluginsResponse {
+    plugins: AdminPlugin[];
+    repos: AdminPluginRepo[];
+    serverVersion: string;
+    pluginsDir: string;
+}
+
 export interface DirWatch {
     _id?: string;
     delay?: number;
@@ -729,6 +805,88 @@ export class RdioScannerAdminService implements OnDestroy {
             this.errorHandler(error);
             return undefined;
         }
+    }
+
+    // --- plugins ----------------------------------------------------------
+    //
+    // Plugin management deliberately sits outside the bulk config save.
+    // Installing is a long, fallible network operation, and it has no business
+    // inside the transaction that writes systems, talkgroups and access codes.
+
+    private pluginUrl(path: string): string {
+        return `${window.location.href}/../api/admin/plugins${path}`;
+    }
+
+    async getPlugins(): Promise<AdminPluginsResponse> {
+        return await firstValueFrom(this.ngHttpClient.get<AdminPluginsResponse>(
+            this.pluginUrl(''),
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    // refresh=1 bypasses the server's listing cache. Passed when the user asked
+    // for a refresh explicitly, so a just-pushed plugin shows up immediately
+    // rather than after the cache expires.
+    async getPluginBranches(repo: string, refresh = false): Promise<{ branches: string[] }> {
+        return await firstValueFrom(this.ngHttpClient.get<{ branches: string[] }>(
+            this.pluginUrl(`/branches?repo=${encodeURIComponent(repo)}${refresh ? '&refresh=1' : ''}`),
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    async getPluginsAvailable(repo: string, branch: string, refresh = false): Promise<{ available: AdminAvailablePlugin[] }> {
+        return await firstValueFrom(this.ngHttpClient.get<{ available: AdminAvailablePlugin[] }>(
+            this.pluginUrl(`/available?repo=${encodeURIComponent(repo)}&branch=${encodeURIComponent(branch)}${refresh ? '&refresh=1' : ''}`),
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    async installPlugin(repo: string, branch: string, pluginId: string): Promise<unknown> {
+        return await firstValueFrom(this.ngHttpClient.post(
+            this.pluginUrl('/install'),
+            { repo, branch, pluginId },
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    async togglePlugin(pluginId: string, enabled: boolean): Promise<unknown> {
+        return await firstValueFrom(this.ngHttpClient.post(
+            this.pluginUrl('/toggle'),
+            { pluginId, enabled },
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    async uninstallPlugin(pluginId: string): Promise<unknown> {
+        return await firstValueFrom(this.ngHttpClient.post(
+            this.pluginUrl('/uninstall'),
+            { pluginId },
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    async purgePluginData(pluginId: string): Promise<unknown> {
+        return await firstValueFrom(this.ngHttpClient.post(
+            this.pluginUrl('/purge'),
+            { pluginId },
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    async savePluginConfig(pluginId: string, config: { [key: string]: unknown }): Promise<unknown> {
+        return await firstValueFrom(this.ngHttpClient.post(
+            this.pluginUrl('/config'),
+            { pluginId, config },
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    async savePluginRepos(repos: AdminPluginRepoInput[]): Promise<{ repos: AdminPluginRepo[] }> {
+        return await firstValueFrom(this.ngHttpClient.post<{ repos: AdminPluginRepo[] }>(
+            this.pluginUrl('/repos'),
+            { repos },
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
     }
 
     async getUpdates(): Promise<AdminUpdates | undefined> {

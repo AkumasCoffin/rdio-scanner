@@ -1,0 +1,165 @@
+:host {
+    display: block;
+}
+
+.row {
+    align-items: center;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+
+    p {
+        margin: 0;
+    }
+
+    mat-form-field {
+        flex: 0 1 22rem;
+    }
+
+    &.top {
+        align-items: flex-start;
+    }
+
+    &.config-actions {
+        justify-content: flex-end;
+    }
+}
+
+.empty {
+    opacity: 0.7;
+    padding: 0.5rem 0;
+
+    code {
+        font-size: 0.8rem;
+        word-break: break-all;
+    }
+}
+
+.banner {
+    align-items: center;
+    background: rgba(127, 127, 127, 0.12);
+    border-radius: 6px;
+    gap: 0.75rem;
+    justify-content: flex-start;
+    padding: 0.75rem 1rem;
+
+    p {
+        flex: 1;
+        font-size: 0.9rem;
+    }
+
+    &.warn {
+        background: rgba(245, 158, 11, 0.16);
+    }
+
+    &.error {
+        background: rgba(239, 68, 68, 0.16);
+    }
+
+    &.info {
+        background: rgba(59, 130, 246, 0.16);
+    }
+}
+
+.plugin-card {
+    border: 1px solid rgba(127, 127, 127, 0.25);
+    border-radius: 6px;
+    margin-bottom: 0.75rem;
+    padding: 0.75rem 1rem;
+}
+
+.plugin-head {
+    align-items: flex-start;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.plugin-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.plugin-name {
+    font-weight: 600;
+}
+
+.plugin-meta,
+.plugin-desc {
+    opacity: 0.75;
+    word-break: break-word;
+}
+
+.plugin-state {
+    flex: 0 0 auto;
+}
+
+.plugin-flags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding-top: 0.5rem;
+
+    &:empty {
+        padding-top: 0;
+    }
+}
+
+.chip {
+    background: rgba(127, 127, 127, 0.18);
+    border-radius: 10px;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    padding: 0.15rem 0.55rem;
+    white-space: nowrap;
+
+    &.running {
+        background: rgba(34, 197, 94, 0.22);
+    }
+
+    &.pending {
+        background: rgba(59, 130, 246, 0.22);
+    }
+
+    &.missing,
+    &.warn {
+        background: rgba(239, 68, 68, 0.22);
+    }
+
+    // Permissions are informational: they tell the admin what a plugin is
+    // asking for before they install it.
+    &.perm {
+        background: rgba(127, 127, 127, 0.14);
+        opacity: 0.85;
+    }
+}
+
+.plugin-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    justify-content: flex-end;
+    padding-top: 0.25rem;
+}
+
+.plugin-config {
+    border-top: 1px solid rgba(127, 127, 127, 0.25);
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+}
+
+.repo-row {
+    align-items: center;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+
+    div {
+        min-width: 0;
+        word-break: break-all;
+    }
+}

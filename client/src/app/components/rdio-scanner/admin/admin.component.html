@@ -22,6 +22,15 @@
             </mat-expansion-panel-header>
             <rdio-scanner-admin-config #configComponent></rdio-scanner-admin-config>
         </mat-expansion-panel>
+        <mat-expansion-panel (afterExpand)="pluginsComponent.load()">
+            <mat-expansion-panel-header>
+                <mat-panel-title>
+                    <mat-icon>extension</mat-icon>
+                    Plugins
+                </mat-panel-title>
+            </mat-expansion-panel-header>
+            <rdio-scanner-admin-plugins #pluginsComponent></rdio-scanner-admin-plugins>
+        </mat-expansion-panel>
         <mat-expansion-panel (afterExpand)="logsComponent.reload()">
             <mat-expansion-panel-header>
                 <mat-panel-title>

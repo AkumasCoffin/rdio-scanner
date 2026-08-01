@@ -1,0 +1,296 @@
+<div class="row top">
+    <p class="mat-body">
+        Plugins extend Rdio Scanner without being built into it. Install them from a repository, then
+        restart the server to load them. Disabling a plugin keeps it installed; uninstalling one keeps
+        its settings and data.
+    </p>
+    <button type="button" mat-button color="accent" [disabled]="loading || busy" (click)="refresh()">Refresh</button>
+</div>
+
+<div class="row banner warn" *ngIf="restartRequired">
+    <mat-icon>restart_alt</mat-icon>
+    <p class="mat-body">
+        Restart Rdio Scanner to apply your plugin changes. Plugins are loaded once at startup.
+    </p>
+</div>
+
+<div class="row banner error" *ngIf="status">
+    <mat-icon>error_outline</mat-icon>
+    <p class="mat-body">{{ status }}</p>
+</div>
+
+<mat-accordion displayMode="flat">
+
+    <!-- ------------------------------------------------------------------ -->
+    <mat-expansion-panel expanded>
+        <mat-expansion-panel-header>
+            <mat-panel-title>
+                <mat-icon>extension</mat-icon>
+                Installed
+            </mat-panel-title>
+        </mat-expansion-panel-header>
+
+        <p class="mat-body empty" *ngIf="!plugins.length && !loading">
+            No plugins installed. Browse the Available section below, or copy a plugin into
+            <code>{{ pluginsDir }}</code> and restart.
+        </p>
+
+        <div class="plugin-card" *ngFor="let plugin of plugins; trackBy: trackByPluginId">
+            <div class="plugin-head">
+                <div class="plugin-identity">
+                    <span class="mat-body plugin-name">{{ plugin.name || plugin.pluginId }}</span>
+                    <span class="mat-caption plugin-meta">
+                        v{{ plugin.version }} &middot; {{ plugin.source }}<ng-container *ngIf="plugin.branch"> ({{ plugin.branch }})</ng-container>
+                    </span>
+                    <span class="mat-caption plugin-desc" *ngIf="plugin.manifest?.description">
+                        {{ plugin.manifest?.description }}
+                    </span>
+                </div>
+                <div class="plugin-state">
+                    <mat-slide-toggle color="primary" [checked]="plugin.enabled" [disabled]="busy"
+                        (change)="toggle(plugin)"
+                        [matTooltip]="plugin.enabled ? 'Disable this plugin' : 'Enable this plugin'">
+                    </mat-slide-toggle>
+                </div>
+            </div>
+
+            <div class="plugin-flags">
+                <span class="chip running" *ngIf="plugin.running">Running</span>
+                <span class="chip pending" *ngIf="plugin.restartRequired">Restart required</span>
+                <span class="chip missing" *ngIf="!plugin.present">Files missing</span>
+                <span class="chip warn" *ngIf="plugin.error" [matTooltip]="plugin.error">{{ plugin.error }}</span>
+            </div>
+
+            <div class="plugin-actions">
+                <button type="button" mat-button color="primary" [disabled]="busy || !plugin.manifest?.config?.length"
+                    (click)="toggleConfig(plugin)">
+                    {{ expandedConfig === plugin.pluginId ? 'Close settings' : 'Settings' }}
+                </button>
+                <button type="button" mat-button color="warn" [disabled]="busy" (click)="uninstall(plugin)">
+                    Uninstall
+                </button>
+                <button type="button" mat-button color="warn" [disabled]="busy || plugin.running"
+                    matTooltip="Permanently deletes this plugin's tables. Disable it and restart first."
+                    (click)="purge(plugin)">
+                    Purge data
+                </button>
+            </div>
+
+            <!-- Settings form, generated from the plugin's manifest. -->
+            <div class="plugin-config" *ngIf="expandedConfig === plugin.pluginId">
+                <div class="row" *ngFor="let field of configFields(plugin)">
+                    <p>
+                        <span class="mat-body">{{ field.label }}</span><br>
+                        <span class="mat-caption" *ngIf="field.help">{{ field.help }}</span>
+                    </p>
+                    <div [ngSwitch]="field.type">
+
+                        <mat-slide-toggle *ngSwitchCase="'boolean'" color="primary"
+                            [checked]="!!configDraft[field.key]"
+                            (change)="configDraft[field.key] = $event.checked">
+                        </mat-slide-toggle>
+
+                        <mat-form-field *ngSwitchCase="'number'">
+                            <input matInput type="number" [min]="field.min ?? null" [max]="field.max ?? null"
+                                [placeholder]="field.placeholder || ''"
+                                [ngModel]="configDraft[field.key]"
+                                (ngModelChange)="configDraft[field.key] = $event"
+                                [ngModelOptions]="{ standalone: true }">
+                        </mat-form-field>
+
+                        <mat-form-field *ngSwitchCase="'password'">
+                            <input matInput type="password" autocomplete="new-password"
+                                placeholder="unchanged"
+                                [ngModel]="configDraft[field.key]"
+                                (ngModelChange)="configDraft[field.key] = $event"
+                                [ngModelOptions]="{ standalone: true }">
+                        </mat-form-field>
+
+                        <mat-form-field *ngSwitchCase="'textarea'">
+                            <textarea matInput rows="4" [maxlength]="field.maxLength || null"
+                                [placeholder]="field.placeholder || ''"
+                                [ngModel]="configDraft[field.key]"
+                                (ngModelChange)="configDraft[field.key] = $event"
+                                [ngModelOptions]="{ standalone: true }"></textarea>
+                            <mat-hint align="end" *ngIf="field.maxLength">
+                                {{ $any(configDraft[field.key])?.length || 0 }} / {{ field.maxLength }}
+                            </mat-hint>
+                        </mat-form-field>
+
+                        <mat-form-field *ngSwitchCase="'select'">
+                            <mat-select [ngModel]="configDraft[field.key]"
+                                (ngModelChange)="configDraft[field.key] = $event"
+                                [ngModelOptions]="{ standalone: true }">
+                                <mat-option *ngFor="let option of field.options" [value]="option.value">
+                                    {{ option.label }}
+                                </mat-option>
+                            </mat-select>
+                        </mat-form-field>
+
+                        <mat-form-field *ngSwitchDefault>
+                            <input matInput type="text" [maxlength]="field.maxLength || null"
+                                [placeholder]="field.placeholder || ''"
+                                [ngModel]="configDraft[field.key]"
+                                (ngModelChange)="configDraft[field.key] = $event"
+                                [ngModelOptions]="{ standalone: true }">
+                            <mat-hint align="end" *ngIf="field.maxLength">
+                                {{ $any(configDraft[field.key])?.length || 0 }} / {{ field.maxLength }}
+                            </mat-hint>
+                        </mat-form-field>
+
+                    </div>
+                </div>
+                <div class="row config-actions">
+                    <button type="button" mat-button (click)="toggleConfig(plugin)">Cancel</button>
+                    <button type="button" mat-button color="accent" [disabled]="busy" (click)="saveConfig(plugin)">
+                        Save settings
+                    </button>
+                </div>
+            </div>
+        </div>
+    </mat-expansion-panel>
+
+    <!-- ------------------------------------------------------------------ -->
+    <mat-expansion-panel (afterExpand)="loadAvailable()">
+        <mat-expansion-panel-header>
+            <mat-panel-title>
+                <mat-icon>cloud_download</mat-icon>
+                Available
+            </mat-panel-title>
+        </mat-expansion-panel-header>
+
+        <div class="row">
+            <p>
+                <span class="mat-body">Repository</span><br>
+                <span class="mat-caption">Where to look for plugins.</span>
+            </p>
+            <mat-form-field>
+                <mat-select [(ngModel)]="selectedRepo" [ngModelOptions]="{ standalone: true }"
+                    (selectionChange)="onRepoChange()">
+                    <mat-option *ngFor="let repo of repos" [value]="repo.url">
+                        {{ repo.url }}{{ repo.official ? ' (official)' : '' }}
+                    </mat-option>
+                </mat-select>
+            </mat-form-field>
+        </div>
+
+        <div class="row">
+            <p>
+                <span class="mat-body">Branch</span><br>
+                <span class="mat-caption">
+                    Every branch is listed. Branches other than the mainline hold work in progress.
+                </span>
+            </p>
+            <mat-form-field>
+                <mat-select [(ngModel)]="selectedBranch" [ngModelOptions]="{ standalone: true }"
+                    (selectionChange)="loadAvailable()">
+                    <mat-option *ngFor="let branch of branches" [value]="branch">{{ branch }}</mat-option>
+                </mat-select>
+            </mat-form-field>
+        </div>
+
+        <div class="row banner warn" *ngIf="browsingThirdParty">
+            <mat-icon>gpp_maybe</mat-icon>
+            <p class="mat-body">
+                This is a third-party repository. Plugins run with full access to your server and to every
+                browser viewing it. Only install plugins from sources you trust.
+            </p>
+        </div>
+
+        <div class="row banner info" *ngIf="browsingUntestedBranch">
+            <mat-icon>science</mat-icon>
+            <p class="mat-body">
+                You are browsing the <strong>{{ selectedBranch }}</strong> branch, which may contain untested
+                or in-progress plugins.
+            </p>
+        </div>
+
+        <p class="mat-body empty" *ngIf="!available.length && !browsing">
+            No plugins found on this branch.
+        </p>
+
+        <div class="plugin-card" *ngFor="let entry of available; trackBy: trackByAvailableId">
+            <div class="plugin-head">
+                <div class="plugin-identity">
+                    <span class="mat-body plugin-name">{{ entry.manifest.name }}</span>
+                    <span class="mat-caption plugin-meta">
+                        v{{ entry.manifest.version }}<ng-container *ngIf="entry.manifest.author"> &middot; {{ entry.manifest.author }}</ng-container>
+                    </span>
+                    <span class="mat-caption plugin-desc">{{ entry.manifest.description }}</span>
+                </div>
+                <div class="plugin-state">
+                    <button type="button" mat-button color="accent"
+                        [disabled]="busy || !entry.compatible || (entry.installed && !entry.updateAvailable)"
+                        (click)="install(entry)">
+                        {{ entry.updateAvailable ? 'Update' : (entry.installed ? 'Installed' : 'Install') }}
+                    </button>
+                </div>
+            </div>
+
+            <div class="plugin-flags">
+                <span class="chip warn" *ngIf="!entry.compatible">{{ entry.incompatible }}</span>
+                <span class="chip perm" *ngFor="let permission of entry.manifest.permissions">{{ permission }}</span>
+            </div>
+        </div>
+    </mat-expansion-panel>
+
+    <!-- ------------------------------------------------------------------ -->
+    <mat-expansion-panel>
+        <mat-expansion-panel-header>
+            <mat-panel-title>
+                <mat-icon>hub</mat-icon>
+                Repositories
+            </mat-panel-title>
+        </mat-expansion-panel-header>
+
+        <div class="repo-row" *ngFor="let repo of repos">
+            <div>
+                <span class="mat-body">{{ repo.url }}</span><br>
+                <span class="mat-caption">
+                    {{ repo.official ? 'Official repository' : 'Third-party repository' }}<ng-container *ngIf="repo.hasToken"> &middot; token set</ng-container>
+                </span>
+            </div>
+            <button type="button" mat-button color="warn" *ngIf="!repo.official" [disabled]="busy"
+                (click)="removeRepo(repo)">Remove</button>
+        </div>
+
+        <div class="row banner warn">
+            <mat-icon>gpp_maybe</mat-icon>
+            <p class="mat-body">
+                Plugins run with full access to your server and to every browser viewing it. Only add
+                repositories you trust.
+            </p>
+        </div>
+
+        <div class="row">
+            <p>
+                <span class="mat-body">Add a repository</span><br>
+                <span class="mat-caption">A GitHub repository URL, for example
+                    https://github.com/owner/repo</span>
+            </p>
+            <mat-form-field>
+                <input matInput type="url" placeholder="https://github.com/owner/repo"
+                    [(ngModel)]="newRepoUrl" [ngModelOptions]="{ standalone: true }">
+            </mat-form-field>
+        </div>
+
+        <div class="row">
+            <p>
+                <span class="mat-body">Access token</span><br>
+                <span class="mat-caption">Optional. Needed for private repositories, and raises the
+                    GitHub rate limit.</span>
+            </p>
+            <mat-form-field>
+                <input matInput type="password" autocomplete="new-password"
+                    [(ngModel)]="newRepoToken" [ngModelOptions]="{ standalone: true }">
+            </mat-form-field>
+        </div>
+
+        <div class="row config-actions">
+            <button type="button" mat-button color="accent" [disabled]="busy || !newRepoUrl" (click)="addRepo()">
+                Add repository
+            </button>
+        </div>
+    </mat-expansion-panel>
+
+</mat-accordion>
