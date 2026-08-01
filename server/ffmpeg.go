@@ -265,7 +265,23 @@ func (ffmpeg *FFMpeg) Convert(call *Call, systems *Systems, tags *Tags, mode uin
 	tmp.Close()
 	defer os.Remove(tmpPath)
 
-	args = append(args, "-c:a", "aac", "-b:a", "32k", "-f", "ipod", tmpPath)
+	// -ar is what makes the result playable on iOS.
+	//
+	// ffmpeg keeps the source sample rate unless told otherwise, and scanner
+	// audio arrives at 8 or 16 kHz, so every converted call used to be low-rate
+	// AAC. iOS plays that happily in its media player — the same file opens in
+	// Files — but WebKit's Web Audio decoder is stricter than its media stack
+	// and rejects it outright with "EncodingError: Decoding failed". Since the
+	// webapp plays calls through decodeAudioData(), every call was silent on
+	// every iOS browser (all WebKit) while working in Chrome and on Android.
+	//
+	// 48 kHz is what iOS hardware runs at, so the browser does not resample
+	// again on playback. The source is bandwidth-limited speech, so upsampling
+	// invents no detail and loses none. It does cost roughly 18% more bytes per
+	// call — the bitrate is unchanged but there are six times as many AAC
+	// frames, each with its own overhead — which is the price of the audio
+	// being playable at all on an entire class of device.
+	args = append(args, "-c:a", "aac", "-b:a", "32k", "-ar", "48000", "-f", "ipod", tmpPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), ffmpegTimeout)
 	defer cancel()
