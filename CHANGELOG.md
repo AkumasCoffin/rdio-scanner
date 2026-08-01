@@ -2,7 +2,38 @@
 
 ## Unreleased
 
-_(nothing yet — bullets land here as work is merged to master)_
+### Server
+
+- **Fixed: no audio on iOS.** Every converted call was silent in Safari and any
+  other iOS browser — all of them WebKit — while playing normally in Chrome, on
+  Android and on desktop. The cause was server-side. Conversion piped ffmpeg's
+  output through stdout, and because MP4 has to seek backwards to write its
+  sample index, piping forced `-movflags frag_keyframe+empty_moov` — producing a
+  fragmented MP4 whose `moov` declares zero samples, with the real index in a
+  trailing `moof`. ffprobe and Chrome read that; WebKit's `decodeAudioData()`
+  resolves samples from the `moov` sample tables, finds none, and fails. ffmpeg
+  now writes to a temp file, which is seekable, so the output is an ordinary
+  MP4 that decodes everywhere. Same codec and bitrate, and slightly smaller.
+  Note this only affects newly ingested calls — audio already stored stays
+  fragmented and remains silent on iOS.
+
+### Webapp
+
+- Audio decode failures are now logged with the call id and the rejected audio
+  type. The playback path already skipped an undecodable call, so the feed kept
+  moving, but it said nothing — making a browser-specific decode failure
+  indistinguishable from "audio is broken".
+
+### Android
+
+- **Grouped talkgroup selector.** The app now honours the Sort By Groups and
+  Sort By Tags options added for the webapp in 6.13.4, laying the selector out
+  in sections keyed by the configured Groups or Tags map instead of a flat
+  per-system list. Sections carry the same tri-state checkbox, expansion and
+  active-count treatment as system cards, and toggling a whole section is a
+  single update. Ordering and skip rules mirror the webapp so both clients lay
+  out the same config identically. Presentational only — the livefeed sent to
+  the server is unchanged.
 
 ---
 
