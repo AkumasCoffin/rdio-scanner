@@ -218,8 +218,24 @@ export class RdioScannerService implements OnDestroy {
     // This bypasses the gain node, so volume is applied to the element
     // directly; alerts still come from the Web Audio side, which works because
     // they are synthesized rather than decoded.
+    //
+    // ONE element, created and unlocked during the same user gesture that
+    // starts the audio contexts, then reused for every call. iOS grants
+    // autoplay permission per element, not per page: an element constructed
+    // later — after the gesture — has play() rejected. Creating one per call
+    // is why only some of them played, and why tapping a call in search always
+    // worked, that tap being a gesture of its own.
     private audioElement: HTMLAudioElement | undefined;
     private audioElementUrl: string | undefined;
+    // Whether the element is currently driving a call. Distinct from the
+    // element merely existing, which it now does for the whole session.
+    private mediaPlaying = false;
+
+    // One sample of silence. Played and immediately paused inside the gesture
+    // to unlock the element; PCM is used because it is the one thing WebKit
+    // decodes without the platform codec this fallback exists to avoid.
+    private static readonly SILENT_WAV =
+        'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==';
     private gainNode: GainNode | undefined;
 
     // Bumped every time playback starts or stops. decodeAudioData is async —
@@ -1059,12 +1075,14 @@ export class RdioScannerService implements OnDestroy {
             this.audioContext?.suspend();
             // Suspending the context does nothing to the fallback element —
             // it plays outside the Web Audio graph.
-            this.audioElement?.pause();
+            if (this.mediaPlaying) {
+                this.audioElement?.pause();
+            }
 
         } else {
             this.audioContext?.resume();
 
-            if (this.audioElement) {
+            if (this.mediaPlaying && this.audioElement) {
                 this.audioElement.play().catch(() => {
                     // Resume was refused; the call is skipped by the element's
                     // own error handling rather than left hanging.
@@ -1235,7 +1253,7 @@ export class RdioScannerService implements OnDestroy {
         // readout counts the call now playing as though it had not started.
         let position: number;
 
-        if (this.audioElement) {
+        if (this.mediaPlaying && this.audioElement) {
             position = this.audioElement.currentTime || 0;
 
         } else if (isNaN(this.audioSourceStartTime)) {
@@ -1694,8 +1712,11 @@ export class RdioScannerService implements OnDestroy {
      */
     private playViaMediaElement(generation: number, queue: number): boolean {
         const call = this.call;
+        const element = this.audioElement;
 
-        if (!call?.audio?.data || this.audioElement) {
+        // No element means no gesture has happened yet, so there is nothing
+        // unlocked to play through.
+        if (!call?.audio?.data || !element || this.mediaPlaying) {
             return false;
         }
 
@@ -1711,13 +1732,16 @@ export class RdioScannerService implements OnDestroy {
             return false;
         }
 
-        const element = new Audio();
-        element.preload = 'auto';
-        element.volume = this.muted ? 0 : this.volume;
+        // Release the previous call's blob before adopting this one.
+        if (this.audioElementUrl) {
+            URL.revokeObjectURL(this.audioElementUrl);
+        }
+
+        element.volume = this.muted ? 0 : Math.min(1, Math.max(0, this.volume));
         element.src = url;
 
-        this.audioElement = element;
         this.audioElementUrl = url;
+        this.mediaPlaying = true;
 
         const stale = () => generation !== this.playGeneration;
 
@@ -1727,7 +1751,11 @@ export class RdioScannerService implements OnDestroy {
         };
 
         element.onerror = () => {
-            if (stale()) return;
+            // Swapping src aborts the previous load and fires an error against
+            // the handler now attached. Ignore anything that is not about the
+            // clip this handler was installed for, or a good call gets skipped
+            // because the one before it was torn down.
+            if (stale() || element.src !== url) return;
             console.warn(`Media element also failed to play call ${call.id}; skipping.`);
             this.skip({ delay: false });
         };
@@ -1773,22 +1801,24 @@ export class RdioScannerService implements OnDestroy {
         return true;
     }
 
-    /** Tears down the fallback element and releases its blob URL. */
+    /**
+     * Stops fallback playback and detaches its handlers.
+     *
+     * The element itself is kept: it is unlocked for this session and a
+     * replacement would not be, so it has to survive between calls. The blob
+     * URL is held rather than revoked here — revoking it while the element
+     * still points at it makes Safari log a load error — and is released when
+     * the next call takes over, or by the element being reassigned.
+     */
     private releaseMediaElement(): void {
+        this.mediaPlaying = false;
+
         if (this.audioElement) {
             this.audioElement.onended = null;
             this.audioElement.onerror = null;
             this.audioElement.ontimeupdate = null;
             this.audioElement.onloadedmetadata = null;
             this.audioElement.pause();
-            this.audioElement.removeAttribute('src');
-            this.audioElement.load();
-            this.audioElement = undefined;
-        }
-
-        if (this.audioElementUrl) {
-            URL.revokeObjectURL(this.audioElementUrl);
-            this.audioElementUrl = undefined;
         }
     }
 
@@ -2231,6 +2261,28 @@ export class RdioScannerService implements OnDestroy {
                 this.updateGainNode();
             }
 
+            // Build and unlock the fallback element here, inside the gesture,
+            // because iOS grants autoplay per element. An element created later
+            // cannot be played programmatically, so the fallback has to hold on
+            // to this one for the whole session.
+            if (!this.audioElement) {
+                const element = new Audio();
+                element.preload = 'auto';
+                element.volume = this.muted ? 0 : Math.min(1, Math.max(0, this.volume));
+                element.src = RdioScannerService.SILENT_WAV;
+
+                this.audioElement = element;
+
+                const primed = element.play();
+
+                if (primed && typeof primed.then === 'function') {
+                    primed.then(() => element.pause()).catch(() => {
+                        // Unlock refused. The element still exists and may work
+                        // once the user interacts again; nothing else to do.
+                    });
+                }
+            }
+
             if (this.audioContext) {
                 const resume = () => {
                     if (!this.livefeedPaused) {
@@ -2268,7 +2320,7 @@ export class RdioScannerService implements OnDestroy {
             // audioElement is checked too: on a browser using the fallback there
             // is never an audioSource, so without it a second gesture would
             // start the call over on top of itself.
-            if (this.call?.audio && !this.audioSource && !this.audioElement) {
+            if (this.call?.audio && !this.audioSource && !this.mediaPlaying) {
                 this.beginAudioPlayback();
             }
         };
