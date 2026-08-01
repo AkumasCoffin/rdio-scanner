@@ -2,7 +2,49 @@
 
 ## Unreleased
 
-_(nothing yet — bullets land here as work is merged to master)_
+### Plugins
+
+- **New: plugin support.** Rdio Scanner can now be extended without being
+  rebuilt. Plugins are browsed and installed from the admin panel, live in a
+  `plugins` folder beside the server, and load at startup.
+
+  Plugins live in their own repository at
+  [AkumasCoffin/rdio-scanner-plugins](https://github.com/AkumasCoffin/rdio-scanner-plugins);
+  none ship with the server. The admin panel lists every branch of a
+  repository, not just the mainline, so in-progress plugins can be installed
+  deliberately — with a warning that says so. Users can add their own
+  repositories, which carry a warning of their own: a plugin runs with full
+  access to the server and to every browser viewing it.
+
+  Plugins can be **enabled and disabled**, not only installed and removed.
+  Uninstalling keeps a plugin's settings and data, so reinstalling restores
+  everything as it was; deleting them is a separate, explicit action.
+
+  Each plugin declares its configuration in its manifest and the admin panel
+  generates the form, so a plugin gets a proper settings UI without shipping
+  any. Each plugin also gets **its own database tables**, created on install
+  and namespaced to it — a plugin can read and write its own tables and
+  nothing else.
+
+  Backend plugin code is JavaScript, run in-process. That is what makes one
+  plugin work on every platform Rdio Scanner supports, from a Raspberry Pi to
+  a Windows server, with nothing to compile. Plugins can react to calls, run
+  scheduled work, make HTTP requests, serve their own HTTP endpoints, add
+  their own websocket messages, and contribute fields that the existing call
+  display and search pick up automatically.
+
+  Frontend plugin code is plain JavaScript loaded at runtime. A plugin can add
+  to existing screens or register a whole new view of its own with its own
+  navigation entry, and bundle its own libraries and stylesheets — enough to
+  build something like a live map fed by another service, without rebuilding
+  the webapp.
+
+  See the [plugin documentation](https://github.com/AkumasCoffin/rdio-scanner-plugins)
+  for how to write one.
+
+### Server
+
+- **Changed:** building from source now requires Go 1.25 or newer.
 
 ---
 
