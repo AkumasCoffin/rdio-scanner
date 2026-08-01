@@ -205,6 +205,21 @@ export class RdioScannerService implements OnDestroy {
 
     private audioSource: AudioBufferSourceNode | undefined;
     private audioSourceStartTime = NaN;
+
+    // Fallback playback path, used when decodeAudioData() refuses a call.
+    //
+    // WebKit decodes PCM itself but hands AAC to the operating system codec,
+    // and on some iOS devices that codec is not reachable from Web Audio — so
+    // decodeAudioData throws "EncodingError: Decoding failed" for every call
+    // regardless of sample rate or container, while the identical file plays
+    // fine in Files. An <audio> element goes through the media stack instead
+    // of Web Audio, which is the path that demonstrably works there.
+    //
+    // This bypasses the gain node, so volume is applied to the element
+    // directly; alerts still come from the Web Audio side, which works because
+    // they are synthesized rather than decoded.
+    private audioElement: HTMLAudioElement | undefined;
+    private audioElementUrl: string | undefined;
     private gainNode: GainNode | undefined;
 
     // Bumped every time playback starts or stops. decodeAudioData is async —
@@ -1042,9 +1057,19 @@ export class RdioScannerService implements OnDestroy {
 
         if (status) {
             this.audioContext?.suspend();
+            // Suspending the context does nothing to the fallback element —
+            // it plays outside the Web Audio graph.
+            this.audioElement?.pause();
 
         } else {
             this.audioContext?.resume();
+
+            if (this.audioElement) {
+                this.audioElement.play().catch(() => {
+                    // Resume was refused; the call is skipped by the element's
+                    // own error handling rather than left hanging.
+                });
+            }
 
             this.play();
         }
@@ -1372,6 +1397,13 @@ export class RdioScannerService implements OnDestroy {
         if (this.gainNode) {
             this.gainNode.gain.value = this.muted ? 0 : this.volume * RdioScannerService.MAX_GAIN;
         }
+
+        // The fallback element is outside the Web Audio graph, so the volume
+        // and mute controls have to reach it directly. Element volume is
+        // capped at 1, so MAX_GAIN's headroom does not apply here.
+        if (this.audioElement) {
+            this.audioElement.volume = this.muted ? 0 : Math.min(1, Math.max(0, this.volume));
+        }
     }
 
     private loadVolumeSettings(): void {
@@ -1626,14 +1658,127 @@ export class RdioScannerService implements OnDestroy {
             // is browser-specific in practice — a format one engine decodes and
             // another refuses — so name the call and the type we handed it.
             console.warn(
-                `Unable to decode audio for call ${this.call?.id} ` +
-                `(${this.call?.audioType || 'unknown type'}): ${error}`,
+                `Web Audio could not decode call ${this.call?.id} ` +
+                `(${this.call?.audioType || 'unknown type'}): ${error}. ` +
+                `Falling back to media element playback.`,
             );
+
+            // Only give up on the call once the media stack has refused it too.
+            if (this.playViaMediaElement(generation, queue)) {
+                return;
+            }
 
             this.event.emit({ call: this.call, queue, queueTime: this.computeDelay() });
 
             this.skip({ delay: false });
         });
+    }
+
+    /**
+     * Plays the current call through an <audio> element rather than Web Audio.
+     *
+     * Returns false if it cannot even be attempted, in which case the caller
+     * skips the call as before. A failure that only surfaces later — the
+     * element erroring, or play() being rejected — skips from its own handler.
+     */
+    private playViaMediaElement(generation: number, queue: number): boolean {
+        const call = this.call;
+
+        if (!call?.audio?.data || this.audioElement) {
+            return false;
+        }
+
+        let url: string;
+
+        try {
+            const bytes = new Uint8Array(call.audio.data);
+            const blob = new Blob([bytes], { type: call.audioType || 'audio/mp4' });
+            url = URL.createObjectURL(blob);
+
+        } catch (e) {
+            console.warn(`Cannot build a media URL for call ${call.id}: ${e}`);
+            return false;
+        }
+
+        const element = new Audio();
+        element.preload = 'auto';
+        element.volume = this.muted ? 0 : this.volume;
+        element.src = url;
+
+        this.audioElement = element;
+        this.audioElementUrl = url;
+
+        const stale = () => generation !== this.playGeneration;
+
+        element.onended = () => {
+            if (stale()) return;
+            this.skip({ delay: true });
+        };
+
+        element.onerror = () => {
+            if (stale()) return;
+            console.warn(`Media element also failed to play call ${call.id}; skipping.`);
+            this.skip({ delay: false });
+        };
+
+        element.ontimeupdate = () => {
+            if (stale() || this.livefeedPaused) return;
+            this.event.emit({ time: element.currentTime, queueTime: this.computeDelay() });
+        };
+
+        element.onloadedmetadata = () => {
+            if (call.id && isFinite(element.duration)) {
+                this.callDurations.set(call.id, element.duration || 0);
+            }
+        };
+
+        const alertName = this.getCallAlertName(call);
+        const alertDuration = alertName && this.audioContext
+            ? this.scheduleAlert(alertName, this.audioContext.currentTime)
+            : 0;
+
+        const start = () => {
+            if (stale()) return;
+
+            const played = element.play();
+
+            if (played && typeof played.catch === 'function') {
+                played.catch((e: unknown) => {
+                    if (stale()) return;
+                    console.warn(`Media element playback rejected for call ${call.id}: ${e}`);
+                    this.skip({ delay: false });
+                });
+            }
+        };
+
+        if (alertDuration > 0) {
+            window.setTimeout(start, alertDuration * 1000);
+        } else {
+            start();
+        }
+
+        this.event.emit({ call: this.call, queue, queueTime: this.computeDelay() });
+
+        return true;
+    }
+
+    /** Tears down the fallback element and releases its blob URL. */
+    private releaseMediaElement(): void {
+        if (this.audioElement) {
+            this.audioElement.onended = null;
+            this.audioElement.onerror = null;
+            this.audioElement.ontimeupdate = null;
+            this.audioElement.onloadedmetadata = null;
+            this.audioElement.pause();
+            this.audioElement.removeAttribute('src');
+            this.audioElement.load();
+            this.audioElement = undefined;
+        }
+
+        if (this.audioElementUrl) {
+            URL.revokeObjectURL(this.audioElementUrl);
+            this.audioElementUrl = undefined;
+        }
     }
 
     // holdPendingTranscript parks a call in the ordered pre-queue. Two cases:
@@ -1958,6 +2103,9 @@ export class RdioScannerService implements OnDestroy {
             this.audioSource = undefined;
             this.audioSourceStartTime = NaN;
         }
+
+        // The fallback path has no source node, so it needs tearing down too.
+        this.releaseMediaElement();
 
         if (this.call) {
             this.callPrevious = this.call;
