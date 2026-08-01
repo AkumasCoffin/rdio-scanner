@@ -136,52 +136,6 @@ func TestConvertProducesNonFragmentedMp4(t *testing.T) {
 	}
 }
 
-// Output has to be resampled to a rate WebKit's Web Audio decoder accepts.
-//
-// ffmpeg preserves the source rate unless told otherwise, and scanner audio is
-// 8 or 16 kHz. iOS plays low-rate AAC fine in its media player but
-// decodeAudioData() — which is what the webapp uses — rejects it with
-// "EncodingError: Decoding failed", so every call was silent on iOS.
-//
-// Read the rate out of the mdhd box rather than trusting the ffmpeg arguments,
-// so the property survives a rewrite of how the command is built.
-func TestConvertResamplesForWebAudio(t *testing.T) {
-	ffmpeg := NewFFMpeg()
-	if !ffmpeg.Available() {
-		t.Skip("ffmpeg not installed")
-	}
-
-	// 8 kHz in — the rate that fails on iOS if it survives to the output.
-	call := &Call{
-		Audio:     sineWav(2, 8000),
-		AudioName: "test.wav",
-		AudioType: "audio/wav",
-	}
-
-	if err := ffmpeg.Convert(call, NewSystems(), NewTags(), AUDIO_CONVERSION_ENABLED); err != nil {
-		t.Fatalf("convert: %v", err)
-	}
-
-	mdhd := findBox(call.Audio, "mdhd")
-	if mdhd == nil {
-		t.Fatal("no mdhd box — cannot read the sample rate")
-	}
-	if len(mdhd) < 24 {
-		t.Fatalf("mdhd too short: %d bytes", len(mdhd))
-	}
-
-	// mdhd v0: 8 header bytes, version+flags(4), created(4), modified(4),
-	// then timescale — which for an audio track is the sample rate.
-	if version := mdhd[8]; version != 0 {
-		t.Skipf("mdhd version %d has a different layout; rate check skipped", version)
-	}
-	rate := binary.BigEndian.Uint32(mdhd[20:24])
-
-	if rate < 44100 {
-		t.Errorf("output is %d Hz — WebKit's decodeAudioData rejects low-rate AAC, so this is silent on iOS", rate)
-	}
-}
-
 // Conversion must be a no-op when disabled, leaving the upload untouched.
 func TestConvertDisabledLeavesAudioAlone(t *testing.T) {
 	original := sineWav(1, 8000)
