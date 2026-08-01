@@ -178,8 +178,7 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
 
         if (!entry.official && !confirm(
             `Install "${entry.manifest.name}" from ${entry.repo}?\n\n` +
-            `This is a third-party repository. Plugins run with full access to your server and to ` +
-            `every browser viewing it. Only install plugins from sources you trust.`
+            `This is not the official repository. Do you trust it?`
         )) {
             return;
         }
@@ -296,8 +295,7 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
 
         if (!confirm(
             `Add ${url} as a plugin repository?\n\n` +
-            `Plugins from this repository will run with full access to your server and to every ` +
-            `browser viewing it. Only add repositories you trust.`
+            `You will be downloading and running code from it. Do you trust it?`
         )) {
             return;
         }

@@ -192,8 +192,8 @@
         <div class="row banner warn" *ngIf="browsingThirdParty">
             <mat-icon>gpp_maybe</mat-icon>
             <p class="mat-body">
-                This is a third-party repository. Plugins run with full access to your server and to every
-                browser viewing it. Only install plugins from sources you trust.
+                This is not the official repository. Anything you install from it is code from
+                <strong>{{ selectedRepo }}</strong>, downloaded and run on your server.
             </p>
         </div>
 
@@ -257,8 +257,7 @@
         <div class="row banner warn">
             <mat-icon>gpp_maybe</mat-icon>
             <p class="mat-body">
-                Plugins run with full access to your server and to every browser viewing it. Only add
-                repositories you trust.
+                Adding a repository lets you download and run code from it. Add the ones you trust.
             </p>
         </div>
 
