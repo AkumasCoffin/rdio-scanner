@@ -429,19 +429,19 @@ func (store *PluginStore) Available(rawUrl string, branch string, fresh bool) ([
 // extracted. That is one request instead of one per file, which matters against
 // GitHub's rate limit, and it gets the plugin's bundled assets (libraries,
 // stylesheets) without having to walk the tree.
-func (store *PluginStore) Install(rawUrl string, branch string, pluginId string) (*PluginManifest, error) {
+func (store *PluginStore) Install(rawUrl string, branch string, pluginId string) (*PluginManifest, string, error) {
 	if !pluginIdRegexp.MatchString(pluginId) {
-		return nil, fmt.Errorf("invalid plugin id %q", pluginId)
+		return nil, "", fmt.Errorf("invalid plugin id %q", pluginId)
 	}
 
 	repo, err := store.findRepo(rawUrl)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	owner, name, err := parseGitHubRepo(repo.Url)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	if strings.TrimSpace(branch) == "" {
@@ -453,40 +453,41 @@ func (store *PluginStore) Install(rawUrl string, branch string, pluginId string)
 
 	response, err := store.githubRequest(repo, archiveUrl)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer response.Body.Close()
 
 	pluginsDir := store.Controller.Plugins.Dir(store.Controller.Config)
 	if err := os.MkdirAll(pluginsDir, 0o770); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	// Extract to a staging directory first so a failed or malicious archive
 	// never leaves a half-written plugin where the loader would find it.
 	staging, err := os.MkdirTemp(pluginsDir, ".install-*")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer os.RemoveAll(staging)
 
 	wanted := "plugins/" + pluginId + "/"
 
-	if err := extractPluginFromTarball(response.Body, wanted, staging); err != nil {
-		return nil, err
+	commit, err := extractPluginFromTarball(response.Body, wanted, staging)
+	if err != nil {
+		return nil, "", err
 	}
 
 	manifest, err := ReadPluginManifest(staging)
 	if err != nil {
-		return nil, fmt.Errorf("downloaded plugin has no readable %s: %v", PluginManifestName, err)
+		return nil, "", fmt.Errorf("downloaded plugin has no readable %s: %v", PluginManifestName, err)
 	}
 
 	if manifest.Id != pluginId {
-		return nil, fmt.Errorf("downloaded plugin declares id %q but was requested as %q", manifest.Id, pluginId)
+		return nil, "", fmt.Errorf("downloaded plugin declares id %q but was requested as %q", manifest.Id, pluginId)
 	}
 
 	if ok, reason := manifest.CompatibleWith(Version); !ok {
-		return nil, fmt.Errorf("%s", reason)
+		return nil, "", fmt.Errorf("%s", reason)
 	}
 
 	target := filepath.Join(pluginsDir, pluginId)
@@ -494,26 +495,29 @@ func (store *PluginStore) Install(rawUrl string, branch string, pluginId string)
 	// Replacing an existing install: remove the old files but never the
 	// database tables, so settings and data survive an update.
 	if err := os.RemoveAll(target); err != nil && !os.IsNotExist(err) {
-		return nil, err
+		return nil, "", err
 	}
 
 	if err := os.Rename(staging, target); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	store.InvalidateCache()
 
-	return manifest, nil
+	return manifest, commit, nil
 }
 
 // extractPluginFromTarball pulls the files under prefix out of a GitHub
-// tarball. GitHub wraps everything in a single generated top-level directory
-// whose name includes the commit sha, so that first path segment is stripped
-// before matching.
-func extractPluginFromTarball(body io.Reader, prefix string, dest string) error {
+// tarball, and returns the commit the archive was built from.
+//
+// GitHub wraps everything in a single generated top-level directory named
+// owner-repo-<sha>, so that first path segment is stripped before matching —
+// and its sha is exactly the provenance worth recording: it says precisely
+// which revision of a moving branch got installed.
+func extractPluginFromTarball(body io.Reader, prefix string, dest string) (string, error) {
 	gz, err := gzip.NewReader(io.LimitReader(body, pluginArchiveMaxSize))
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer gz.Close()
 
@@ -522,6 +526,7 @@ func extractPluginFromTarball(body io.Reader, prefix string, dest string) error 
 	files := 0
 	written := int64(0)
 	found := false
+	commit := ""
 
 	for {
 		header, err := reader.Next()
@@ -529,16 +534,22 @@ func extractPluginFromTarball(body io.Reader, prefix string, dest string) error 
 			break
 		}
 		if err != nil {
-			return err
+			return "", err
 		}
 
 		if files++; files > pluginArchiveMaxFiles {
-			return fmt.Errorf("archive contains too many files")
+			return "", fmt.Errorf("archive contains too many files")
 		}
 
-		// Strip GitHub's generated top-level directory.
+		// Strip GitHub's generated top-level directory, recording its trailing
+		// sha the first time we see it.
 		name := header.Name
 		if i := strings.Index(name, "/"); i >= 0 {
+			if commit == "" {
+				if dash := strings.LastIndex(name[:i], "-"); dash >= 0 {
+					commit = name[dash+1 : i]
+				}
+			}
 			name = name[i+1:]
 		} else {
 			continue
@@ -560,42 +571,42 @@ func extractPluginFromTarball(body io.Reader, prefix string, dest string) error 
 
 		absDest, err := filepath.Abs(dest)
 		if err != nil {
-			return err
+			return "", err
 		}
 		absTarget, err := filepath.Abs(targetPath)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if absTarget != absDest && !strings.HasPrefix(absTarget, absDest+string(os.PathSeparator)) {
-			return fmt.Errorf("archive entry %q escapes the plugin directory", header.Name)
+			return "", fmt.Errorf("archive entry %q escapes the plugin directory", header.Name)
 		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(targetPath, 0o770); err != nil {
-				return err
+				return "", err
 			}
 			found = true
 
 		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0o770); err != nil {
-				return err
+				return "", err
 			}
 
 			file, err := os.Create(targetPath)
 			if err != nil {
-				return err
+				return "", err
 			}
 
 			n, err := io.Copy(file, io.LimitReader(reader, pluginArchiveMaxSize-written))
 			file.Close()
 			if err != nil {
-				return err
+				return "", err
 			}
 
 			written += n
 			if written >= pluginArchiveMaxSize {
-				return fmt.Errorf("archive is too large")
+				return "", fmt.Errorf("archive is too large")
 			}
 
 			found = true
@@ -608,8 +619,8 @@ func extractPluginFromTarball(body io.Reader, prefix string, dest string) error 
 	}
 
 	if !found {
-		return fmt.Errorf("no plugin found at %s in that branch", strings.TrimSuffix(prefix, "/"))
+		return "", fmt.Errorf("no plugin found at %s in that branch", strings.TrimSuffix(prefix, "/"))
 	}
 
-	return nil
+	return commit, nil
 }

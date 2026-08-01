@@ -63,6 +63,29 @@ interface SlotRegistration {
     factory: SlotFactory;
 }
 
+interface WsRegistration {
+    pluginId: string;
+    handler: (payload: unknown) => void;
+}
+
+/**
+ * A plugin attaching to arbitrary page elements rather than a named slot.
+ *
+ * Slots are convenience anchors, not a boundary — plugin code runs with full
+ * page privileges and could always have reached into the DOM itself. The
+ * difference this makes is lifecycle: attachments are tracked, re-applied to
+ * elements that appear later, and torn down when the plugin is disabled,
+ * which hand-rolled querySelector code in a plugin would not do.
+ */
+interface DomAttachment {
+    pluginId: string;
+    selector: string;
+    factory: SlotFactory;
+    /** Elements already mounted, with their teardown. */
+    mounted: Map<Element, (() => void) | undefined>;
+    once: boolean;
+}
+
 @Injectable()
 export class RdioScannerPluginHostService {
     /** Views contributed by plugins, for the navigation to render. */
@@ -76,8 +99,11 @@ export class RdioScannerPluginHostService {
 
     private eventHandlers = new Map<string, Map<string, ((payload: unknown) => void)[]>>();
 
-    private wsHandlers = new Map<string, ((payload: unknown) => void)[]>();
+    private wsHandlers = new Map<string, WsRegistration[]>();
     private wsSender?: (command: string, payload: unknown) => void;
+
+    private attachments: DomAttachment[] = [];
+    private observer?: MutationObserver;
 
     /** Last value of each event, replayed to handlers that register late. */
     private lastEvent = new Map<string, unknown>();
@@ -125,8 +151,8 @@ export class RdioScannerPluginHostService {
 
     /** Publishes an inbound websocket message to whichever plugin claimed it. */
     emitWebsocket(command: string, payload: unknown): void {
-        for (const handler of this.wsHandlers.get(command) || []) {
-            this.safely(() => handler(payload));
+        for (const registration of this.wsHandlers.get(command) || []) {
+            this.safely(() => registration.handler(payload));
         }
     }
 
@@ -159,6 +185,107 @@ export class RdioScannerPluginHostService {
         notify(this.slots.get(name) || []);
 
         return () => subscribers?.delete(notify);
+    }
+
+    /**
+     * Mounts a plugin into every element matching a selector, now and as they
+     * appear. Backed by a MutationObserver so rows added to the call history or
+     * a search result list get the plugin's content too.
+     */
+    private attach(attachment: DomAttachment): void {
+        this.attachments.push(attachment);
+        this.ensureObserver();
+        this.applyAttachment(attachment);
+    }
+
+    private applyAttachment(attachment: DomAttachment): void {
+        let targets: Element[];
+
+        try {
+            targets = Array.from(document.querySelectorAll(attachment.selector));
+        } catch {
+            console.error(`[rdio-scanner] plugin ${attachment.pluginId} used an invalid selector: ${attachment.selector}`);
+            return;
+        }
+
+        for (const target of targets) {
+            if (attachment.mounted.has(target)) {
+                continue;
+            }
+
+            // Marked so a re-render that reuses the element doesn't stack a
+            // second copy of the plugin's content inside it.
+            if (attachment.once && attachment.mounted.size > 0) {
+                break;
+            }
+
+            const child = document.createElement('div');
+            child.dataset['rdioPlugin'] = attachment.pluginId;
+            target.appendChild(child);
+
+            let teardown: (() => void) | undefined;
+
+            try {
+                const result = attachment.factory(child);
+                if (typeof result === 'function') {
+                    teardown = result;
+                }
+            } catch (err) {
+                console.error(`[rdio-scanner] plugin ${attachment.pluginId} failed to attach to ${attachment.selector}`, err);
+            }
+
+            attachment.mounted.set(target, teardown);
+        }
+
+        // Drop elements that have left the document, so teardown runs and the
+        // map doesn't grow without bound as rows scroll through.
+        for (const [element, teardown] of Array.from(attachment.mounted.entries())) {
+            if (!element.isConnected) {
+                this.safely(() => teardown?.());
+                attachment.mounted.delete(element);
+            }
+        }
+    }
+
+    private detach(attachment: DomAttachment): void {
+        for (const [, teardown] of Array.from(attachment.mounted.entries())) {
+            this.safely(() => teardown?.());
+        }
+        attachment.mounted.clear();
+
+        for (const node of Array.from(document.querySelectorAll(`div[data-rdio-plugin="${attachment.pluginId}"]`))) {
+            node.remove();
+        }
+    }
+
+    /**
+     * One observer for every attachment. Batched through requestAnimationFrame
+     * because Angular's change detection produces bursts of mutations and
+     * re-querying per mutation would be wasteful.
+     */
+    private ensureObserver(): void {
+        if (this.observer) {
+            return;
+        }
+
+        let scheduled = false;
+
+        this.observer = new MutationObserver(() => {
+            if (scheduled) {
+                return;
+            }
+            scheduled = true;
+            requestAnimationFrame(() => {
+                scheduled = false;
+                for (const attachment of this.attachments) {
+                    this.applyAttachment(attachment);
+                }
+            });
+        });
+
+        this.ngZone.runOutsideAngular(() => {
+            this.observer?.observe(document.body, { childList: true, subtree: true });
+        });
     }
 
     private notifySlot(name: string): void {
@@ -201,12 +328,21 @@ export class RdioScannerPluginHostService {
             }
         }
 
-        for (const [command, handlers] of Array.from(this.wsHandlers.entries())) {
-            this.wsHandlers.set(command, handlers.filter(() => false));
-            if ((this.wsHandlers.get(command) || []).length === 0) {
+        // Only this plugin's handlers. Filtering everything out here meant
+        // disabling one plugin silently deafened every other one.
+        for (const [command, registrations] of Array.from(this.wsHandlers.entries())) {
+            const kept = registrations.filter((registration) => registration.pluginId !== pluginId);
+            if (kept.length) {
+                this.wsHandlers.set(command, kept);
+            } else {
                 this.wsHandlers.delete(command);
             }
         }
+
+        for (const attachment of this.attachments.filter((a) => a.pluginId === pluginId)) {
+            this.detach(attachment);
+        }
+        this.attachments = this.attachments.filter((a) => a.pluginId !== pluginId);
 
         const views = this.views.value.filter((view) => view.pluginId !== pluginId);
         if (views.length !== this.views.value.length) {
@@ -309,12 +445,33 @@ export class RdioScannerPluginHostService {
                 },
             },
 
+            /**
+             * Arbitrary placement. Slots are stable anchors the app promises to
+             * keep; this is for everything else. Plugin code has full page
+             * access regardless — what this adds is lifecycle: content is
+             * re-applied to elements that appear later and removed when the
+             * plugin is disabled.
+             */
+            dom: {
+                attach(selector: string, factory: SlotFactory): void {
+                    host.attach({ pluginId, selector, factory, mounted: new Map(), once: false });
+                },
+                /** Mounts into the first match only, e.g. a single overlay. */
+                attachOnce(selector: string, factory: SlotFactory): void {
+                    host.attach({ pluginId, selector, factory, mounted: new Map(), once: true });
+                },
+                /** Escape hatch: the raw document, for anything the above cannot express. */
+                document(): Document {
+                    return document;
+                },
+            },
+
             ws: {
                 on(command: string, handler: (payload: unknown) => void): void {
                     const key = String(command).toUpperCase();
-                    const handlers = host.wsHandlers.get(key) || [];
-                    handlers.push(handler);
-                    host.wsHandlers.set(key, handlers);
+                    const registrations = host.wsHandlers.get(key) || [];
+                    registrations.push({ pluginId, handler });
+                    host.wsHandlers.set(key, registrations);
                 },
                 send(command: string, payload: unknown): void {
                     host.wsSender?.(String(command).toUpperCase(), payload);

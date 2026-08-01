@@ -481,13 +481,37 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		}
 	}
 
+	// Plugin-contributed searchable columns, resolved once and reused for both
+	// the filter below and the result lookup further down.
+	var searchExtensions []pluginResolvedSearch
+	if client != nil && client.Controller != nil {
+		searchExtensions = client.Controller.PluginSearchExtensions()
+	}
+
 	if q, ok := searchOptions.Q.(string); ok && q != "" {
 		esc := strings.ReplaceAll(q, "'", "''")
 		op := "like"
 		if db.Config.DbType == DbTypePostgres {
 			op = "ilike"
 		}
-		where += fmt.Sprintf(" and `transcript` %s '%%%s%%'", op, esc)
+
+		// A free-text search covers the core transcript column and every column
+		// a plugin registered, so installing a plugin that stores text against
+		// calls makes that text findable through the existing search box
+		// without the search UI knowing the plugin exists.
+		predicates := []string{fmt.Sprintf("`transcript` %s '%%%s%%'", op, esc)}
+
+		for _, extension := range searchExtensions {
+			predicates = append(predicates, fmt.Sprintf(
+				"exists (select 1 from `%s` where `%s`.`%s` = `rdioScannerCalls`.`id` and `%s`.`%s` %s '%%%s%%')",
+				extension.table,
+				extension.table, extension.key,
+				extension.table, extension.text,
+				op, esc,
+			))
+		}
+
+		where += fmt.Sprintf(" and (%s)", strings.Join(predicates, " or "))
 	}
 
 	rangeKey := "range:" + where
@@ -615,7 +639,65 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		return nil, formatError(err)
 	}
 
+	// Fill in plugin-contributed result fields. Batched: one extra query per
+	// extension for the whole page, rather than one per row — a page can be 200
+	// calls, and per-row lookups would turn one search into 200 round trips.
+	if len(searchExtensions) > 0 && len(searchResults.Results) > 0 {
+		calls.applyPluginSearchFields(db, searchExtensions, searchResults.Results)
+	}
+
 	return searchResults, err
+}
+
+// applyPluginSearchFields loads each extension's values for a page of results.
+// Failures are logged nowhere and simply skipped: a plugin's own schema problem
+// must not break call search for everyone.
+func (calls *Calls) applyPluginSearchFields(db *Database, extensions []pluginResolvedSearch, results []CallsSearchResult) {
+	ids := make([]string, 0, len(results))
+	byId := map[uint]*CallsSearchResult{}
+
+	for i := range results {
+		ids = append(ids, fmt.Sprintf("%d", results[i].Id))
+		byId[results[i].Id] = &results[i]
+	}
+
+	idList := strings.Join(ids, ", ")
+
+	for _, extension := range extensions {
+		query := fmt.Sprintf(
+			"select `%s`, `%s` from `%s` where `%s` in (%s)",
+			extension.key, extension.text, extension.table, extension.key, idList,
+		)
+
+		rows, err := db.Query(query)
+		if err != nil {
+			continue
+		}
+
+		for rows.Next() {
+			var (
+				callId uint
+				value  sql.NullString
+			)
+
+			if err := rows.Scan(&callId, &value); err != nil {
+				break
+			}
+
+			if !value.Valid || value.String == "" {
+				continue
+			}
+
+			if result, ok := byId[callId]; ok {
+				if result.pluginFields == nil {
+					result.pluginFields = map[string]any{}
+				}
+				result.pluginFields[extension.resultField] = value.String
+			}
+		}
+
+		rows.Close()
+	}
 }
 
 func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
@@ -804,6 +886,40 @@ type CallsSearchResult struct {
 	Talkgroup     uint      `json:"talkgroup"`
 	HasTranscript bool      `json:"hasTranscript,omitempty"`
 	Transcript    string    `json:"transcript,omitempty"`
+
+	// pluginFields holds values contributed by plugins through
+	// rdio.search.extend, merged into the wire payload by MarshalJSON. Nil on
+	// any install with no such plugin, which is why this costs nothing unused.
+	pluginFields map[string]any
+}
+
+// MarshalJSON emits the core fields plus anything plugins contributed. Plugin
+// values never displace a core key, so a plugin cannot reshape the search
+// protocol out from under an existing client.
+func (result CallsSearchResult) MarshalJSON() ([]byte, error) {
+	out := map[string]any{
+		"id":        result.Id,
+		"dateTime":  result.DateTime,
+		"system":    result.System,
+		"talkgroup": result.Talkgroup,
+	}
+
+	if result.HasTranscript {
+		out["hasTranscript"] = true
+	}
+
+	if result.Transcript != "" {
+		out["transcript"] = result.Transcript
+	}
+
+	for key, value := range result.pluginFields {
+		if _, taken := out[key]; taken {
+			continue
+		}
+		out[key] = value
+	}
+
+	return json.Marshal(out)
 }
 
 type CallsSearchResults struct {

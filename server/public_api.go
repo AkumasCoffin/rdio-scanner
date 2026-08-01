@@ -340,6 +340,16 @@ func (p *PublicApi) getCall(w http.ResponseWriter, id uint, apikey *Apikey) {
 	if call.Transcript != nil {
 		out["transcript"] = call.Transcript
 	}
+
+	// Plugin-contributed fields, so the public API exposes the same call shape
+	// the websocket does rather than a quietly reduced one.
+	p.Controller.ApplyPluginFields(call)
+	for key, value := range call.pluginFields {
+		if _, taken := out[key]; !taken {
+			out[key] = value
+		}
+	}
+
 	out["audioUrl"] = fmt.Sprintf("/api/v1/calls/%d/audio", id)
 
 	w.Header().Set("Content-Type", "application/json")

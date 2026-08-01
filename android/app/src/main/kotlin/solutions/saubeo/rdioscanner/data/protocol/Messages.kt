@@ -46,6 +46,18 @@ sealed interface Incoming {
      * distinguishing — the listener just merges into the cache.
      */
     data class Transcript(val callId: Long, val text: String) : Incoming
+
+    /**
+     * A command contributed by a server-side plugin.
+     *
+     * Plugins can register their own websocket commands, so the set of commands
+     * a server sends is no longer fixed at the app's compile time. Rather than
+     * discard anything unrecognised, these are surfaced with their raw payload
+     * so features can be built on them without the protocol layer needing to
+     * know what they mean.
+     */
+    data class Plugin(val command: String, val payload: JsonElement?) : Incoming
+
     data object PinRequested : Incoming
     data object Expired : Incoming
     data object TooMany : Incoming
@@ -131,7 +143,10 @@ object Wire {
 
             Cmd.CAL -> payload?.let {
                 val call = json.decodeFromJsonElement(CallDto.serializer(), it)
-                Incoming.Call(call, flag)
+                // Keep the raw object alongside the parsed call: plugins can add
+                // fields to the call payload, and ignoreUnknownKeys would
+                // otherwise silently drop them before anything could use them.
+                Incoming.Call(call.withExtras(it as? JsonObject), flag)
             } ?: Incoming.Unknown(cmd, payload)
 
             Cmd.LSC -> {
@@ -168,7 +183,11 @@ object Wire {
             Cmd.PIN -> Incoming.PinRequested
             Cmd.XPR -> Incoming.Expired
             Cmd.MAX -> Incoming.TooMany
-            else -> Incoming.Unknown(cmd, payload)
+
+            // Not a command this app knows. Before plugins existed that could
+            // only be a newer server, and dropping it was right. Now it is
+            // most likely a plugin command, so it is passed through instead.
+            else -> Incoming.Plugin(cmd, payload)
         }
     }
 

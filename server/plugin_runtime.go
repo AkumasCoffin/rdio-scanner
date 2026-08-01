@@ -511,10 +511,15 @@ func (rt *PluginRuntime) DispatchRoute(route *pluginRoute, request map[string]an
 	}
 }
 
-// awaitPromise polls a promise to settlement on the event loop. goja has no
-// callback hook for this, and a promise can only be inspected from the loop
-// goroutine, so settlement is checked from a scheduled job.
+// awaitPromise resolves a promise by attaching Go-backed callbacks with its own
+// then(), rather than polling its state on a timer. Polling worked but added up
+// to a tick of latency to every promise-returning route and kept the loop busy
+// while a request was in flight.
+//
+// Must be called on the loop goroutine — promise values cannot be touched from
+// anywhere else.
 func (rt *PluginRuntime) awaitPromise(vm *goja.Runtime, promise *goja.Promise, done func(any, error)) {
+	// Already settled: answer without going back through the microtask queue.
 	switch promise.State() {
 	case goja.PromiseStateFulfilled:
 		done(promise.Result().Export(), nil)
@@ -524,8 +529,38 @@ func (rt *PluginRuntime) awaitPromise(vm *goja.Runtime, promise *goja.Promise, d
 		return
 	}
 
-	// Still pending — let the loop make progress, then look again.
-	rt.loop.SetTimeout(func(vm *goja.Runtime) {
-		rt.awaitPromise(vm, promise, done)
-	}, 5*time.Millisecond)
+	promiseValue := vm.ToValue(promise).ToObject(vm)
+
+	thenValue := promiseValue.Get("then")
+	then, ok := goja.AssertFunction(thenValue)
+	if !ok {
+		done(nil, fmt.Errorf("plugin returned a promise with no usable then()"))
+		return
+	}
+
+	// Guards against a plugin resolving and rejecting, or settling twice: the
+	// HTTP caller is waiting on a single-slot channel.
+	settled := false
+
+	onFulfilled := vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if settled {
+			return goja.Undefined()
+		}
+		settled = true
+		done(call.Argument(0).Export(), nil)
+		return goja.Undefined()
+	})
+
+	onRejected := vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if settled {
+			return goja.Undefined()
+		}
+		settled = true
+		done(nil, fmt.Errorf("%v", call.Argument(0)))
+		return goja.Undefined()
+	})
+
+	if _, err := then(promiseValue, onFulfilled, onRejected); err != nil {
+		done(nil, err)
+	}
 }

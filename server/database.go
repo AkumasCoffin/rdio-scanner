@@ -1174,11 +1174,11 @@ func (db *Database) migration20260801120000(verbose bool) error {
 	switch db.Config.DbType {
 	case DbTypeSqlite:
 		queries = []string{
-			"create table `rdioScannerPlugins` (`_id` integer primary key autoincrement, `pluginId` varchar(32) not null unique, `name` text, `version` varchar(32), `source` text, `branch` varchar(255), `enabled` boolean not null default 0, `installedAt` datetime, `manifest` text)",
+			"create table `rdioScannerPlugins` (`_id` integer primary key autoincrement, `pluginId` varchar(32) not null unique, `name` text, `version` varchar(32), `source` text, `branch` varchar(255), `enabled` boolean not null default 0, `installedAt` datetime, `manifest` text, `commit` varchar(64))",
 		}
 	case DbTypePostgres:
 		queries = []string{
-			`create table "rdioScannerPlugins" ("_id" serial primary key, "pluginId" varchar(32) not null unique, "name" text, "version" varchar(32), "source" text, "branch" varchar(255), "enabled" boolean not null default false, "installedAt" timestamptz, "manifest" text)`,
+			`create table "rdioScannerPlugins" ("_id" serial primary key, "pluginId" varchar(32) not null unique, "name" text, "version" varchar(32), "source" text, "branch" varchar(255), "enabled" boolean not null default false, "installedAt" timestamptz, "manifest" text, "commit" varchar(64))`,
 		}
 	default:
 		queries = []string{

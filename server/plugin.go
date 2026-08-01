@@ -45,6 +45,12 @@ type Plugin struct {
 	Enabled     bool      `json:"enabled"`
 	InstalledAt time.Time `json:"installedAt"`
 
+	// Commit is the revision the installed files came from. A branch moves, so
+	// "installed from main" says nothing about what you actually got; this
+	// does, and it is what makes an install reproducible or auditable after
+	// the fact.
+	Commit string `json:"commit,omitempty"`
+
 	// Manifest is the parsed plugin.json read from disk. Nil when the registry
 	// has a row but the files are missing or unreadable.
 	Manifest *PluginManifest `json:"manifest,omitempty"`
@@ -149,7 +155,7 @@ func (plugins *Plugins) Read(db *Database, config *Config) error {
 	byPluginId := map[string]*Plugin{}
 	list := []*Plugin{}
 
-	rows, err := db.Query("select `_id`, `pluginId`, `name`, `version`, `source`, `branch`, `enabled`, `installedAt`, `manifest` from `rdioScannerPlugins`")
+	rows, err := db.Query("select `_id`, `pluginId`, `name`, `version`, `source`, `branch`, `enabled`, `installedAt`, `manifest`, `commit` from `rdioScannerPlugins`")
 	if err != nil {
 		return formatError(err)
 	}
@@ -165,9 +171,10 @@ func (plugins *Plugins) Read(db *Database, config *Config) error {
 			enabled     sql.NullBool
 			installedAt sql.NullTime
 			manifest    sql.NullString
+			commit      sql.NullString
 		)
 
-		if err = rows.Scan(&rowId, &pluginId, &name, &version, &source, &branch, &enabled, &installedAt, &manifest); err != nil {
+		if err = rows.Scan(&rowId, &pluginId, &name, &version, &source, &branch, &enabled, &installedAt, &manifest, &commit); err != nil {
 			break
 		}
 
@@ -179,6 +186,7 @@ func (plugins *Plugins) Read(db *Database, config *Config) error {
 			Source:   source.String,
 			Branch:   branch.String,
 			Enabled:  enabled.Bool,
+			Commit:   commit.String,
 		}
 
 		if installedAt.Valid {
@@ -348,8 +356,8 @@ func (plugins *Plugins) Write(db *Database, plugin *Plugin) error {
 		// Postgres assigns the serial itself; sending an explicit null id would
 		// collide with the sequence.
 		if _, err := db.Exec(
-			"insert into `rdioScannerPlugins` (`pluginId`, `name`, `version`, `source`, `branch`, `enabled`, `installedAt`, `manifest`) values (?, ?, ?, ?, ?, ?, ?, ?)",
-			plugin.PluginId, plugin.Name, plugin.Version, plugin.Source, plugin.Branch, plugin.Enabled, plugin.InstalledAt, manifest,
+			"insert into `rdioScannerPlugins` (`pluginId`, `name`, `version`, `source`, `branch`, `enabled`, `installedAt`, `manifest`, `commit`) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			plugin.PluginId, plugin.Name, plugin.Version, plugin.Source, plugin.Branch, plugin.Enabled, plugin.InstalledAt, manifest, plugin.Commit,
 		); err != nil {
 			return err
 		}
@@ -357,8 +365,8 @@ func (plugins *Plugins) Write(db *Database, plugin *Plugin) error {
 	}
 
 	_, err = db.Exec(
-		"update `rdioScannerPlugins` set `name` = ?, `version` = ?, `source` = ?, `branch` = ?, `enabled` = ?, `installedAt` = ?, `manifest` = ? where `pluginId` = ?",
-		plugin.Name, plugin.Version, plugin.Source, plugin.Branch, plugin.Enabled, plugin.InstalledAt, manifest, plugin.PluginId,
+		"update `rdioScannerPlugins` set `name` = ?, `version` = ?, `source` = ?, `branch` = ?, `enabled` = ?, `installedAt` = ?, `manifest` = ?, `commit` = ? where `pluginId` = ?",
+		plugin.Name, plugin.Version, plugin.Source, plugin.Branch, plugin.Enabled, plugin.InstalledAt, manifest, plugin.Commit, plugin.PluginId,
 	)
 
 	return err

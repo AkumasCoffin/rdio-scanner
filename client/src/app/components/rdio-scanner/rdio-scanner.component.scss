@@ -55,6 +55,47 @@
   }
 }
 
+// Sits opposite the stream toggle so the two never overlap when both are shown.
+.plugin-views-fab {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  opacity: 0.5;
+  color: var(--text-main);
+  transition: opacity 0.2s ease, color 0.2s ease;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+.plugin-sidenav {
+  width: min(90vw, 900px);
+}
+
+.panel.plugin {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+
+  rdio-plugin-view {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .plugin-view-tabs {
+    display: flex;
+    gap: 0.25rem;
+    margin-left: auto;
+    overflow-x: auto;
+
+    button.active {
+      color: var(--accent, #f97316);
+    }
+  }
+}
+
 .panel {
   background-color: var(--bg-elevated);
   border-radius: var(--radius-lg);

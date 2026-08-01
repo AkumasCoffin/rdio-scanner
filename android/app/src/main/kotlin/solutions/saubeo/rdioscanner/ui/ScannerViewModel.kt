@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
 import solutions.saubeo.rdioscanner.RdioApplication
 import solutions.saubeo.rdioscanner.data.client.ConnectionState
 import solutions.saubeo.rdioscanner.data.prefs.ConnectionProfileDto
@@ -67,6 +68,23 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Ask the server for a transcript by call id (no-op if id <= 0). */
     fun requestTranscript(id: Long) = repo.requestTranscript(id)
+
+    /**
+     * Fields server-side plugins attached to calls, keyed by call id, in the
+     * same shape as [transcripts] so screens look them up the same way.
+     *
+     * A server's plugins are not known when this app is built, so nothing here
+     * consumes these yet — they are surfaced so a plugin-backed feature can be
+     * added without another protocol change.
+     */
+    val pluginCallFields: StateFlow<Map<Long, Map<String, JsonElement>>> = repo.pluginCallFields
+
+    /** Websocket commands contributed by plugins. */
+    val pluginMessages = repo.pluginMessages
+
+    /** Sends a plugin-defined command over the existing connection. */
+    fun sendPluginMessage(command: String, payload: JsonElement? = null) =
+        repo.sendPluginMessage(command, payload)
 
     /**
      * Tick stream the Search screen subscribes to so its result list

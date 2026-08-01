@@ -110,20 +110,22 @@ var coreHttpPatterns = map[string]bool{
 	"/plugins/":                         true,
 }
 
-// PluginAbsolutePatterns returns the distinct absolute paths plugins claimed,
-// minus anything core already owns. Called once during route setup, after
-// plugins have loaded.
-func (controller *Controller) PluginAbsolutePatterns() []string {
-	patterns := []string{}
-	seen := map[string]bool{}
-
+// ServePluginAbsoluteRoute handles a path a plugin claimed outright, and
+// reports whether it did. Called from the catch-all handler, so a claim takes
+// effect and stops applying purely from the plugin's enabled state — no mux
+// registration, nothing to unregister.
+//
+// A plugin can never shadow a core endpoint: those are registered on the mux
+// and never reach this handler, and coreHttpPatterns rejects the claim up front
+// so the attempt is visible in the log rather than silently ineffective.
+func (controller *Controller) ServePluginAbsoluteRoute(w http.ResponseWriter, r *http.Request) bool {
 	for _, plugin := range controller.Plugins.Enabled() {
 		if plugin.runtime == nil {
 			continue
 		}
 
 		for _, route := range plugin.runtime.Routes() {
-			if !route.absolute || seen[route.path] {
+			if !route.absolute || route.path != r.URL.Path {
 				continue
 			}
 
@@ -135,31 +137,12 @@ func (controller *Controller) PluginAbsolutePatterns() []string {
 				continue
 			}
 
-			seen[route.path] = true
-			patterns = append(patterns, route.path)
-		}
-	}
-
-	return patterns
-}
-
-// PluginAbsoluteHandler serves a path a plugin claimed outright. Registered on
-// the mux only for paths core does not already own.
-func (controller *Controller) PluginAbsoluteHandler(w http.ResponseWriter, r *http.Request) {
-	for _, plugin := range controller.Plugins.Enabled() {
-		if plugin.runtime == nil {
-			continue
-		}
-		for _, route := range plugin.runtime.Routes() {
-			if !route.absolute || route.path != r.URL.Path {
-				continue
-			}
 			controller.servePluginRoute(w, r, plugin, route)
-			return
+			return true
 		}
 	}
 
-	http.Error(w, "not found", http.StatusNotFound)
+	return false
 }
 
 // servePluginRoute marshals the request into the shape plugins see, invokes the

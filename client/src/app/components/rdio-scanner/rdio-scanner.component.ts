@@ -25,6 +25,7 @@ import { RdioScannerEvent, RdioScannerLivefeedMode } from './rdio-scanner';
 import { RdioScannerService } from './rdio-scanner.service';
 import { RdioScannerNativeComponent } from './native/native.component';
 import { RdioScannerPublicStatsComponent } from './stats/public-stats.component';
+import { RdioScannerPluginHostService, RegisteredPluginView } from './plugins/plugin-host.service';
 import { RdioScannerSearchComponent } from './search/search.component';
 import { StreamLayoutService } from './stream/stream-layout.service';
 
@@ -59,12 +60,41 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
 
     @ViewChild('scrollableSearch') private scrollableSearch: ElementRef | undefined;
 
+    /** Views contributed by plugins. Empty on an install with no plugins. */
+    pluginViews: RegisteredPluginView[] = [];
+
+    activePluginView: RegisteredPluginView | undefined;
+
+    private pluginViewsSub: Subscription | undefined;
+
     constructor(
         private matSnackBar: MatSnackBar,
         private ngElementRef: ElementRef,
+        private pluginHost: RdioScannerPluginHostService,
         private rdioScannerService: RdioScannerService,
         private streamLayoutService: StreamLayoutService,
-    ) { }
+    ) {
+        this.pluginViewsSub = this.pluginHost.views.subscribe((views) => {
+            this.pluginViews = views;
+
+            // Keep the open view if it still exists; otherwise fall back so the
+            // panel never sits on a view a disabled plugin took away.
+            if (!this.activePluginView || !views.some((v) => v.key === this.activePluginView?.key)) {
+                this.activePluginView = views[0];
+            }
+        });
+    }
+
+    openPluginPanel(panel: MatSidenav): void {
+        if (!this.activePluginView) {
+            this.activePluginView = this.pluginViews[0];
+        }
+        panel.open();
+    }
+
+    selectPluginView(view: RegisteredPluginView): void {
+        this.activePluginView = view;
+    }
 
     // Toggle the /stream page's edit mode (drag/resize/right-click editing).
     toggleStreamEdit(): void {
@@ -98,6 +128,7 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
     ngOnDestroy(): void {
         this.eventSubscription.unsubscribe();
         this.streamLayoutSub?.unsubscribe();
+        this.pluginViewsSub?.unsubscribe();
     }
 
     ngOnInit(): void {

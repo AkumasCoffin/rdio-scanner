@@ -247,6 +247,25 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 		return vm.ToValue(affected)
 	})
 
+	// Async variants. The synchronous ones above run on the plugin's event
+	// loop, so a slow query stalls everything else that plugin is doing —
+	// fine for the small keyed reads and writes most plugins do, not fine for
+	// anything scanning a large table. These run the query on a goroutine and
+	// settle a promise back on the loop.
+	db.Set("queryAsync", func(query string, args goja.Value) goja.Value {
+		exported := exportPluginArgs(args)
+		return rt.promiseFrom(vm, func() (any, error) {
+			return rt.db.Query(query, exported)
+		})
+	})
+
+	db.Set("execAsync", func(query string, args goja.Value) goja.Value {
+		exported := exportPluginArgs(args)
+		return rt.promiseFrom(vm, func() (any, error) {
+			return rt.db.Exec(query, exported)
+		})
+	})
+
 	rdio.Set("db", db)
 
 	// --- rdio.calls -------------------------------------------------------
@@ -274,6 +293,35 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 		}
 
 		return vm.ToValue(pluginCallValue(call, withAudio))
+	})
+
+	calls.Set("search", func(options goja.Value) goja.Value {
+		requirePermission(PluginPermissionCallsRead)
+
+		results, err := rt.searchCalls(options)
+		if err != nil {
+			throw("calls.search: %v", err)
+		}
+
+		return vm.ToValue(results)
+	})
+
+	calls.Set("update", func(id int64, fields goja.Value) goja.Value {
+		requirePermission(PluginPermissionCallsWrite)
+
+		// Deliberately narrow. A plugin's own data belongs in its own tables;
+		// this exists so a plugin can correct core metadata it is authoritative
+		// about, not so it can rewrite the call record wholesale.
+		m, ok := fields.Export().(map[string]any)
+		if !ok {
+			throw("calls.update requires an object")
+		}
+
+		if err := rt.updateCall(uint(id), m); err != nil {
+			throw("calls.update: %v", err)
+		}
+
+		return goja.Undefined()
 	})
 
 	calls.Set("extendField", func(spec goja.Value) goja.Value {
@@ -666,6 +714,79 @@ func (rt *PluginRuntime) httpPromise(vm *goja.Runtime, spec goja.Value, isMultip
 // goroutine that did the I/O would touch the runtime from two threads.
 func (rt *PluginRuntime) settle(fn func(vm *goja.Runtime)) {
 	rt.runOnLoop(fn)
+}
+
+// promiseFrom runs work on a goroutine and settles a promise with its result.
+// The generic shape behind every async host call.
+func (rt *PluginRuntime) promiseFrom(vm *goja.Runtime, work func() (any, error)) goja.Value {
+	promise, resolve, reject := vm.NewPromise()
+
+	go func() {
+		value, err := work()
+		rt.settle(func(vm *goja.Runtime) {
+			if err != nil {
+				reject(vm.NewGoError(err))
+				return
+			}
+			resolve(vm.ToValue(value))
+		})
+	}()
+
+	return vm.ToValue(promise)
+}
+
+// searchCalls runs a call search on the plugin's behalf. Unscoped: a plugin
+// runs server-side with calls-read already granted, so there is no per-listener
+// access code to apply here.
+func (rt *PluginRuntime) searchCalls(options goja.Value) (*CallsSearchResults, error) {
+	searchOptions := &CallsSearchOptions{
+		searchPatchedTalkgroups: rt.controller.Options.SearchPatchedTalkgroups,
+	}
+
+	if options != nil && !goja.IsUndefined(options) && !goja.IsNull(options) {
+		if m, ok := options.Export().(map[string]any); ok {
+			searchOptions.fromMap(m)
+		}
+	}
+
+	// Calls.Search reads scoping maps off the client. A client with no access
+	// restriction gives the plugin the unrestricted view it is entitled to.
+	client := &Client{
+		Controller: rt.controller,
+		Access:     &Access{Systems: "*"},
+	}
+	client.SystemsMap = rt.controller.Systems.GetScopedSystems(
+		client, rt.controller.Groups, rt.controller.Tags, rt.controller.Options.SortTalkgroups,
+	)
+	client.GroupsMap = rt.controller.Groups.GetGroupsMap(&client.SystemsMap)
+	client.TagsMap = rt.controller.Tags.GetTagsMap(&client.SystemsMap)
+
+	return rt.controller.Calls.Search(searchOptions, client)
+}
+
+// updateCall writes core call metadata a plugin is authoritative about. The
+// field set is a whitelist rather than a passthrough: plugin data belongs in
+// plugin tables, and letting a plugin rewrite arbitrary columns would make the
+// call record's provenance impossible to reason about.
+func (rt *PluginRuntime) updateCall(id uint, fields map[string]any) error {
+	allowed := map[string]bool{"transcript": true}
+
+	for key, value := range fields {
+		if !allowed[key] {
+			return fmt.Errorf("field %q cannot be updated by a plugin; store it in one of your own tables instead", key)
+		}
+
+		text, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("field %q must be a string", key)
+		}
+
+		if err := rt.controller.Calls.UpdateTranscript(id, text, rt.controller.Database); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (rt *PluginRuntime) buildHttpRequest(options map[string]any, isMultipart bool) (*http.Request, error) {

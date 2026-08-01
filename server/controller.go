@@ -894,6 +894,10 @@ func (controller *Controller) Start() error {
 	// into the channel buffer with no consumer.
 	go func() {
 		for call := range controller.clientEmitQueue {
+			// Fill in plugin-contributed fields on the way out, so a value a
+			// plugin has already computed reaches the live feed — and Android,
+			// which reads those fields inline off the call payload.
+			controller.ApplyPluginFields(call)
 			controller.Clients.EmitCall(call, controller.Accesses.IsRestricted())
 		}
 	}()

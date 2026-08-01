@@ -8,8 +8,10 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
@@ -145,7 +147,32 @@ data class CallDto(
      * [ScannerViewModel.transcripts].
      */
     val transcript: String? = null,
+    /**
+     * Fields a server-side plugin added to this call, kept verbatim.
+     *
+     * Plugins can contribute arbitrary values to the call payload, so the field
+     * set is no longer fixed at the app's compile time. This is
+     * [kotlinx.serialization.Transient] because it is populated from the raw
+     * JSON after decoding rather than by the decoder — `ignoreUnknownKeys`
+     * would otherwise discard exactly the fields worth keeping.
+     */
+    @kotlinx.serialization.Transient
+    val extras: Map<String, JsonElement> = emptyMap(),
 ) {
+    /** Returns a copy carrying whatever plugin fields the raw payload held. */
+    fun withExtras(raw: JsonObject?): CallDto {
+        if (raw == null) return this
+
+        val extras = raw.filterKeys { it !in KNOWN_FIELDS }
+        if (extras.isEmpty()) return this
+
+        return copy(extras = extras)
+    }
+
+    /** Convenience for the common case of a plugin contributing a string. */
+    fun extraString(key: String): String? =
+        (extras[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is CallDto) return false
@@ -154,6 +181,20 @@ data class CallDto(
 
     override fun hashCode(): Int = id.hashCode()
 }
+
+/**
+ * Everything CallDto's decoder already handles; anything else on a call payload
+ * came from a plugin.
+ *
+ * Deliberately a file-private top-level value rather than a companion object:
+ * `@Serializable` generates its own `Companion` holding `serializer()`, and
+ * declaring a private one here would make that inaccessible.
+ */
+private val KNOWN_FIELDS = setOf(
+    "id", "audio", "audioName", "audioType", "dateTime", "frequency",
+    "frequencies", "patches", "source", "sources", "system", "talkgroup",
+    "transcript", "delayed",
+)
 
 @Serializable
 data class SearchOptions(

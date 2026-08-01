@@ -215,7 +215,7 @@ func (admin *Admin) pluginInstall(w http.ResponseWriter, r *http.Request) {
 
 	controller := admin.Controller
 
-	manifest, err := controller.PluginStore.Install(body.Repo, body.Branch, body.PluginId)
+	manifest, commit, err := controller.PluginStore.Install(body.Repo, body.Branch, body.PluginId)
 	if err != nil {
 		writeJsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -231,6 +231,7 @@ func (admin *Admin) pluginInstall(w http.ResponseWriter, r *http.Request) {
 		Branch:      body.Branch,
 		InstalledAt: time.Now().UTC(),
 		Manifest:    manifest,
+		Commit:      commit,
 	}
 
 	if body.Repo == "" {
@@ -277,9 +278,14 @@ func (admin *Admin) pluginInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	shortCommit := commit
+	if len(shortCommit) > 7 {
+		shortCommit = shortCommit[:7]
+	}
+
 	controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf(
-		"plugin %s %s installed from %s (%s); restart required to load it",
-		manifest.Id, manifest.Version, plugin.Source, plugin.Branch,
+		"plugin %s %s installed from %s (%s@%s); restart required to load it",
+		manifest.Id, manifest.Version, plugin.Source, plugin.Branch, shortCommit,
 	))
 
 	admin.BroadcastConfig()

@@ -168,13 +168,6 @@ func main() {
 	// its frontend code from.
 	http.HandleFunc("/plugins/", controller.PluginAssetHandler)
 
-	// Absolute routes a plugin claimed. Registered once at startup because
-	// DefaultServeMux panics on duplicate patterns and has no removal — the
-	// paths are read from plugins that have already been loaded by this point.
-	for _, pattern := range controller.PluginAbsolutePatterns() {
-		http.HandleFunc(pattern, gzipHandler(controller.PluginAbsoluteHandler))
-	}
-
 	http.HandleFunc("/", gzipHandler(func(w http.ResponseWriter, r *http.Request) {
 		url := r.URL.Path[1:]
 
@@ -202,6 +195,14 @@ func main() {
 			if err = client.Init(controller, r, conn); err != nil {
 				log.Println(err)
 			}
+
+		} else if controller.ServePluginAbsoluteRoute(w, r) {
+			// A path a plugin claimed. Handled here rather than registered on
+			// the mux at startup: DefaultServeMux cannot unregister a pattern,
+			// so mux registration meant a plugin's routes outlived the plugin
+			// and could only ever appear after a restart. Everything core does
+			// not already own falls through to this handler anyway, so
+			// dispatching here makes claims genuinely dynamic.
 
 		} else {
 			if url == "" {

@@ -28,6 +28,11 @@ import (
 // a plugin restores the settings the user already entered.
 const pluginConfigTableName = "config"
 
+// pluginQueryMaxRows bounds what a single rdio.db.query can materialise. The
+// results are converted into JavaScript values, so an unbounded read is a
+// memory multiplier, not just a large slice.
+const pluginQueryMaxRows = 50000
+
 // pluginTableIdentifier matches a backtick-quoted identifier in plugin SQL.
 // Plugins write their declared table names; the host rewrites them to the real
 // namespaced names and rejects anything that resolves outside the plugin.
@@ -162,6 +167,12 @@ func (pluginDb *PluginDb) Query(query string, args []any) ([]map[string]any, err
 	results := []map[string]any{}
 
 	for rows.Next() {
+		// A plugin that forgets a LIMIT should get an error, not silently pull
+		// a million rows into the interpreter and take the process with it.
+		if len(results) >= pluginQueryMaxRows {
+			return nil, fmt.Errorf("query returned more than %d rows; add a LIMIT", pluginQueryMaxRows)
+		}
+
 		// Scanning into []any of *any lets us hand back whatever the driver
 		// produced without the plugin having to declare types up front.
 		holders := make([]any, len(columns))

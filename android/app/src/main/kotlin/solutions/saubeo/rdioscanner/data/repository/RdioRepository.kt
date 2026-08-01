@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
 import solutions.saubeo.rdioscanner.data.client.ConnectionState
 import solutions.saubeo.rdioscanner.data.client.RdioClient
 import solutions.saubeo.rdioscanner.data.client.RdioCredentials
@@ -88,6 +89,26 @@ class RdioRepository(
     private val _transcripts = MutableStateFlow<Map<Long, String>>(emptyMap())
     val transcripts: StateFlow<Map<Long, String>> = _transcripts.asStateFlow()
 
+    /**
+     * Fields server-side plugins attached to calls, keyed by call id.
+     *
+     * Cached the same way transcripts are: volatile, process-lifetime, cheap to
+     * re-fetch. Kept separate from [transcripts] because a plugin may contribute
+     * several fields and none of them are necessarily text.
+     */
+    private val _pluginCallFields =
+        MutableStateFlow<Map<Long, Map<String, JsonElement>>>(emptyMap())
+    val pluginCallFields: StateFlow<Map<Long, Map<String, JsonElement>>> =
+        _pluginCallFields.asStateFlow()
+
+    /** Websocket commands contributed by plugins, passed straight through. */
+    val pluginMessages: SharedFlow<Pair<String, JsonElement?>> = client.pluginMessages
+
+    /** Sends a plugin-defined command over the existing connection. */
+    fun sendPluginMessage(command: String, payload: JsonElement? = null) {
+        client.sendPluginMessage(command, payload)
+    }
+
     init {
         // Always send a COMPLETE livefeed matrix: every talkgroup in the
         // server's config, with any missing saved entries defaulting to true.
@@ -134,6 +155,15 @@ class RdioRepository(
                     if (current[call.id] == inline) current else current + (call.id to inline)
                 }
             }
+
+            // Same treatment for anything a plugin attached to the call, so a
+            // plugin-backed screen has a single source of truth the way the
+            // transcript cache already does.
+            if (call.extras.isNotEmpty()) {
+                _pluginCallFields.update { current ->
+                    if (current[call.id] == call.extras) current else current + (call.id to call.extras)
+                }
+            }
         }.launchIn(scope)
     }
 
@@ -156,6 +186,9 @@ class RdioRepository(
      */
     fun clearTranscripts() {
         _transcripts.value = emptyMap()
+        // Plugin fields are scoped to the same server as the transcripts they
+        // sit beside, so a profile switch has to drop both.
+        _pluginCallFields.value = emptyMap()
     }
 
     /**

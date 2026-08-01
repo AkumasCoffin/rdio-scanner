@@ -32,6 +32,33 @@
             </div>
         </div>
     </mat-sidenav>
+    <!--
+        Plugin-registered views. A slot lets a plugin add to an existing screen;
+        this gives it a whole one, which is what anything substantial needs.
+        The panel and its launcher only exist when a plugin has registered a
+        view, so an install with no plugins is unchanged.
+    -->
+    <mat-sidenav #pluginPanel [autoFocus]="false" [disableClose]="true" position="start" class="plugin-sidenav">
+        <div class="panel plugin">
+            <mat-toolbar>
+                <div>
+                    <button mat-icon-button (click)="pluginPanel.close()">
+                        <mat-icon>arrow_forward</mat-icon>
+                    </button>
+                </div>
+                <span class="toolbar-title">{{ activePluginView?.label }}</span>
+                <div class="plugin-view-tabs" *ngIf="pluginViews.length > 1">
+                    <button mat-button *ngFor="let view of pluginViews"
+                        [class.active]="view.key === activePluginView?.key"
+                        (click)="selectPluginView(view)">
+                        <mat-icon *ngIf="view.icon">{{ view.icon }}</mat-icon>
+                        {{ view.label }}
+                    </button>
+                </div>
+            </mat-toolbar>
+            <rdio-plugin-view [view]="activePluginView"></rdio-plugin-view>
+        </div>
+    </mat-sidenav>
     <mat-sidenav #selectPanel [autoFocus]="false" [disableClose]="true" position="end">
         <div class="panel select">
             <mat-toolbar>
@@ -49,6 +76,11 @@
         </div>
     </mat-sidenav>
     <mat-sidenav-content>
+        <button *ngIf="pluginViews.length" class="plugin-views-fab" mat-icon-button
+            [matTooltip]="pluginViews.length === 1 ? pluginViews[0].label : 'Plugin views'"
+            aria-label="Open plugin views" (click)="openPluginPanel(pluginPanel)">
+            <mat-icon>{{ pluginViews.length === 1 && pluginViews[0].icon ? pluginViews[0].icon : 'extension' }}</mat-icon>
+        </button>
         <button *ngIf="streamOpen" class="stream-settings-fab" mat-icon-button
             [class.active]="streamEditMode"
             [matTooltip]="streamEditMode ? 'Stream edit mode: ON' : 'Edit stream overlay'"

@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.JsonElement
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -92,6 +93,26 @@ class RdioClient(
      * pushes when a backend Whisper run finishes.
      */
     val transcripts: SharedFlow<Pair<Long, String>> = _transcripts.asSharedFlow()
+
+    private val _pluginMessages = MutableSharedFlow<Pair<String, JsonElement?>>(
+        replay = 0, extraBufferCapacity = 64,
+    )
+
+    /**
+     * Stream of (command, payload) pairs for websocket commands contributed by
+     * server-side plugins.
+     *
+     * A server's command set is no longer fixed at this app's compile time, so
+     * anything unrecognised is surfaced here instead of dropped. Nothing
+     * consumes it yet; it exists so plugin-backed features can be added to the
+     * app without another protocol change.
+     */
+    val pluginMessages: SharedFlow<Pair<String, JsonElement?>> = _pluginMessages.asSharedFlow()
+
+    /** Sends a plugin-defined command over the existing connection. */
+    fun sendPluginMessage(command: String, payload: JsonElement? = null) {
+        webSocket?.send(Wire.encode(command, payload))
+    }
 
     private var credentials: RdioCredentials? = null
     private var webSocket: WebSocket? = null
@@ -428,6 +449,17 @@ class RdioClient(
 
             Incoming.Expired -> _state.value = ConnectionState.Expired
             Incoming.TooMany -> _state.value = ConnectionState.TooMany
+
+            is Incoming.Plugin -> {
+                // Same generation guard as CAL and TRX — drop dispatches from a
+                // listener whose socket has already been retired.
+                scope.launch {
+                    if (gen == generation.get()) {
+                        _pluginMessages.emit(msg.command to msg.payload)
+                    }
+                }
+            }
+
             is Incoming.Unknown -> Unit
         }
     }
