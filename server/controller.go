@@ -53,6 +53,9 @@ type Controller struct {
 	Transcriber         *Transcriber
 	PendingTranscripts  *PendingTranscripts
 	FallbackTranscripts *FallbackTranscripts
+	// pluginFeatures caches which features each downstream advertises, so a
+	// plugin speaking a server-to-server protocol doesn't re-probe per call.
+	pluginFeatures *PluginFeatureCache
 	// calLogThrottle rate-limits the per-request CAL diagnostic log lines
 	// (not-found / access-denied) so bot traffic to dead share links can't
 	// flood the logs table.
@@ -116,6 +119,7 @@ func NewController(config *Config) *Controller {
 	controller.Database = NewDatabase(config)
 	controller.Delayer = NewDelayer(controller)
 	controller.PluginStore = NewPluginStore(controller)
+	controller.pluginFeatures = NewPluginFeatureCache()
 	controller.Scheduler = NewScheduler(controller)
 	controller.Stats = NewStats(controller)
 	controller.Transcriber = NewTranscriber(controller)

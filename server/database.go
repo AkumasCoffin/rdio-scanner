@@ -418,6 +418,9 @@ func (db *Database) migrate() error {
 	if err == nil {
 		err = db.migration20260801120000(verbose)
 	}
+	if err == nil {
+		err = db.migrationTranscriptsToPlugin(verbose)
+	}
 
 	return err
 }

@@ -47,9 +47,12 @@ var pluginColumnNameRegexp = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
 // parse time rather than silently ignored, so a typo can't quietly leave a
 // plugin without the access it expects.
 const (
+	PluginPermissionAdminVerify    = "admin-verify"
+	PluginPermissionApikeysVerify  = "apikeys-verify"
 	PluginPermissionCallsRead      = "calls-read"
 	PluginPermissionCallsWrite     = "calls-write"
 	PluginPermissionConfigExpose   = "config-expose"
+	PluginPermissionDownstreams    = "downstreams-forward"
 	PluginPermissionHttp           = "http"
 	PluginPermissionRoutes         = "routes"
 	PluginPermissionRoutesAbsolute = "routes-absolute"
@@ -57,9 +60,12 @@ const (
 )
 
 var pluginPermissions = map[string]bool{
+	PluginPermissionAdminVerify:    true,
+	PluginPermissionApikeysVerify:  true,
 	PluginPermissionCallsRead:      true,
 	PluginPermissionCallsWrite:     true,
 	PluginPermissionConfigExpose:   true,
+	PluginPermissionDownstreams:    true,
 	PluginPermissionHttp:           true,
 	PluginPermissionRoutes:         true,
 	PluginPermissionRoutesAbsolute: true,

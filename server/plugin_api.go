@@ -349,7 +349,91 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 		return goja.Undefined()
 	})
 
+	calls.Set("findId", func(system int64, talkgroup int64, dateTime string) goja.Value {
+		requirePermission(PluginPermissionCallsRead)
+
+		id, err := rt.controller.PluginFindCallId(uint(system), uint(talkgroup), dateTime)
+		if err != nil {
+			throw("calls.findId: %v", err)
+		}
+
+		return vm.ToValue(id)
+	})
+
 	rdio.Set("calls", calls)
+
+	// --- rdio.systems -----------------------------------------------------
+
+	systems := vm.NewObject()
+
+	systems.Set("list", func() goja.Value {
+		// Ungated: this is the same configuration every websocket client
+		// already receives. Withholding it would only push plugins into
+		// keeping their own stale copy.
+		return vm.ToValue(rt.controller.PluginSystemsList())
+	})
+
+	rdio.Set("systems", systems)
+
+	// --- rdio.apikeys -----------------------------------------------------
+
+	apikeys := vm.NewObject()
+
+	apikeys.Set("verify", func(key string, system int64, talkgroup int64) goja.Value {
+		requirePermission(PluginPermissionApikeysVerify)
+
+		valid, ident := rt.controller.PluginVerifyApikey(key, uint(system), uint(talkgroup))
+
+		return vm.ToValue(map[string]any{"valid": valid, "ident": ident})
+	})
+
+	rdio.Set("apikeys", apikeys)
+
+	// --- rdio.admin -------------------------------------------------------
+
+	admin := vm.NewObject()
+
+	admin.Set("verifyToken", func(token string) goja.Value {
+		requirePermission(PluginPermissionAdminVerify)
+		return vm.ToValue(rt.controller.PluginVerifyAdminToken(token))
+	})
+
+	rdio.Set("admin", admin)
+
+	// --- rdio.downstreams -------------------------------------------------
+
+	downstreams := vm.NewObject()
+
+	downstreams.Set("forward", func(spec goja.Value) goja.Value {
+		requirePermission(PluginPermissionDownstreams)
+
+		options, ok := spec.Export().(map[string]any)
+		if !ok {
+			throw("downstreams.forward requires an object")
+		}
+
+		routePath := stringFromMap(options, "path")
+		if strings.TrimSpace(routePath) == "" {
+			throw("downstreams.forward requires a path")
+		}
+
+		system, _ := numberFromMap(options, "system")
+		talkgroup, _ := numberFromMap(options, "talkgroup")
+		feature := stringFromMap(options, "requireFeature")
+
+		body, _ := options["body"].(map[string]any)
+		if body == nil {
+			body = map[string]any{}
+		}
+
+		return rt.promiseFrom(vm, func() (any, error) {
+			return rt.controller.ForwardToDownstreams(
+				routePath, uint(system), uint(talkgroup), body, feature,
+			), nil
+		})
+	})
+
+	rdio.Set("downstreams", downstreams)
 
 	// --- rdio.search ------------------------------------------------------
 
@@ -627,8 +711,14 @@ func numberFromMap(m map[string]any, key string) (float64, bool) {
 // a call blob is typically 50-200 KB and copying it into the runtime for every
 // hook would be pure waste for the majority of plugins that never touch it.
 func pluginCallValue(call *Call, withAudio bool) map[string]any {
+	meta := call.meta
+	if meta == nil {
+		meta = map[string]string{}
+	}
+
 	value := map[string]any{
 		"id":          call.Id,
+		"meta":        meta,
 		"system":      call.System,
 		"talkgroup":   call.Talkgroup,
 		"dateTime":    call.DateTime,

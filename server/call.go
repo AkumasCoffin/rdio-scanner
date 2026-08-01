@@ -56,6 +56,11 @@ type Call struct {
 	// true, local transcription is suppressed — the upstream will push the
 	// transcript via /api/call-transcript once Whisper finishes.
 	transcriptPending bool
+	// meta holds upload form fields the server does not itself recognise,
+	// passed through to plugins as call.meta. This is how a plugin-implemented
+	// server-to-server protocol carries hints on the upload without core
+	// needing to know what they mean.
+	meta map[string]string
 	// pluginFields holds values contributed by plugins through
 	// rdio.calls.extendField, merged into the wire payload by MarshalJSON.
 	// Populated by Controller.ApplyPluginFields on the paths that serve a call

@@ -234,8 +234,18 @@ func ParseSdrTrunkMeta(call *Call, controller *Controller) error {
 	return nil
 }
 
+// callMetaMaxFields and callMetaMaxValueLen bound what an uploader can attach
+// to a call as plugin metadata. The fields are attacker-controlled and held in
+// memory for the life of the call, so this is a cap, not a formality.
+const (
+	callMetaMaxFields   = 32
+	callMetaMaxValueLen = 4096
+)
+
 func ParseMultipartContent(call *Call, p *multipart.Part, b []byte) {
-	switch p.FormName() {
+	key := p.FormName()
+
+	switch key {
 	case "audio":
 		call.Audio = b
 		call.AudioName = p.FileName()
@@ -407,8 +417,19 @@ func ParseMultipartContent(call *Call, p *multipart.Part, b []byte) {
 			call.talkgroupTag = s
 		}
 
-	case "transcriptPending":
-		call.transcriptPending = string(b) == "1"
+	default:
+		// Anything the server doesn't recognise is kept for plugins rather
+		// than discarded. Server-to-server protocols pass hints on the upload
+		// this way — a plugin reads them off call.meta — so the set of
+		// meaningful form fields is no longer fixed by this switch.
+		if s := string(b); len(s) > 0 {
+			if call.meta == nil {
+				call.meta = map[string]string{}
+			}
+			if len(call.meta) < callMetaMaxFields && len(s) <= callMetaMaxValueLen {
+				call.meta[key] = s
+			}
+		}
 	}
 }
 

@@ -189,8 +189,19 @@ func (api *Api) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	// Reports whatever the enabled plugins advertise. Kept in the server rather
+	// than claimed by a plugin because it answers for all of them — a plugin
+	// owning this endpoint would have to speak on its peers' behalf.
+	features := api.Controller.PluginCapabilities()
+
+	body, err := json.Marshal(map[string]any{"features": features})
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"features":["transcript-forward"]}`))
+	w.Write(body)
 }
 
 type callTranscriptRequest struct {
