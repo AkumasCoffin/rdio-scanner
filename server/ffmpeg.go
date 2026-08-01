@@ -196,7 +196,10 @@ func readOsReleaseIds() []string {
 
 func (ffmpeg *FFMpeg) Convert(call *Call, systems *Systems, tags *Tags, mode uint) error {
 	var (
-		args = []string{"-i", "-"}
+		// -y because the temp output path already exists (CreateTemp makes it).
+		// Without it ffmpeg asks whether to overwrite, on a stdin that is
+		// carrying the audio.
+		args = []string{"-y", "-i", "-"}
 		err  error
 	)
 
@@ -235,7 +238,34 @@ func (ffmpeg *FFMpeg) Convert(call *Call, systems *Systems, tags *Tags, mode uin
 		}
 	}
 
-	args = append(args, "-c:a", "aac", "-b:a", "32k", "-movflags", "frag_keyframe+empty_moov", "-f", "ipod", "-")
+	// Output goes to a temp file rather than stdout, and that is load-bearing.
+	//
+	// MP4 keeps its sample index (the moov atom) at the end of muxing but must
+	// write it near the front, so ffmpeg has to seek backwards — impossible on
+	// a pipe. Piping therefore forced -movflags frag_keyframe+empty_moov,
+	// producing a FRAGMENTED MP4: a moov declaring zero samples, with the real
+	// index in a trailing moof box.
+	//
+	// Chrome and ffprobe read that happily. WebKit does not: Safari's
+	// decodeAudioData() resolves samples from the moov sample tables, finds
+	// none, and fails — so every converted call was silent on iOS while
+	// working everywhere else. Safari handles fragmented MP4 only through
+	// Media Source Extensions, not the one-shot decode the webapp uses.
+	//
+	// A seekable output lets ffmpeg write a normal moov with a populated
+	// sample table, which decodes everywhere. The file is small and
+	// short-lived; ingest is serialized, so at most one exists at a time.
+	tmp, err := os.CreateTemp("", "rdio-convert-*.m4a")
+	if err != nil {
+		return fmt.Errorf("ffmpeg: cannot create temp file: %v", err)
+	}
+	tmpPath := tmp.Name()
+	// Close immediately — ffmpeg opens the path itself, and on Windows an open
+	// handle would block it.
+	tmp.Close()
+	defer os.Remove(tmpPath)
+
+	args = append(args, "-c:a", "aac", "-b:a", "32k", "-f", "ipod", tmpPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), ffmpegTimeout)
 	defer cancel()
@@ -243,14 +273,19 @@ func (ffmpeg *FFMpeg) Convert(call *Call, systems *Systems, tags *Tags, mode uin
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	cmd.Stdin = bytes.NewReader(call.Audio)
 
-	stdout := bytes.NewBuffer([]byte(nil))
-	cmd.Stdout = stdout
-
 	stderr := bytes.NewBuffer([]byte(nil))
 	cmd.Stderr = stderr
 
 	if err = cmd.Run(); err == nil {
-		call.Audio = stdout.Bytes()
+		converted, readErr := os.ReadFile(tmpPath)
+
+		if readErr != nil || len(converted) == 0 {
+			// Keep the original audio rather than storing an empty call.
+			fmt.Printf("ffmpeg produced no output converting %v, keeping original audio\n", call.AudioName)
+			return nil
+		}
+
+		call.Audio = converted
 		call.AudioType = "audio/mp4"
 
 		switch v := call.AudioName.(type) {

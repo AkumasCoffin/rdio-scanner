@@ -1616,10 +1616,19 @@ export class RdioScannerService implements OnDestroy {
                     }
                 }
             });
-        }, () => {
+        }, (error) => {
             if (generation !== this.playGeneration) {
                 return;
             }
+
+            // Skipping keeps the feed moving, but silently skipping every call
+            // looks identical to "audio is broken" with nothing to go on. This
+            // is browser-specific in practice — a format one engine decodes and
+            // another refuses — so name the call and the type we handed it.
+            console.warn(
+                `Unable to decode audio for call ${this.call?.id} ` +
+                `(${this.call?.audioType || 'unknown type'}): ${error}`,
+            );
 
             this.event.emit({ call: this.call, queue, queueTime: this.computeDelay() });
 
