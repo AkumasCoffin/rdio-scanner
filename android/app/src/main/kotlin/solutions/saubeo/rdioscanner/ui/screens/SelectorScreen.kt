@@ -57,7 +57,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import solutions.saubeo.rdioscanner.data.prefs.PresetDto
+import solutions.saubeo.rdioscanner.data.protocol.GroupSection
 import solutions.saubeo.rdioscanner.data.protocol.SystemDto
+import solutions.saubeo.rdioscanner.data.protocol.buildSections
 import solutions.saubeo.rdioscanner.ui.ScannerViewModel
 import solutions.saubeo.rdioscanner.ui.components.RdioButton
 import solutions.saubeo.rdioscanner.ui.theme.RdioPalette
@@ -72,8 +74,30 @@ fun SelectorScreen(
     val presets by vm.presets.collectAsStateWithLifecycle()
 
     val expanded = remember { mutableStateMapOf<Int, Boolean>() }
+    // Sections are keyed separately from systems, and by a prefixed label so a
+    // group and a tag sharing a name don't inherit each other's expansion when
+    // the server switches layout mid-session.
+    val sectionExpanded = remember { mutableStateMapOf<String, Boolean>() }
     var dialogPreset by remember { mutableStateOf<PresetDto?>(null) }
     var dialogOpen by remember { mutableStateOf(false) }
+
+    // Layout is chosen by the server. Tags win when both are somehow set,
+    // matching the webapp template and the server's own guard.
+    val useTags = config?.sortByTags == true
+    val useGroups = config?.sortByGroups == true && !useTags
+    val sectionKeyPrefix = if (useTags) "t:" else "g:"
+
+    // Keyed on config alone: selection changes on every checkbox tap and must
+    // not rebuild sections.
+    val sections = remember(config) {
+        val cfg = config
+        when {
+            cfg == null -> emptyList()
+            cfg.sortByTags -> buildSections(cfg.systems, cfg.tags)
+            cfg.sortByGroups -> buildSections(cfg.systems, cfg.groups)
+            else -> emptyList()
+        }
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -120,24 +144,56 @@ fun SelectorScreen(
                 )
             }
             val systems = config?.systems.orEmpty()
-            if (systems.isEmpty()) {
-                item {
-                    CardPanel { Text("No systems in config yet", color = RdioPalette.TextMuted) }
+            when {
+                useTags || useGroups -> {
+                    if (sections.isEmpty()) {
+                        item {
+                            CardPanel { Text("No talkgroups in config yet", color = RdioPalette.TextMuted) }
+                        }
+                    } else {
+                        items(sections, key = { sectionKeyPrefix + it.label }) { section ->
+                            val key = sectionKeyPrefix + section.label
+                            GroupCard(
+                                section = section,
+                                showTagInSubtitle = !useTags,
+                                selection = selection,
+                                expanded = sectionExpanded[key] == true,
+                                onExpand = { sectionExpanded[key] = !(sectionExpanded[key] == true) },
+                                onSectionToggle = { active ->
+                                    vm.toggleGroupSection(
+                                        section.talkgroups.map { it.system.id to it.talkgroup.id },
+                                        active,
+                                    )
+                                },
+                                onTalkgroupToggle = { sysId, tgId, active ->
+                                    vm.toggleTalkgroup(sysId, tgId, active)
+                                },
+                            )
+                        }
+                    }
                 }
-            } else {
-                items(systems, key = { it.id }) { system ->
-                    SystemCard(
-                        system = system,
-                        selection = selection,
-                        expanded = expanded[system.id] == true,
-                        onExpand = { expanded[system.id] = !(expanded[system.id] == true) },
-                        onSystemToggle = { active ->
-                            vm.toggleSystem(system.id, system.talkgroups.map { it.id }, active)
-                        },
-                        onTalkgroupToggle = { tgId, active ->
-                            vm.toggleTalkgroup(system.id, tgId, active)
-                        },
-                    )
+
+                systems.isEmpty() -> {
+                    item {
+                        CardPanel { Text("No systems in config yet", color = RdioPalette.TextMuted) }
+                    }
+                }
+
+                else -> {
+                    items(systems, key = { it.id }) { system ->
+                        SystemCard(
+                            system = system,
+                            selection = selection,
+                            expanded = expanded[system.id] == true,
+                            onExpand = { expanded[system.id] = !(expanded[system.id] == true) },
+                            onSystemToggle = { active ->
+                                vm.toggleSystem(system.id, system.talkgroups.map { it.id }, active)
+                            },
+                            onTalkgroupToggle = { tgId, active ->
+                                vm.toggleTalkgroup(system.id, tgId, active)
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -324,6 +380,97 @@ private fun SystemCard(
                         val sub = listOfNotNull(
                             tg.tag.takeIf { it.isNotBlank() },
                             tg.group.takeIf { it.isNotBlank() },
+                        ).joinToString(" · ")
+                        if (sub.isNotBlank()) {
+                            Text(
+                                sub,
+                                color = RdioPalette.TextSoft,
+                                style = LocalTextStyle.current.copy(fontSize = 11.sp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A group or tag section, laid out like [SystemCard] so the two layouts feel
+ * the same. The difference is that a section spans systems, so each talkgroup
+ * row names its system and the header toggle goes through
+ * [ScannerViewModel.toggleGroupSection] rather than the system-scoped path.
+ */
+@Composable
+private fun GroupCard(
+    section: GroupSection,
+    showTagInSubtitle: Boolean,
+    selection: Map<Int, Map<Int, Boolean>>,
+    expanded: Boolean,
+    onExpand: () -> Unit,
+    onSectionToggle: (Boolean) -> Unit,
+    onTalkgroupToggle: (Int, Int, Boolean) -> Unit,
+) {
+    val activeCount = section.talkgroups.count {
+        selection[it.system.id]?.get(it.talkgroup.id) == true
+    }
+    val tri = when {
+        activeCount == 0 -> ToggleableState.Off
+        activeCount == section.talkgroups.size -> ToggleableState.On
+        else -> ToggleableState.Indeterminate
+    }
+    CardPanel {
+        Row(
+            Modifier.fillMaxWidth().clickable(onClick = onExpand),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TriStateCheckbox(
+                state = tri,
+                onClick = { onSectionToggle(tri != ToggleableState.On) },
+                colors = checkboxColors(),
+            )
+            Spacer(Modifier.size(4.dp))
+            Column(Modifier.weight(1f)) {
+                Text(section.label, color = RdioPalette.TextMain, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "$activeCount / ${section.talkgroups.size} active",
+                    color = RdioPalette.TextSoft,
+                    style = LocalTextStyle.current.copy(fontSize = 11.sp),
+                )
+            }
+            Icon(
+                if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                tint = RdioPalette.TextMuted,
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(4.dp))
+            section.talkgroups.forEach { item ->
+                val system = item.system
+                val tg = item.talkgroup
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 32.dp, top = 2.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val active = selection[system.id]?.get(tg.id) == true
+                    Checkbox(
+                        checked = active,
+                        onCheckedChange = { onTalkgroupToggle(system.id, tg.id, it) },
+                        colors = checkboxColors(),
+                    )
+                    Spacer(Modifier.size(4.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            tg.label.ifBlank { tg.name.ifBlank { "TG ${tg.id}" } },
+                            color = RdioPalette.TextMain,
+                        )
+                        // The section header already states the dimension being
+                        // grouped on, so show the other one — plus the system,
+                        // which matters here because a section mixes systems.
+                        val sub = listOfNotNull(
+                            system.label.takeIf { it.isNotBlank() },
+                            (if (showTagInSubtitle) tg.tag else tg.group).takeIf { it.isNotBlank() },
                         ).joinToString(" · ")
                         if (sub.isNotBlank()) {
                             Text(

@@ -75,6 +75,15 @@ data class ConfigDto(
     val groups: Map<String, Map<String, List<Int>>> = emptyMap(),
     /** `{ tagName: { systemId: [talkgroupIds] } }` — mirrors webapp config.tags. */
     val tags: Map<String, Map<String, List<Int>>> = emptyMap(),
+    /**
+     * Selector layout, owned by the server. The server guarantees these are
+     * never both true (it drops sortByGroups if they are), and the webapp
+     * gives tags precedence anyway — [SelectorScreen] mirrors that order.
+     * Defaults keep older servers, which omit the keys entirely, on the flat
+     * layout.
+     */
+    val sortByGroups: Boolean = false,
+    val sortByTags: Boolean = false,
     val tagsToggle: Boolean = false,
     val playbackGoesLive: Boolean = false,
     val showListenersCount: Boolean = false,

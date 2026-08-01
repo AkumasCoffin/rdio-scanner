@@ -245,6 +245,31 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Flips every talkgroup of a selector section at once.
+     *
+     * Deliberately not built on [toggleSystem]: a group or tag section holds
+     * only some of a system's talkgroups, and toggleSystem replaces that
+     * system's whole entry — it would clobber the talkgroups belonging to
+     * other sections. Everything goes through a single updateSelection so the
+     * section becomes one persisted write and one livefeed frame instead of
+     * one per talkgroup.
+     */
+    fun toggleGroupSection(pairs: List<Pair<Int, Int>>, active: Boolean) {
+        if (pairs.isEmpty()) return
+        viewModelScope.launch {
+            repo.updateSelection { current ->
+                val next = current.toMutableMap()
+                pairs.groupBy({ it.first }, { it.second }).forEach { (system, talkgroupIds) ->
+                    val inner = next[system]?.toMutableMap() ?: mutableMapOf()
+                    talkgroupIds.forEach { inner[it] = active }
+                    next[system] = inner
+                }
+                next
+            }
+        }
+    }
+
     fun setAll(active: Boolean) {
         val cfg = config.value ?: return
         viewModelScope.launch {
