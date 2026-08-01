@@ -1230,9 +1230,20 @@ export class RdioScannerService implements OnDestroy {
             return 0;
         }
 
-        const position = isNaN(this.audioSourceStartTime)
-            ? 0
-            : this.audioContext.currentTime - this.audioSourceStartTime;
+        // The fallback path has no source node and never sets a start time, so
+        // read the position off the element instead — otherwise the delay
+        // readout counts the call now playing as though it had not started.
+        let position: number;
+
+        if (this.audioElement) {
+            position = this.audioElement.currentTime || 0;
+
+        } else if (isNaN(this.audioSourceStartTime)) {
+            position = 0;
+
+        } else {
+            position = this.audioContext.currentTime - this.audioSourceStartTime;
+        }
 
         return Math.max(0, duration - position);
     }
@@ -2254,7 +2265,10 @@ export class RdioScannerService implements OnDestroy {
             // audioContext exists, so beginAudioPlayback() bailed at the
             // !audioContext guard. Now that the user has gestured and we
             // have a live context, drive the deferred playback.
-            if (this.call?.audio && !this.audioSource) {
+            // audioElement is checked too: on a browser using the fallback there
+            // is never an audioSource, so without it a second gesture would
+            // start the call over on top of itself.
+            if (this.call?.audio && !this.audioSource && !this.audioElement) {
                 this.beginAudioPlayback();
             }
         };
