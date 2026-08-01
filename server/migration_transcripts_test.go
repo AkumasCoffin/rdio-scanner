@@ -24,15 +24,23 @@ import (
 // applied, which is the state a real server starts from.
 func newTestDatabase(t *testing.T) *Database {
 	t.Helper()
+	return newTestDatabaseWithDrops(t, false)
+}
+
+// newTestDatabaseWithDrops is the same, with the opt-in legacy column removal
+// enabled — the mode an operator chooses when they can afford the rewrite.
+func newTestDatabaseWithDrops(t *testing.T, dropLegacy bool) *Database {
+	t.Helper()
 
 	dir := t.TempDir()
 
 	// Relative on purpose: GetDbFilePath uses path.IsAbs, which does not
 	// recognise a Windows absolute path and would join it onto BaseDir.
 	config := &Config{
-		BaseDir: dir,
-		DbType:  DbTypeSqlite,
-		DbFile:  "test.db",
+		BaseDir:           dir,
+		DbType:            DbTypeSqlite,
+		DbFile:            "test.db",
+		DropLegacyColumns: dropLegacy,
 	}
 
 	return NewDatabase(config)
@@ -98,6 +106,37 @@ func seedCallWithTranscript(t *testing.T, db *Database, id int, transcript strin
 	}
 }
 
+// seedBulkCalls inserts transcript-less filler rows, to push the calls table
+// past the size where the migration stops dropping columns on its own.
+func seedBulkCalls(t *testing.T, db *Database, firstId int, count int) {
+	t.Helper()
+
+	tx, err := db.Sql.Begin()
+	if err != nil {
+		t.Fatalf("cannot begin: %v", err)
+	}
+
+	stmt, err := tx.Prepare(
+		"insert into `rdioScannerCalls` (`id`, `audio`, `dateTime`, `frequencies`, `patches`, `sources`, `system`, `talkgroup`) " +
+			"values (?, ?, ?, ?, ?, ?, ?, ?)",
+	)
+	if err != nil {
+		t.Fatalf("cannot prepare: %v", err)
+	}
+
+	now := time.Now().UTC().Format("2006-01-02 15:04:05.000 -07:00")
+	for i := 0; i < count; i++ {
+		if _, err := stmt.Exec(firstId+i, []byte("a"), now, "[]", "[]", "[]", 1, 100); err != nil {
+			t.Fatalf("cannot seed filler call: %v", err)
+		}
+	}
+
+	stmt.Close()
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("cannot commit: %v", err)
+	}
+}
+
 func countRows(t *testing.T, db *Database, query string) int {
 	t.Helper()
 
@@ -157,15 +196,83 @@ func TestTranscriptMigrationMovesData(t *testing.T) {
 		t.Fatalf("setting value changed in transit: %q", value)
 	}
 
-	if db.columnExists("rdioScannerCalls", "transcript") {
-		t.Fatal("the core transcript column survived the migration")
-	}
-
 	// The legacy option rows stay: they are how the server knows this install
 	// used to have transcription and should be offered the plugin.
 	if got := countRows(t, db,
 		"select count(*) from `rdioScannerConfigs` where `key` = 'option.transcriptionEnabled'"); got != 1 {
 		t.Fatal("the legacy option row was removed; nothing would signal that this install had transcription")
+	}
+}
+
+// TestTranscriptMigrationDropsColumnsWhenAsked covers the opt-in path, where an
+// operator has accepted the table rewrite in exchange for the space.
+func TestTranscriptMigrationDropsColumnsWhenAsked(t *testing.T) {
+	db := newTestDatabaseWithDrops(t, true)
+	defer db.Sql.Close()
+
+	rewindTranscriptMigration(t, db)
+	seedCallWithTranscript(t, db, 1, "engine one responding")
+
+	if err := db.migrationTranscriptsToPlugin(false); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	if got := countRows(t, db, "select count(*) from `plugin_transcripts_calls`"); got != 1 {
+		t.Fatalf("expected 1 transcript moved, got %d", got)
+	}
+
+	for _, column := range []string{"transcript"} {
+		if db.columnExists("rdioScannerCalls", column) {
+			t.Fatalf("rdioScannerCalls.%s survived an explicit drop", column)
+		}
+	}
+	if db.columnExists("rdioScannerSystems", "transcribe") {
+		t.Fatal("rdioScannerSystems.transcribe survived an explicit drop")
+	}
+	if db.columnExists("rdioScannerTalkgroups", "transcribe") {
+		t.Fatal("rdioScannerTalkgroups.transcribe survived an explicit drop")
+	}
+}
+
+// TestTranscriptMigrationDefersDropOnLargeTable is the case that protects a
+// live database: a table big enough for the rewrite to hurt is left alone, and
+// the step stays available so an operator can run it deliberately.
+func TestTranscriptMigrationDefersDropOnLargeTable(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	rewindTranscriptMigration(t, db)
+	seedCallWithTranscript(t, db, 1, "deferred")
+
+	// Stand in for a large table without inserting ten thousand rows.
+	seedBulkCalls(t, db, 2, transcriptDropAutoThreshold+1)
+
+	if err := db.migrationTranscriptsToPlugin(false); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	if !db.columnExists("rdioScannerCalls", "transcript") {
+		t.Fatal("a large table had its column dropped without being asked")
+	}
+
+	done, err := db.migrationDone(transcriptMigrationDrop)
+	if err != nil {
+		t.Fatalf("cannot check the drop step: %v", err)
+	}
+	if done {
+		t.Fatal("the drop was recorded as done despite being skipped, so it could never run later")
+	}
+
+	// Opting in on a later start completes it.
+	db.Config.DropLegacyColumns = true
+	if err := db.migrationTranscriptsToPlugin(false); err != nil {
+		t.Fatalf("opt-in run failed: %v", err)
+	}
+	if db.columnExists("rdioScannerCalls", "transcript") {
+		t.Fatal("the deferred drop did not run once enabled")
+	}
+	if got := countRows(t, db, "select count(*) from `plugin_transcripts_calls`"); got != 1 {
+		t.Fatalf("the deferred drop changed the migrated data: %d rows", got)
 	}
 }
 
@@ -204,23 +311,29 @@ func TestTranscriptMigrationResumesAfterPartialCopy(t *testing.T) {
 		t.Fatalf("initial run failed: %v", err)
 	}
 
-	// Roll back only the drop step, as a crash at that point would.
-	if _, err := db.Sql.Exec("delete from `rdioScannerMeta` where `name` = ?", transcriptMigrationDrop); err != nil {
-		t.Fatalf("cannot rewind the drop step: %v", err)
-	}
-	if _, err := db.Sql.Exec("alter table `rdioScannerCalls` add column `transcript` text"); err != nil {
-		t.Fatalf("cannot restore the column: %v", err)
+	// Roll back the verify and drop steps, as a crash at that point would, and
+	// re-run. The copy is already recorded, so this exercises resuming into the
+	// verification rather than repeating the copy.
+	for _, name := range []string{transcriptMigrationVerify, transcriptMigrationDrop} {
+		if _, err := db.Sql.Exec("delete from `rdioScannerMeta` where `name` = ?", name); err != nil {
+			t.Fatalf("cannot rewind %s: %v", name, err)
+		}
 	}
 
 	if err := db.migrationTranscriptsToPlugin(false); err != nil {
 		t.Fatalf("resumed run failed: %v", err)
 	}
 
-	if db.columnExists("rdioScannerCalls", "transcript") {
-		t.Fatal("the resumed run did not complete the drop")
-	}
 	if got := countRows(t, db, "select count(*) from `plugin_transcripts_calls`"); got != 1 {
 		t.Fatalf("the resumed run changed the data: %d rows", got)
+	}
+
+	done, err := db.migrationDone(transcriptMigrationVerify)
+	if err != nil {
+		t.Fatalf("cannot check the verify step: %v", err)
+	}
+	if !done {
+		t.Fatal("the resumed run did not complete verification")
 	}
 }
 
@@ -232,11 +345,9 @@ func TestTranscriptMigrationFreshInstall(t *testing.T) {
 	defer db.Sql.Close()
 
 	// A fresh database has already been through the migration during
-	// NewDatabase, so every step should be recorded and the column gone.
-	if db.columnExists("rdioScannerCalls", "transcript") {
-		t.Fatal("a fresh install still has the core transcript column")
-	}
-
+	// NewDatabase. There is nothing to move, so every step is recorded —
+	// including the drop, which has no work to do and must not leave the
+	// install looking half-migrated forever.
 	for _, name := range []string{
 		transcriptMigrationTables,
 		transcriptMigrationCopy,

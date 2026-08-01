@@ -43,6 +43,12 @@ const (
 	transcriptMigrationDrop   = "20260802100003-transcripts-plugin-drop"
 )
 
+// transcriptDropAutoThreshold is the calls-table size below which removing the
+// legacy columns is cheap enough to just do. Above it the rewrite is deferred
+// until an operator asks for it, because on MySQL, MariaDB and SQLite it
+// rewrites every row of the table that holds the audio.
+const transcriptDropAutoThreshold = 10000
+
 // The plugin declares these same tables in its manifest. Both paths use
 // "create table if not exists", so whichever runs first wins and the other is a
 // no-op — the plugin does not need this migration to have run, and this
@@ -199,14 +205,51 @@ func (db *Database) migrationTranscriptsToPlugin(verbose bool) error {
 		}
 	}
 
-	// Step 4 — drop the originals.
+	// Step 4 — index the new home for the data, so transcript search stays
+	// index-backed. Cheap and safe, so it always runs.
+	db.indexPluginTranscripts(verbose)
+
+	// Step 5 — drop the originals. Opt-in, because it is the one genuinely
+	// dangerous thing here.
+	//
+	// rdioScannerCalls holds every audio blob. On MySQL, MariaDB and SQLite,
+	// dropping a column rewrites the whole table, which on a real install can
+	// mean hours of downtime and twice the disk. Postgres does it as a metadata
+	// change, but there is no way to be safe on all three by default.
+	//
+	// Leaving the column costs nothing but space: the server no longer reads or
+	// writes it, and the data has already been copied and verified.
 	if done, err := db.migrationDone(transcriptMigrationDrop); err != nil {
 		return err
 	} else if !done {
+		// The rewrite costs time in proportion to the table, so a small table
+		// is simply dropped. This is what stops a fresh install — which has the
+		// column purely because an older migration created it — from carrying a
+		// deferred step and printing a warning on every start forever.
+		var calls int
+		if err := db.Sql.QueryRow(db.formatQuery("select count(*) from `rdioScannerCalls`")).Scan(&calls); err != nil {
+			calls = transcriptDropAutoThreshold + 1
+		}
+
+		if !db.Config.DropLegacyColumns && calls > transcriptDropAutoThreshold {
+			log.Printf(
+				"transcript migration: transcripts are now served from the plugin tables. The original columns are "+
+					"still present and unused, holding roughly %d rows' worth of space. Dropping them rewrites the calls "+
+					"table, which takes a while on a database this size, so it is not done automatically — restart with "+
+					"-drop_legacy_columns when you can afford the downtime.",
+				calls,
+			)
+			return nil
+		}
+
 		if verbose {
 			log.Printf("running database migration %s", transcriptMigrationDrop)
 		}
+
+		log.Printf("transcript migration: dropping the legacy transcript columns; this rewrites the calls table and may take a while")
+
 		db.dropTranscriptColumns(verbose)
+
 		if err := db.recordMigration(transcriptMigrationDrop); err != nil {
 			return err
 		}
@@ -215,12 +258,66 @@ func (db *Database) migrationTranscriptsToPlugin(verbose bool) error {
 	return nil
 }
 
+// indexPluginTranscripts keeps free-text transcript search index-backed by
+// building the trigram index on the plugin's table. Postgres only — the other
+// backends never had this index.
+func (db *Database) indexPluginTranscripts(verbose bool) {
+	if db.Config.DbType != DbTypePostgres {
+		return
+	}
+
+	if _, err := db.Sql.Exec("create extension if not exists pg_trgm"); err != nil {
+		log.Printf("transcript migration: pg_trgm unavailable, transcript search will fall back to a scan: %v", err)
+		return
+	}
+
+	if _, err := db.Sql.Exec(
+		`create index if not exists "plugin_transcripts_calls_trgm" on "plugin_transcripts_calls" using gin ("transcript" gin_trgm_ops)`,
+	); err != nil {
+		log.Printf("transcript migration: could not create the plugin transcript index: %v", err)
+	} else if verbose {
+		log.Printf("transcript migration: transcript search index ready on the plugin table")
+	}
+}
+
+// insertIgnorePrefix and insertIgnoreSuffix make an INSERT skip rows whose key
+// is already present, so a resumed copy neither duplicates nor fails.
+//
+// Every destination here has a primary key, so the backend's own conflict
+// handling does the job. The obvious alternative — "where not exists (select 1
+// from <target>)" — is what MySQL refuses with error 1093, because the subquery
+// reads the table being inserted into.
+func (db *Database) insertIgnorePrefix() string {
+	switch db.Config.DbType {
+	case DbTypeSqlite:
+		return "insert or ignore into"
+	case DbTypePostgres:
+		return "insert into"
+	default:
+		return "insert ignore into"
+	}
+}
+
+func (db *Database) insertIgnoreSuffix() string {
+	if db.Config.DbType == DbTypePostgres {
+		return " on conflict do nothing"
+	}
+	return ""
+}
+
 func (db *Database) copyTranscriptData(verbose bool) error {
-	// Calls. "where not exists" makes a resumed run skip what already landed.
-	callsQuery := "insert into `plugin_transcripts_calls` (`callId`, `transcript`) " +
-		"select `id`, `transcript` from `rdioScannerCalls` " +
-		"where `transcript` is not null and `transcript` <> '' " +
-		"and not exists (select 1 from `plugin_transcripts_calls` where `plugin_transcripts_calls`.`callId` = `rdioScannerCalls`.`id`)"
+	prefix := db.insertIgnorePrefix()
+	suffix := db.insertIgnoreSuffix()
+
+	// Calls. Deliberately selects only id and transcript: the calls table holds
+	// the audio blobs, and pulling those through a copy nobody needs would turn
+	// a quick migration into an hours-long one on a real install.
+	callsQuery := fmt.Sprintf(
+		"%s `plugin_transcripts_calls` (`callId`, `transcript`) "+
+			"select `id`, `transcript` from `rdioScannerCalls` "+
+			"where `transcript` is not null and `transcript` <> ''%s",
+		prefix, suffix,
+	)
 
 	if _, err := db.Sql.Exec(db.formatQuery(callsQuery)); err != nil {
 		return fmt.Errorf("%s calls: %v", transcriptMigrationCopy, err)
@@ -234,10 +331,9 @@ func (db *Database) copyTranscriptData(verbose bool) error {
 		}
 
 		systemsQuery := fmt.Sprintf(
-			"insert into `plugin_transcripts_systems` (`systemId`, `transcribe`, `prompt`) "+
-				"select `id`, `transcribe`, %s from `rdioScannerSystems` "+
-				"where not exists (select 1 from `plugin_transcripts_systems` where `plugin_transcripts_systems`.`systemId` = `rdioScannerSystems`.`id`)",
-			promptColumn,
+			"%s `plugin_transcripts_systems` (`systemId`, `transcribe`, `prompt`) "+
+				"select `id`, `transcribe`, %s from `rdioScannerSystems`%s",
+			prefix, promptColumn, suffix,
 		)
 
 		if _, err := db.Sql.Exec(db.formatQuery(systemsQuery)); err != nil {
@@ -247,11 +343,11 @@ func (db *Database) copyTranscriptData(verbose bool) error {
 
 	// Talkgroups.
 	if db.columnExists("rdioScannerTalkgroups", "transcribe") {
-		talkgroupsQuery := "insert into `plugin_transcripts_talkgroups` (`systemId`, `talkgroupId`, `transcribe`) " +
-			"select `systemId`, `id`, `transcribe` from `rdioScannerTalkgroups` " +
-			"where not exists (select 1 from `plugin_transcripts_talkgroups` " +
-			"where `plugin_transcripts_talkgroups`.`systemId` = `rdioScannerTalkgroups`.`systemId` " +
-			"and `plugin_transcripts_talkgroups`.`talkgroupId` = `rdioScannerTalkgroups`.`id`)"
+		talkgroupsQuery := fmt.Sprintf(
+			"%s `plugin_transcripts_talkgroups` (`systemId`, `talkgroupId`, `transcribe`) "+
+				"select `systemId`, `id`, `transcribe` from `rdioScannerTalkgroups`%s",
+			prefix, suffix,
+		)
 
 		if _, err := db.Sql.Exec(db.formatQuery(talkgroupsQuery)); err != nil {
 			return fmt.Errorf("%s talkgroups: %v", transcriptMigrationCopy, err)
@@ -297,20 +393,11 @@ func (db *Database) copyTranscriptData(verbose bool) error {
 // returned: by this point the data is copied and verified, and a server that
 // cannot drop a column should still start.
 func (db *Database) dropTranscriptColumns(verbose bool) {
-	// Postgres keeps the transcript search index on the old column; move it to
-	// the plugin's table so free-text search stays index-backed.
+	// The old index goes with the column it indexes. The replacement on the
+	// plugin's table was already built by indexPluginTranscripts.
 	if db.Config.DbType == DbTypePostgres {
 		if _, err := db.Sql.Exec(`drop index if exists "rdio_scanner_calls_transcript_trgm"`); err != nil {
 			log.Printf("transcript migration: could not drop the old transcript index: %v", err)
-		}
-		if _, err := db.Sql.Exec("create extension if not exists pg_trgm"); err != nil {
-			log.Printf("transcript migration: pg_trgm unavailable, transcript search will fall back to a scan: %v", err)
-		} else if _, err := db.Sql.Exec(
-			`create index if not exists "plugin_transcripts_calls_trgm" on "plugin_transcripts_calls" using gin ("transcript" gin_trgm_ops)`,
-		); err != nil {
-			log.Printf("transcript migration: could not create the plugin transcript index: %v", err)
-		} else if verbose {
-			log.Printf("transcript migration: transcript search index moved to the plugin table")
 		}
 	}
 

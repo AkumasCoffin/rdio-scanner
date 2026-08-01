@@ -52,7 +52,13 @@ type Config struct {
 	SslCertFile      string
 	SslKeyFile       string
 	SslListen        string
-	daemon           *Daemon
+	// DropLegacyColumns permits migrations to remove columns whose data has
+	// already been moved elsewhere. Off by default: on MySQL, MariaDB and
+	// SQLite, dropping a column from the calls table rewrites every row, which
+	// on a large install means substantial downtime. The columns are unused
+	// either way, so this is about reclaiming space, not correctness.
+	DropLegacyColumns bool
+	daemon            *Daemon
 	newAdminPassword string
 	importSqlite     string
 	importCalls      bool
@@ -100,6 +106,7 @@ func NewConfig() *Config {
 	flag.UintVar(&config.DbPort, "db_port", defaultDbPort, "database host port (3306 for mysql/mariadb, 5432 for postgresql)")
 	flag.StringVar(&config.DbType, "db_type", defaultDbType, fmt.Sprintf("database type, one of %s, %s, %s, %s", DbTypeSqlite, DbTypeMariadb, DbTypeMysql, DbTypePostgres))
 	flag.StringVar(&config.DbUsername, "db_user", "", "database user name")
+	flag.BoolVar(&config.DropLegacyColumns, "drop_legacy_columns", false, "remove database columns whose data has already been migrated elsewhere; rewrites large tables, so run it when downtime is acceptable")
 	flag.StringVar(&config.ConfigFile, "config", defaultConfigFile, "server config file")
 	flag.StringVar(&config.Listen, "listen", defaultListen, "listening address")
 	flag.StringVar(&config.newAdminPassword, "admin_password", "", "change admin password")
