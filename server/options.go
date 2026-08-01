@@ -46,29 +46,6 @@ type Options struct {
 	SortTalkgroups              bool   `json:"sortTalkgroups"`
 	TagsToggle                  bool   `json:"tagsToggle"`
 	Time12hFormat               bool   `json:"time12hFormat"`
-	TranscriptionEnabled        bool   `json:"transcriptionEnabled"`
-	TranscriptionProvider       string `json:"transcriptionProvider"`
-	// Groq config — existing fields kept under their original names so
-	// pre-multi-provider data lands in the Groq slots automatically.
-	TranscriptionBaseUrl string `json:"transcriptionBaseUrl"`
-	TranscriptionApiKey  string `json:"transcriptionApiKey"`
-	TranscriptionModel   string `json:"transcriptionModel"`
-	// OpenAI config.
-	TranscriptionOpenAIBaseUrl string `json:"transcriptionOpenAIBaseUrl"`
-	TranscriptionOpenAIApiKey  string `json:"transcriptionOpenAIApiKey"`
-	TranscriptionOpenAIModel   string `json:"transcriptionOpenAIModel"`
-	// Whisper self-hosted (any openai-compatible HTTP server — whisper.cpp,
-	// faster-whisper-server, openai-whisper-server, etc.).
-	TranscriptionWhisperBaseUrl string `json:"transcriptionWhisperBaseUrl"`
-	TranscriptionWhisperApiKey  string `json:"transcriptionWhisperApiKey"`
-	TranscriptionWhisperModel   string `json:"transcriptionWhisperModel"`
-	// Shared across providers.
-	TranscriptionLanguage      string `json:"transcriptionLanguage"`
-	TranscriptionPrompt        string `json:"transcriptionPrompt"`
-	TranscriptionMaxPerMinute  uint   `json:"transcriptionMaxPerMinute"`
-	TranscriptionMinAudioBytes uint   `json:"transcriptionMinAudioBytes"`
-	WaitForTranscript           bool   `json:"waitForTranscript"`
-	ShowRetranscribeButton      bool   `json:"showRetranscribeButton"`
 	UmamiUrl                    string `json:"umamiUrl"`
 	UmamiWebsiteId              string `json:"umamiWebsiteId"`
 	// UpdateUrl points the admin auto-updater at a GitHub repo
@@ -113,22 +90,6 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	setStr := func(key string, dest *string) {
 		if v, ok := m[key].(string); ok {
 			*dest = v
-		}
-	}
-	// setUrl behaves like setStr but defensively strips any trailing
-	// "/audio/transcriptions" the user may have accidentally pasted into a
-	// transcription base-URL field. The server appends that path itself at
-	// request time, so storing it in the saved value would produce a
-	// duplicate path on every request.
-	setUrl := func(key string, dest *string) {
-		if v, ok := m[key].(string); ok {
-			s := strings.TrimSpace(v)
-			s = strings.TrimRight(s, "/")
-			if strings.HasSuffix(strings.ToLower(s), "/audio/transcriptions") {
-				s = s[:len(s)-len("/audio/transcriptions")]
-				s = strings.TrimRight(s, "/")
-			}
-			*dest = s
 		}
 	}
 	setUint := func(key string, dest *uint) {
@@ -176,23 +137,6 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	setBool("sortTalkgroups", &options.SortTalkgroups)
 	setBool("tagsToggle", &options.TagsToggle)
 	setBool("time12hFormat", &options.Time12hFormat)
-	setBool("transcriptionEnabled", &options.TranscriptionEnabled)
-	setStr("transcriptionProvider", &options.TranscriptionProvider)
-	setUrl("transcriptionBaseUrl", &options.TranscriptionBaseUrl)
-	setStr("transcriptionApiKey", &options.TranscriptionApiKey)
-	setStr("transcriptionModel", &options.TranscriptionModel)
-	setUrl("transcriptionOpenAIBaseUrl", &options.TranscriptionOpenAIBaseUrl)
-	setStr("transcriptionOpenAIApiKey", &options.TranscriptionOpenAIApiKey)
-	setStr("transcriptionOpenAIModel", &options.TranscriptionOpenAIModel)
-	setUrl("transcriptionWhisperBaseUrl", &options.TranscriptionWhisperBaseUrl)
-	setStr("transcriptionWhisperApiKey", &options.TranscriptionWhisperApiKey)
-	setStr("transcriptionWhisperModel", &options.TranscriptionWhisperModel)
-	setStr("transcriptionLanguage", &options.TranscriptionLanguage)
-	setStr("transcriptionPrompt", &options.TranscriptionPrompt)
-	setUint("transcriptionMaxPerMinute", &options.TranscriptionMaxPerMinute)
-	setUint("transcriptionMinAudioBytes", &options.TranscriptionMinAudioBytes)
-	setBool("waitForTranscript", &options.WaitForTranscript)
-	setBool("showRetranscribeButton", &options.ShowRetranscribeButton)
 	setStr("umamiUrl", &options.UmamiUrl)
 	setStr("umamiWebsiteId", &options.UmamiWebsiteId)
 	setStr("updateUrl", &options.UpdateUrl)
@@ -234,23 +178,6 @@ func (options *Options) optionKeyValuePairs() []struct {
 		{"sortTalkgroups", options.SortTalkgroups},
 		{"tagsToggle", options.TagsToggle},
 		{"time12hFormat", options.Time12hFormat},
-		{"transcriptionEnabled", options.TranscriptionEnabled},
-		{"transcriptionProvider", options.TranscriptionProvider},
-		{"transcriptionBaseUrl", options.TranscriptionBaseUrl},
-		{"transcriptionApiKey", options.TranscriptionApiKey},
-		{"transcriptionModel", options.TranscriptionModel},
-		{"transcriptionOpenAIBaseUrl", options.TranscriptionOpenAIBaseUrl},
-		{"transcriptionOpenAIApiKey", options.TranscriptionOpenAIApiKey},
-		{"transcriptionOpenAIModel", options.TranscriptionOpenAIModel},
-		{"transcriptionWhisperBaseUrl", options.TranscriptionWhisperBaseUrl},
-		{"transcriptionWhisperApiKey", options.TranscriptionWhisperApiKey},
-		{"transcriptionWhisperModel", options.TranscriptionWhisperModel},
-		{"transcriptionLanguage", options.TranscriptionLanguage},
-		{"transcriptionPrompt", options.TranscriptionPrompt},
-		{"transcriptionMaxPerMinute", options.TranscriptionMaxPerMinute},
-		{"transcriptionMinAudioBytes", options.TranscriptionMinAudioBytes},
-		{"waitForTranscript", options.WaitForTranscript},
-		{"showRetranscribeButton", options.ShowRetranscribeButton},
 		{"umamiUrl", options.UmamiUrl},
 		{"umamiWebsiteId", options.UmamiWebsiteId},
 		{"updateUrl", options.UpdateUrl},
@@ -290,16 +217,6 @@ func (options *Options) Read(db *Database) error {
 	options.SortByTags = defaults.options.sortByTags
 	options.SortTalkgroups = defaults.options.sortTalkgroups
 	options.TagsToggle = defaults.options.tagsToggle
-	options.TranscriptionEnabled = defaults.options.transcriptionEnabled
-	options.TranscriptionProvider = defaults.options.transcriptionProvider
-	options.TranscriptionBaseUrl = defaults.options.transcriptionBaseUrl
-	options.TranscriptionModel = defaults.options.transcriptionModel
-	options.TranscriptionOpenAIBaseUrl = defaults.options.transcriptionOpenAIBaseUrl
-	options.TranscriptionOpenAIModel = defaults.options.transcriptionOpenAIModel
-	options.TranscriptionWhisperBaseUrl = defaults.options.transcriptionWhisperBaseUrl
-	options.TranscriptionWhisperModel = defaults.options.transcriptionWhisperModel
-	options.TranscriptionLanguage = defaults.options.transcriptionLanguage
-	options.TranscriptionPrompt = defaults.options.transcriptionPrompt
 	options.UpdatePrereleases = false
 
 	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'adminPassword'").Scan(&s)
@@ -378,23 +295,6 @@ func (options *Options) Read(db *Database) error {
 		applyBool("sortTalkgroups", &options.SortTalkgroups)
 		applyBool("tagsToggle", &options.TagsToggle)
 		applyBool("time12hFormat", &options.Time12hFormat)
-		applyBool("transcriptionEnabled", &options.TranscriptionEnabled)
-		applyStr("transcriptionProvider", &options.TranscriptionProvider)
-		applyStr("transcriptionBaseUrl", &options.TranscriptionBaseUrl)
-		applyStr("transcriptionApiKey", &options.TranscriptionApiKey)
-		applyStr("transcriptionModel", &options.TranscriptionModel)
-		applyStr("transcriptionOpenAIBaseUrl", &options.TranscriptionOpenAIBaseUrl)
-		applyStr("transcriptionOpenAIApiKey", &options.TranscriptionOpenAIApiKey)
-		applyStr("transcriptionOpenAIModel", &options.TranscriptionOpenAIModel)
-		applyStr("transcriptionWhisperBaseUrl", &options.TranscriptionWhisperBaseUrl)
-		applyStr("transcriptionWhisperApiKey", &options.TranscriptionWhisperApiKey)
-		applyStr("transcriptionWhisperModel", &options.TranscriptionWhisperModel)
-		applyStr("transcriptionLanguage", &options.TranscriptionLanguage)
-		applyStr("transcriptionPrompt", &options.TranscriptionPrompt)
-		applyUint("transcriptionMaxPerMinute", &options.TranscriptionMaxPerMinute)
-		applyUint("transcriptionMinAudioBytes", &options.TranscriptionMinAudioBytes)
-		applyBool("waitForTranscript", &options.WaitForTranscript)
-		applyBool("showRetranscribeButton", &options.ShowRetranscribeButton)
 		applyStr("umamiUrl", &options.UmamiUrl)
 		applyStr("umamiWebsiteId", &options.UmamiWebsiteId)
 		applyStr("updateUrl", &options.UpdateUrl)
@@ -465,71 +365,4 @@ func (options *Options) Write(db *Database) error {
 	return nil
 }
 
-// Provider name constants used by TranscriptionProvider.
-//
-// Three options collapse the protocol-identical OpenAI-compatible backends:
-//   - "groq":              the hosted Groq API
-//   - "openai":            OpenAI's hosted Whisper API (UI label: "Whisper")
-//   - "whisper-selfhosted": any self-hosted OpenAI-compatible Whisper server
-//     (whisper.cpp, openai-whisper-server, faster-whisper-server, etc.)
-const (
-	TranscriptionProviderGroq             = "groq"
-	TranscriptionProviderOpenAI           = "openai"
-	TranscriptionProviderWhisper          = "whisper-selfhosted"
-	transcriptionProviderDefaultUrlGroq   = "https://api.groq.com/openai/v1"
-	transcriptionProviderDefaultUrlOpenAI = "https://api.openai.com/v1"
-	transcriptionProviderDefaultModelGroq    = "whisper-large-v3-turbo"
-	transcriptionProviderDefaultModelOpenAI  = "whisper-1"
-	transcriptionProviderDefaultModelWhisper = "whisper-1"
-)
-
-// ActiveTranscriptionConfig returns the (baseUrl, model, apiKey) tuple for the
-// currently-selected provider, with provider-specific defaults filled in when
-// the corresponding field is empty. Self-hosted providers have no default URL —
-// the caller must check for empty baseUrl and treat that as "not configured."
-func (options *Options) ActiveTranscriptionConfig() (baseUrl string, model string, apiKey string, provider string) {
-	options.mutex.Lock()
-	defer options.mutex.Unlock()
-	provider = options.TranscriptionProvider
-	if provider == "" {
-		provider = TranscriptionProviderGroq
-	}
-	switch provider {
-	case TranscriptionProviderOpenAI:
-		baseUrl = options.TranscriptionOpenAIBaseUrl
-		model = options.TranscriptionOpenAIModel
-		apiKey = options.TranscriptionOpenAIApiKey
-		if baseUrl == "" {
-			baseUrl = transcriptionProviderDefaultUrlOpenAI
-		}
-		if model == "" {
-			model = transcriptionProviderDefaultModelOpenAI
-		}
-	case TranscriptionProviderWhisper:
-		baseUrl = options.TranscriptionWhisperBaseUrl
-		model = options.TranscriptionWhisperModel
-		apiKey = options.TranscriptionWhisperApiKey
-		if model == "" {
-			model = transcriptionProviderDefaultModelWhisper
-		}
-	default: // groq
-		provider = TranscriptionProviderGroq
-		baseUrl = options.TranscriptionBaseUrl
-		model = options.TranscriptionModel
-		apiKey = options.TranscriptionApiKey
-		if baseUrl == "" {
-			baseUrl = transcriptionProviderDefaultUrlGroq
-		}
-		if model == "" {
-			model = transcriptionProviderDefaultModelGroq
-		}
-	}
-	return
-}
-
-// IsSelfHostedTranscriptionProvider reports whether the given provider name
-// refers to a user-hosted backend (no API key required, no default URL).
-func IsSelfHostedTranscriptionProvider(provider string) bool {
-	return provider == TranscriptionProviderWhisper
-}
 

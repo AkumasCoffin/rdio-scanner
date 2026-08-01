@@ -354,8 +354,6 @@ func (admin *Admin) GetConfig() map[string]any {
 			"led":                 system.Led,
 			"order":               system.Order,
 			"talkgroups":          system.Talkgroups.List,
-			"transcribe":          system.Transcribe,
-			"transcriptionPrompt": system.TranscriptionPrompt,
 			"units":               system.Units.List,
 		})
 	}
@@ -754,75 +752,6 @@ func (admin *Admin) UserRemoveHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (admin *Admin) TranscribeHandler(w http.ResponseWriter, r *http.Request) {
-	t := admin.GetAuthorization(r)
-	if !admin.ValidateToken(t) {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	var body struct {
-		Id         uint   `json:"id"`
-		Transcript string `json:"transcript"`
-		Manual     bool   `json:"manual"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	if body.Id == 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"missing id"}`))
-		return
-	}
-
-	if body.Manual {
-		if err := admin.Controller.Calls.UpdateTranscript(body.Id, body.Transcript, admin.Controller.Database); err != nil {
-			admin.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("admin.transcribe manual: %v", err))
-			w.WriteHeader(http.StatusExpectationFailed)
-			return
-		}
-		b, _ := json.Marshal(map[string]any{"id": body.Id, "transcript": body.Transcript})
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(b)
-		return
-	}
-
-	if !admin.Controller.Transcriber.Enabled() {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"transcription is not configured"}`))
-		return
-	}
-
-	call, err := admin.Controller.Calls.GetCall(body.Id, admin.Controller.Database)
-	if err != nil || call == nil {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	text, err := admin.Controller.Transcriber.Transcribe(call)
-	if err != nil {
-		admin.Controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("admin.transcribe call %v: %v", body.Id, err))
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte(fmt.Sprintf(`{"error":%q}`, err.Error())))
-		return
-	}
-
-	if err = admin.Controller.Calls.UpdateTranscript(body.Id, text, admin.Controller.Database); err != nil {
-		admin.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("admin.transcribe persist %v: %v", body.Id, err))
-		w.WriteHeader(http.StatusExpectationFailed)
-		return
-	}
-
-	b, _ := json.Marshal(map[string]any{"id": body.Id, "transcript": text})
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(b)
-}
 
 func (admin *Admin) ValidateToken(sToken string) bool {
 	found := false

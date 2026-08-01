@@ -45,9 +45,8 @@ func seedSource(t *testing.T, dir string, name string, calls int) string {
 	system.Id = 42
 	system.Label = "Metro"
 	system.AutoPopulate = true
-	system.Transcribe = false
 	system.Talkgroups.List = append(system.Talkgroups.List, &Talkgroup{
-		GroupId: 1, Id: 1001, Label: "TAC1", Name: "Tactical 1", TagId: 1, Transcribe: true,
+		GroupId: 1, Id: 1001, Label: "TAC1", Name: "Tactical 1", TagId: 1,
 	})
 	systems.List = append(systems.List, system)
 	if err := systems.Write(db); err != nil {
@@ -112,9 +111,6 @@ func TestImportSqliteConfigOnlyByDefault(t *testing.T) {
 	// this is what a Postgres target rejects if the coercion is missed.
 	if !systems.List[0].AutoPopulate {
 		t.Error("autoPopulate should have survived as true")
-	}
-	if systems.List[0].Transcribe {
-		t.Error("transcribe should have survived as false")
 	}
 
 	apikeys := NewApikeys()

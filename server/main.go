@@ -127,8 +127,6 @@ func main() {
 
 	http.HandleFunc("/api/admin/stats", gzipHandler(controller.Stats.Handler))
 
-	http.HandleFunc("/api/admin/transcribe", controller.Admin.TranscribeHandler)
-
 	http.HandleFunc("/api/admin/updates", gzipHandler(controller.Admin.UpdatesHandler))
 
 	http.HandleFunc("/api/admin/update/source", controller.Admin.UpdateSourceHandler)
@@ -152,8 +150,6 @@ func main() {
 	http.HandleFunc("/api/trunk-recorder-call-upload", controller.Api.TrunkRecorderCallUploadHandler)
 
 	http.HandleFunc("/api/capabilities", controller.Api.CapabilitiesHandler)
-
-	http.HandleFunc("/api/call-transcript", controller.Api.CallTranscriptHandler)
 
 	http.HandleFunc("/api/v1/calls", gzipHandler(controller.PublicApi.CallsRouter))
 	http.HandleFunc("/api/v1/calls/", gzipHandler(controller.PublicApi.CallsRouter))

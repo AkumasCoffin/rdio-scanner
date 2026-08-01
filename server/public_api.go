@@ -152,9 +152,27 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 			where = append(where, fmt.Sprintf("`dateTime` <= '%s'", t.Format(df)))
 		}
 	}
+	// Free-text search runs over whatever columns plugins registered as
+	// searchable. With none installed the server stores no searchable text on a
+	// call, so this correctly matches nothing rather than ignoring the filter
+	// and returning everything.
+	searchExtensions := p.Controller.PluginSearchExtensions()
 	if s := strings.TrimSpace(q.Get("q")); s != "" {
 		esc := strings.ReplaceAll(s, "'", "''")
-		where = append(where, fmt.Sprintf("`transcript` like '%%%s%%'", esc))
+
+		predicates := []string{}
+		for _, extension := range searchExtensions {
+			predicates = append(predicates, fmt.Sprintf(
+				"exists (select 1 from `%s` where `%s`.`%s` = `rdioScannerCalls`.`id` and `%s`.`%s` like '%%%s%%')",
+				extension.table, extension.table, extension.key, extension.table, extension.text, esc,
+			))
+		}
+
+		if len(predicates) > 0 {
+			where = append(where, "("+strings.Join(predicates, " or ")+")")
+		} else {
+			where = append(where, "1 = 0")
+		}
 	}
 
 	limit := uint(100)
@@ -196,14 +214,10 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 		return
 	}
 
-	var selectCols string
-	if includeTranscript {
-		selectCols = "`id`, `dateTime`, `system`, `talkgroup`, `transcript`"
-	} else {
-		selectCols = "`id`, `dateTime`, `system`, `talkgroup`, case when `transcript` is null or `transcript` = '' then 0 else 1 end"
-	}
-
-	listQuery := fmt.Sprintf("select %s from `rdioScannerCalls` where %s order by `dateTime` %s limit %d offset %d", selectCols, whereSQL, order, limit, offset)
+	listQuery := fmt.Sprintf(
+		"select `id`, `dateTime`, `system`, `talkgroup` from `rdioScannerCalls` where %s order by `dateTime` %s limit %d offset %d",
+		whereSQL, order, limit, offset,
+	)
 	rows, err := db.Query(listQuery)
 	if err != nil && err != sql.ErrNoRows {
 		p.writeError(w, http.StatusInternalServerError, fmt.Sprintf("query: %v", err))
@@ -211,6 +225,8 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 	}
 
 	results := []map[string]any{}
+	ids := []uint{}
+
 	for rows.Next() {
 		var (
 			id        uint
@@ -219,24 +235,11 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 			talkgroup uint
 		)
 
-		item := map[string]any{}
-		if includeTranscript {
-			var transcript sql.NullString
-			if err = rows.Scan(&id, &dateTime, &system, &talkgroup, &transcript); err != nil {
-				break
-			}
-			item["transcript"] = nil
-			if transcript.Valid {
-				item["transcript"] = transcript.String
-			}
-			item["hasTranscript"] = transcript.Valid && transcript.String != ""
-		} else {
-			var hasT int
-			if err = rows.Scan(&id, &dateTime, &system, &talkgroup, &hasT); err != nil {
-				break
-			}
-			item["hasTranscript"] = hasT != 0
+		if err = rows.Scan(&id, &dateTime, &system, &talkgroup); err != nil {
+			break
 		}
+
+		item := map[string]any{}
 
 		if t, err := db.ParseDateTime(dateTime); err == nil {
 			item["dateTime"] = t.UTC().Format(time.RFC3339)
@@ -244,6 +247,7 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 		item["id"] = id
 		item["system"] = system
 		item["talkgroup"] = talkgroup
+		ids = append(ids, id)
 		results = append(results, item)
 	}
 	rows.Close()
@@ -251,6 +255,13 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 	if err != nil {
 		p.writeError(w, http.StatusInternalServerError, fmt.Sprintf("scan: %v", err))
 		return
+	}
+
+	// Plugin-contributed fields, batched one query per extension for the whole
+	// page. includeTranscript is honoured as a general "include plugin text"
+	// switch so the parameter keeps working; presence flags are always sent.
+	if len(searchExtensions) > 0 && len(results) > 0 {
+		p.attachPluginFields(searchExtensions, ids, results, includeTranscript)
 	}
 
 	resp := map[string]any{
@@ -262,6 +273,79 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 	w.Header().Set("Content-Type", "application/json")
 	b, _ := json.Marshal(resp)
 	w.Write(b)
+}
+
+// attachPluginFields fills plugin-contributed text onto a page of results.
+//
+// Also emits a has<Field> flag, which is what lets a caller ask whether a call
+// has a transcript without paying to transfer every transcript on the page —
+// the behaviour the includeTranscript parameter has always had.
+func (p *PublicApi) attachPluginFields(
+	extensions []pluginResolvedSearch,
+	ids []uint,
+	results []map[string]any,
+	includeText bool,
+) {
+	if len(ids) == 0 {
+		return
+	}
+
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = fmt.Sprintf("%d", id)
+	}
+	idList := strings.Join(parts, ", ")
+
+	byId := map[uint]map[string]any{}
+	for _, item := range results {
+		if id, ok := item["id"].(uint); ok {
+			byId[id] = item
+		}
+	}
+
+	for _, extension := range extensions {
+		flag := "has" + strings.ToUpper(extension.resultField[:1]) + extension.resultField[1:]
+
+		for _, item := range results {
+			item[flag] = false
+			if includeText {
+				item[extension.resultField] = nil
+			}
+		}
+
+		query := fmt.Sprintf(
+			"select `%s`, `%s` from `%s` where `%s` in (%s)",
+			extension.key, extension.text, extension.table, extension.key, idList,
+		)
+
+		rows, err := p.Controller.Database.Query(query)
+		if err != nil {
+			continue
+		}
+
+		for rows.Next() {
+			var (
+				callId uint
+				value  sql.NullString
+			)
+
+			if err := rows.Scan(&callId, &value); err != nil {
+				break
+			}
+			if !value.Valid || value.String == "" {
+				continue
+			}
+
+			if item, ok := byId[callId]; ok {
+				item[flag] = true
+				if includeText {
+					item[extension.resultField] = value.String
+				}
+			}
+		}
+
+		rows.Close()
+	}
 }
 
 // apikeyWhere translates an apikey's system scope into a WHERE fragment list.
@@ -337,10 +421,6 @@ func (p *PublicApi) getCall(w http.ResponseWriter, id uint, apikey *Apikey) {
 	if call.Source != nil {
 		out["source"] = call.Source
 	}
-	if call.Transcript != nil {
-		out["transcript"] = call.Transcript
-	}
-
 	// Plugin-contributed fields, so the public API exposes the same call shape
 	// the websocket does rather than a quietly reduced one.
 	p.Controller.ApplyPluginFields(call)
@@ -357,28 +437,35 @@ func (p *PublicApi) getCall(w http.ResponseWriter, id uint, apikey *Apikey) {
 	w.Write(b)
 }
 
+// getTranscript keeps /api/v1/calls/<id>/transcript answering, now by reading
+// whichever plugin registered a field of that name. The endpoint predates
+// plugins and is part of the published API, so it resolves through the generic
+// mechanism rather than disappearing when transcription moved out of the
+// server.
 func (p *PublicApi) getTranscript(w http.ResponseWriter, id uint, apikey *Apikey) {
-	system, talkgroup, text, err := p.Controller.Calls.GetTranscript(id, p.Controller.Database)
-	if err != nil {
-		p.writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if system == 0 && talkgroup == 0 && text == "" {
+	call, err := p.loadCallForAccess(id)
+	if err != nil || call == nil || call.Id == nil {
 		p.writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 
-	probe := &Call{System: system, Talkgroup: talkgroup}
-	if !apikey.HasAccess(probe) {
+	if !apikey.HasAccess(call) {
 		p.writeError(w, http.StatusForbidden, "forbidden")
 		return
+	}
+
+	p.Controller.ApplyPluginFields(call)
+
+	text := ""
+	if value, ok := call.pluginFields["transcript"].(string); ok {
+		text = value
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	b, _ := json.Marshal(map[string]any{
 		"id":         id,
-		"system":     system,
-		"talkgroup":  talkgroup,
+		"system":     call.System,
+		"talkgroup":  call.Talkgroup,
 		"transcript": text,
 	})
 	w.Write(b)

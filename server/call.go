@@ -39,7 +39,6 @@ type Call struct {
 	Sources        any       `json:"sources"`
 	System         uint      `json:"system"`
 	Talkgroup      uint      `json:"talkgroup"`
-	Transcript     any       `json:"transcript,omitempty"`
 	Delayed        bool      `json:"delayed,omitempty"`
 	systemLabel    any
 	talkgroupGroup any
@@ -48,14 +47,6 @@ type Call struct {
 	talkgroupTag   any
 	units          any
 	apiKeyIdent    string
-	// transcriptWillForward is set by this instance before forwarding the call
-	// downstream, when local transcription is enabled. Downstream.Send includes
-	// it in the form so the receiver knows a transcript is coming.
-	transcriptWillForward bool
-	// transcriptPending is parsed from the incoming call-upload form field. When
-	// true, local transcription is suppressed — the upstream will push the
-	// transcript via /api/call-transcript once Whisper finishes.
-	transcriptPending bool
 	// meta holds upload form fields the server does not itself recognise,
 	// passed through to plugins as call.meta. This is how a plugin-implemented
 	// server-to-server protocol carries hints on the upload without core
@@ -123,10 +114,6 @@ func (call *Call) MarshalJSON() ([]byte, error) {
 		"sources":     call.Sources,
 		"system":      call.System,
 		"talkgroup":   call.Talkgroup,
-	}
-
-	if call.Transcript != nil {
-		out["transcript"] = call.Transcript
 	}
 
 	if call.Delayed {
@@ -232,7 +219,6 @@ func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 		patches     string
 		sources     string
 		t           time.Time
-		transcript  sql.NullString
 	)
 
 	// No mutex here: database/sql is already goroutine-safe, and holding a
@@ -241,8 +227,8 @@ func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 	// WriteCall from the ingest path. Removing the lock drops that queue.
 	call := Call{Id: id}
 
-	query := fmt.Sprintf("select `audio`, `audioName`, `audioType`, `dateTime`, `frequencies`, `frequency`, `patches`, `source`, `sources`, `system`, `talkgroup`, `transcript` from `rdioScannerCalls` where `id` = %v", id)
-	err := db.QueryRow(query).Scan(&call.Audio, &audioName, &audioType, &dateTime, &frequencies, &frequency, &patches, &source, &sources, &call.System, &call.Talkgroup, &transcript)
+	query := fmt.Sprintf("select `audio`, `audioName`, `audioType`, `dateTime`, `frequencies`, `frequency`, `patches`, `source`, `sources`, `system`, `talkgroup` from `rdioScannerCalls` where `id` = %v", id)
+	err := db.QueryRow(query).Scan(&call.Audio, &audioName, &audioType, &dateTime, &frequencies, &frequency, &patches, &source, &sources, &call.System, &call.Talkgroup)
 	if err == sql.ErrNoRows {
 		// Surface "not found" instead of returning a zombie empty Call.
 		// Callers (CAL websocket handler, public API, admin retranscribe,
@@ -262,10 +248,6 @@ func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 
 	if audioType.Valid {
 		call.AudioType = audioType.String
-	}
-
-	if transcript.Valid {
-		call.Transcript = transcript.String
 	}
 
 	if frequency.Valid && frequency.Float64 > 0 {
@@ -301,56 +283,6 @@ func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 	}
 
 	return &call, nil
-}
-
-func (calls *Calls) GetTranscript(id uint, db *Database) (system uint, talkgroup uint, transcript string, err error) {
-	var t sql.NullString
-
-	err = db.QueryRow("select `system`, `talkgroup`, `transcript` from `rdioScannerCalls` where `id` = ?", id).Scan(&system, &talkgroup, &t)
-	if err == sql.ErrNoRows {
-		err = nil
-		return
-	}
-	if err != nil {
-		return
-	}
-	if t.Valid {
-		transcript = t.String
-	}
-	return
-}
-
-func (calls *Calls) UpdateTranscript(id uint, transcript string, db *Database) error {
-	_, err := db.Exec("update `rdioScannerCalls` set `transcript` = ? where `id` = ?", transcript, id)
-	return err
-}
-
-// UpdateTranscriptIfEmpty mirrors the call-side CheckDuplicate semantics for
-// transcript pushes. If the call already has any transcript on it, treat the
-// push as a duplicate: don't write, don't broadcast, don't chain-forward.
-// Mirrors what CheckDuplicate does for calls — once we have a record for a
-// (system, talkgroup, dateTime), subsequent uploads are ignored regardless
-// of payload differences. Same goes for transcripts: first one wins.
-//
-// applied=false also means "skip the broadcast / chain-forward you would
-// have done if the apply landed", which is what breaks chain-forwarding
-// loops in cyclic downstream topologies (A is B's downstream AND B is A's
-// downstream — without this check the same transcript bounces forever).
-func (calls *Calls) UpdateTranscriptIfEmpty(id uint, transcript string, db *Database) (bool, error) {
-	var existing sql.NullString
-	if err := db.QueryRow("select `transcript` from `rdioScannerCalls` where `id` = ?", id).Scan(&existing); err != nil {
-		if err == sql.ErrNoRows {
-			return false, nil
-		}
-		return false, err
-	}
-	if existing.Valid && existing.String != "" {
-		return false, nil
-	}
-	if _, err := db.Exec("update `rdioScannerCalls` set `transcript` = ? where `id` = ?", transcript, id); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // GetIdByKey looks up the DB id of a call by (system, talkgroup, dateTime).
@@ -500,11 +432,11 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 			op = "ilike"
 		}
 
-		// A free-text search covers the core transcript column and every column
-		// a plugin registered, so installing a plugin that stores text against
-		// calls makes that text findable through the existing search box
-		// without the search UI knowing the plugin exists.
-		predicates := []string{fmt.Sprintf("`transcript` %s '%%%s%%'", op, esc)}
+		// Free-text search runs entirely over columns plugins registered. The
+		// server itself stores no searchable text on a call, so with no such
+		// plugin installed a q= search correctly matches nothing rather than
+		// silently ignoring the filter.
+		predicates := []string{}
 
 		for _, extension := range searchExtensions {
 			predicates = append(predicates, fmt.Sprintf(
@@ -516,7 +448,14 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 			))
 		}
 
-		where += fmt.Sprintf(" and (%s)", strings.Join(predicates, " or "))
+		if len(predicates) > 0 {
+			where += fmt.Sprintf(" and (%s)", strings.Join(predicates, " or "))
+		} else {
+			// Nothing searchable is registered. Matching nothing is the honest
+			// answer — quietly dropping the filter would return every call and
+			// look like the search had worked.
+			where += " and 1 = 0"
+		}
 	}
 
 	rangeKey := "range:" + where
@@ -608,7 +547,7 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		})
 	}
 
-	query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup`, `transcript` from `rdioScannerCalls` where %v order by `dateTime` %v limit %v offset %v", where, order, limit, offset)
+	query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup` from `rdioScannerCalls` where %v order by `dateTime` %v limit %v offset %v", where, order, limit, offset)
 	if rows, err = db.Query(query); err != nil {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
@@ -616,8 +555,7 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 
 	for rows.Next() {
 		searchResult := CallsSearchResult{}
-		var transcript sql.NullString
-		if err = rows.Scan(&id, &dateTime, &searchResult.System, &searchResult.Talkgroup, &transcript); err != nil {
+		if err = rows.Scan(&id, &dateTime, &searchResult.System, &searchResult.Talkgroup); err != nil {
 			break
 		}
 
@@ -630,11 +568,6 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 
 		} else {
 			continue
-		}
-
-		if transcript.Valid && transcript.String != "" {
-			searchResult.Transcript = transcript.String
-			searchResult.HasTranscript = true
 		}
 
 		searchResults.Results = append(searchResults.Results, searchResult)
@@ -889,9 +822,6 @@ type CallsSearchResult struct {
 	DateTime      time.Time `json:"dateTime"`
 	System        uint      `json:"system"`
 	Talkgroup     uint      `json:"talkgroup"`
-	HasTranscript bool      `json:"hasTranscript,omitempty"`
-	Transcript    string    `json:"transcript,omitempty"`
-
 	// pluginFields holds values contributed by plugins through
 	// rdio.search.extend, merged into the wire payload by MarshalJSON. Nil on
 	// any install with no such plugin, which is why this costs nothing unused.
@@ -907,14 +837,6 @@ func (result CallsSearchResult) MarshalJSON() ([]byte, error) {
 		"dateTime":  result.DateTime,
 		"system":    result.System,
 		"talkgroup": result.Talkgroup,
-	}
-
-	if result.HasTranscript {
-		out["hasTranscript"] = true
-	}
-
-	if result.Transcript != "" {
-		out["transcript"] = result.Transcript
 	}
 
 	for key, value := range result.pluginFields {

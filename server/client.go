@@ -277,9 +277,6 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 		"tags":               client.TagsMap,
 		"tagsToggle":         options.TagsToggle,
 		"time12hFormat":      options.Time12hFormat,
-		"transcriptionEnabled": options.TranscriptionEnabled,
-		"waitForTranscript":  options.WaitForTranscript,
-		"showRetranscribeButton": options.ShowRetranscribeButton,
 	}
 
 	if len(options.AfsSystems) > 0 {
@@ -421,30 +418,6 @@ func (clients *Clients) EmitConfig(groups *Groups, options *Options, systems *Sy
 		if options.ShowListenersCount {
 			c.SendListenersCount(count)
 		}
-	}
-}
-
-// EmitTranscript pushes a transcript-ready notification to every client that
-// would be allowed to see the underlying call. Used right after an async
-// Whisper run writes a transcript to the DB, so live listeners see their
-// history rows populate without having to refresh.
-func (clients *Clients) EmitTranscript(id uint, system uint, talkgroup uint, transcript string, restricted bool) {
-	probe := &Call{System: system, Talkgroup: talkgroup}
-	payload := map[string]any{
-		"id":         id,
-		"system":     system,
-		"talkgroup":  talkgroup,
-		"transcript": transcript,
-	}
-
-	clients.mutex.RLock()
-	defer clients.mutex.RUnlock()
-
-	for c := range clients.Map {
-		if restricted && c.Access != nil && !c.Access.HasAccess(probe) {
-			continue
-		}
-		c.enqueue(&Message{Command: MessageCommandTranscript, Payload: payload})
 	}
 }
 

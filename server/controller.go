@@ -50,9 +50,6 @@ type Controller struct {
 	Stats       *Stats
 	Systems     *Systems
 	Tags        *Tags
-	Transcriber         *Transcriber
-	PendingTranscripts  *PendingTranscripts
-	FallbackTranscripts *FallbackTranscripts
 	// pluginFeatures caches which features each downstream advertises, so a
 	// plugin speaking a server-to-server protocol doesn't re-probe per call.
 	pluginFeatures *PluginFeatureCache
@@ -122,9 +119,6 @@ func NewController(config *Config) *Controller {
 	controller.pluginFeatures = NewPluginFeatureCache()
 	controller.Scheduler = NewScheduler(controller)
 	controller.Stats = NewStats(controller)
-	controller.Transcriber = NewTranscriber(controller)
-	controller.PendingTranscripts = NewPendingTranscripts()
-	controller.FallbackTranscripts = NewFallbackTranscripts()
 	// At most 5 CAL not-found/denied log lines per source IP per minute.
 	controller.calLogThrottle = NewLogThrottle(5, time.Minute)
 
@@ -272,7 +266,6 @@ func (controller *Controller) IngestCall(call *Call) {
 
 		system = NewSystem()
 		system.Id = call.System
-		system.Transcribe = true
 
 		switch v := call.systemLabel.(type) {
 		case string:
@@ -361,11 +354,10 @@ func (controller *Controller) IngestCall(call *Call) {
 			}
 
 			talkgroup = &Talkgroup{
-				GroupId:    groupId,
-				Id:         call.Talkgroup,
-				Label:      fmt.Sprintf("%d", call.Talkgroup),
-				TagId:      tagId,
-				Transcribe: true,
+				GroupId: groupId,
+				Id:      call.Talkgroup,
+				Label:   fmt.Sprintf("%d", call.Talkgroup),
+				TagId:   tagId,
 			}
 
 			system.Talkgroups.List = append(system.Talkgroups.List, talkgroup)
@@ -457,119 +449,19 @@ func (controller *Controller) IngestCall(call *Call) {
 
 		logCall(call, LogLevelInfo, "success")
 
-		if call.transcriptPending {
-			controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("call from upstream with pending transcript: system=%v talkgroup=%v id=%v (awaiting /api/call-transcript push)", call.System, call.Talkgroup, id))
-		}
-
-		// Pick up any transcript that raced ahead of this call. Common case:
-		// upstream's small JSON push beat its own large multipart upload on
-		// the wire, so CallTranscriptHandler stashed the transcript instead
-		// of 404-ing it.
-		if held, heldIdent, ok := controller.PendingTranscripts.Take(call.System, call.Talkgroup, call.DateTime); ok {
-			if err := controller.Calls.UpdateTranscript(id, held, controller.Database); err != nil {
-				controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("transcript apply from pending failed: id=%v %v", id, err))
-			} else {
-				call.Transcript = held
-				controller.Clients.EmitTranscript(id, call.System, call.Talkgroup, held, controller.Accesses.IsRestricted())
-				controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("transcript applied from pending: [%v] system=%v talkgroup=%v id=%v (%d chars)", heldIdent, call.System, call.Talkgroup, id, len(held)))
-				// Cancel any fallback timer that might have been scheduled by
-				// an earlier code path (defensive — usually the schedule
-				// below sees call.Transcript already set and never fires).
-				controller.FallbackTranscripts.Cancel(id)
-				// Chain-forward to our own downstreams so multi-hop setups
-				// (A -> B -> C) propagate the transcript past us. Runs in its
-				// own goroutine inside Downstreams.SendTranscript via per-
-				// downstream HTTP, so it doesn't block ingest.
-				go controller.Downstreams.SendTranscript(controller, call)
-			}
-		}
-
-		// Hint to downstream instances that this server will transcribe the call
-		// and forward the result. Only set when transcription is *actually*
-		// going to be attempted here — feature enabled, system+talkgroup opted
-		// in, and the audio passes the same size predicates TranscribeCallAsync
-		// uses to decide whether to dispatch the goroutine. Otherwise the
-		// downstream would wait for a transcript that's never coming (audio
-		// too short, no Whisper attempt fires, no push is sent).
-		//
-		// Runtime skips (all Groq keys paused on 429, or all at per-key cap)
-		// can't be predicted here — those are caught by the receiver's
-		// pending-transcripts cache TTL.
-		if system.Transcribe && talkgroup.Transcribe && controller.Transcriber.Enabled() {
-			audioLen := uint(len(call.Audio))
-			minBytes := uint(45) // hard floor: <=44 = no real audio in Transcribe()
-			if cfgMin := controller.Options.TranscriptionMinAudioBytes; cfgMin > minBytes {
-				minBytes = cfgMin
-			}
-			if audioLen >= minBytes {
-				call.transcriptWillForward = true
-			}
-		}
-
 		// Fire downstream forwarding immediately — Delayer below only holds
 		// the local listener emit. Forwarding before the delay means
-		// downstreams receive calls at near-real-time and the transcript-push
-		// race (where small JSON beats large multipart) loses its head start.
+		// downstreams receive calls at near-real-time, which matters for
+		// plugin protocols that push a follow-up (a transcript, say) and would
+		// otherwise race their own call upload.
 		controller.EmitCallToDownstreams(call)
 
 		// Now that the call has an id, plugins can key their own tables to it.
-		// This is the hook most plugins actually want.
+		// This is the hook most plugins actually want, and it is where anything
+		// that enriches a call — transcription included — now happens.
 		controller.Plugins.EmitEvent(PluginEventCallStored, pluginCallValue(call, false))
 
 		controller.Delayer.Delay(call)
-
-		// transcriptPending means an upstream server sent this call and will push
-		// the transcript separately — skip local transcription to avoid doing
-		// the same work twice. Schedule a fallback timer so that if the
-		// upstream's push never arrives (Whisper failed on its side,
-		// network broke, etc.), we transcribe locally after fallbackTranscriptTTL
-		// instead of leaving the call permanently untranscribed.
-		if system.Transcribe && talkgroup.Transcribe {
-			if call.transcriptPending {
-				controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("local transcription skipped: system=%v talkgroup=%v id=%v (deferred to upstream)", call.System, call.Talkgroup, id))
-
-				// Only arm a fallback if this server is actually capable of
-				// transcribing locally (transcription enabled + key/url
-				// configured + audio passes the size predicate). And only if
-				// we don't already have a transcript from the pending-cache
-				// hit above — in that case there's nothing to fall back from.
-				if controller.Transcriber.Enabled() && call.Transcript == nil {
-					audioLen := uint(len(call.Audio))
-					minBytes := uint(45)
-					if cfgMin := controller.Options.TranscriptionMinAudioBytes; cfgMin > minBytes {
-						minBytes = cfgMin
-					}
-					if audioLen >= minBytes {
-						fallbackId := id
-						controller.FallbackTranscripts.Schedule(fallbackId, func() {
-							// Refetch the call from DB — call.Audio in the
-							// closure would keep the original audio blob alive
-							// in memory for 2 min unnecessarily; the DB already
-							// has it.
-							refreshed, err := controller.Calls.GetCall(fallbackId, controller.Database)
-							if err != nil {
-								controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("fallback transcription: cannot refetch call id=%v: %v", fallbackId, err))
-								return
-							}
-							if refreshed == nil {
-								// Call was pruned — nothing to do.
-								return
-							}
-							// Skip if a transcript was applied between the
-							// timer firing and the refetch (race window).
-							if t, ok := refreshed.Transcript.(string); ok && t != "" {
-								return
-							}
-							controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("fallback transcription firing: id=%v system=%v talkgroup=%v (upstream transcript never arrived, running local Whisper)", fallbackId, refreshed.System, refreshed.Talkgroup))
-							controller.Transcriber.TranscribeCallAsync(fallbackId, refreshed)
-						})
-						controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("fallback transcription scheduled: id=%v (will run local Whisper in %v if upstream transcript hasn't arrived)", id, fallbackTranscriptTTL))
-					}
-				}
-			} else {
-				controller.Transcriber.TranscribeCallAsync(id, call)
-			}
-		}
 
 	} else {
 		logError(err)
@@ -608,11 +500,6 @@ func (controller *Controller) ProcessMessage(client *Client, message *Message) e
 			return err
 		}
 
-	} else if message.Command == MessageCommandTranscript {
-		if err := controller.ProcessMessageCommandTranscript(client, message); err != nil {
-			return err
-		}
-
 	} else {
 		// Anything core doesn't recognise is offered to the plugins. Without
 		// this the chain silently swallowed unknown commands, which is what
@@ -640,47 +527,6 @@ func (controller *Controller) ProcessMessageCommandPlugin(client *Client, messag
 		plugin.runtime.DispatchWs(client, command, message.Payload)
 		return
 	}
-}
-
-func (controller *Controller) ProcessMessageCommandTranscript(client *Client, message *Message) error {
-	var (
-		err error
-		i   int
-		id  uint
-	)
-
-	switch v := message.Payload.(type) {
-	case float64:
-		id = uint(v)
-	case string:
-		if i, err = strconv.Atoi(v); err == nil {
-			id = uint(i)
-		} else {
-			return err
-		}
-	}
-
-	if id == 0 {
-		return nil
-	}
-
-	system, talkgroup, transcript, err := controller.Calls.GetTranscript(id, controller.Database)
-	if err != nil {
-		return err
-	}
-
-	if controller.Accesses.IsRestricted() {
-		probe := &Call{System: system, Talkgroup: talkgroup}
-		if !client.Access.HasAccess(probe) {
-			return nil
-		}
-	}
-
-	client.enqueue(&Message{
-		Command: MessageCommandTranscript,
-		Payload: map[string]any{"id": id, "transcript": transcript},
-	})
-	return nil
 }
 
 func (controller *Controller) ProcessMessageCommandCall(client *Client, message *Message) error {

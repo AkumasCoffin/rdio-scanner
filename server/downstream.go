@@ -20,7 +20,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -32,17 +31,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	transcriptSupportUnknown = iota
-	transcriptSupportYes
-	transcriptSupportNo
-)
-
-// transcriptSupportCacheTTL is how long a probed result (yes or no) is kept
-// before re-probing. Lets a server that upgrades from the original repo get
-// picked up within an hour without a restart.
-const transcriptSupportCacheTTL = time.Hour
-
 type Downstream struct {
 	Id       any    `json:"_id"`
 	Apikey   string `json:"apiKey"`
@@ -50,11 +38,6 @@ type Downstream struct {
 	Order    any    `json:"order"`
 	Systems  any    `json:"systems"`
 	Url      string `json:"url"`
-
-	// in-memory only — not persisted, reset on restart
-	transcriptMu      sync.Mutex
-	transcriptSupport int
-	transcriptChecked time.Time
 }
 
 func (downstream *Downstream) FromMap(m map[string]any) *Downstream {
@@ -343,9 +326,11 @@ func (downstream *Downstream) Send(call *Call) error {
 		}
 	}
 
-	if call.transcriptWillForward {
-		if w, err := mw.CreateFormField("transcriptPending"); err == nil {
-			if _, err = w.Write([]byte("1")); err != nil {
+	// Plugin-supplied upload hints ride along, so a plugin protocol that tells
+	// the receiving server what to expect keeps working across a forward.
+	for key, value := range call.meta {
+		if w, err := mw.CreateFormField(key); err == nil {
+			if _, err = w.Write([]byte(value)); err != nil {
 				return formatError(err)
 			}
 		} else {
@@ -378,138 +363,6 @@ func (downstream *Downstream) Send(call *Call) error {
 	return nil
 }
 
-// supportsTranscript returns the cached transcript-forward support state
-// under the per-downstream mutex. Safe to call concurrently.
-func (downstream *Downstream) supportsTranscript() bool {
-	downstream.transcriptMu.Lock()
-	defer downstream.transcriptMu.Unlock()
-	return downstream.transcriptSupport == transcriptSupportYes
-}
-
-// probeTranscriptSupport checks whether the downstream's server supports the
-// /api/call-transcript endpoint by hitting /api/capabilities. Results are
-// cached for transcriptSupportCacheTTL. The HTTP call is made without holding
-// the mutex so callers aren't serialised behind the network round-trip; the
-// worst case is several concurrent probes on the very first call after startup,
-// all arriving at the same result.
-//
-// Logs once at the moment the support state transitions (Unknown/Yes -> No or
-// Unknown/No -> Yes). Repeated probes that confirm the existing state stay
-// silent so the log isn't spammed.
-func (downstream *Downstream) probeTranscriptSupport(controller *Controller) bool {
-	downstream.transcriptMu.Lock()
-	if downstream.transcriptSupport != transcriptSupportUnknown &&
-		time.Since(downstream.transcriptChecked) < transcriptSupportCacheTTL {
-		result := downstream.transcriptSupport == transcriptSupportYes
-		downstream.transcriptMu.Unlock()
-		return result
-	}
-	downstream.transcriptMu.Unlock()
-
-	u, err := url.Parse(downstream.Url)
-	if err != nil {
-		return false
-	}
-	u.Path = path.Join(u.Path, "/api/capabilities")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(u.String())
-	if err != nil {
-		// Network error — leave as unknown so we retry next time.
-		return false
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	support := transcriptSupportNo
-	if resp.StatusCode == http.StatusOK {
-		var caps struct {
-			Features []string `json:"features"`
-		}
-		if json.Unmarshal(body, &caps) == nil {
-			for _, f := range caps.Features {
-				if f == "transcript-forward" {
-					support = transcriptSupportYes
-					break
-				}
-			}
-		}
-	}
-
-	downstream.transcriptMu.Lock()
-	prev := downstream.transcriptSupport
-	downstream.transcriptSupport = support
-	downstream.transcriptChecked = time.Now()
-	downstream.transcriptMu.Unlock()
-
-	// Log only on a real state change. Unknown/Yes -> No or Unknown/No -> Yes
-	// fires once. A re-probe that confirms the same state stays silent.
-	if controller != nil && prev != support {
-		switch support {
-		case transcriptSupportNo:
-			controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("downstream %v does not support transcript-forward — transcripts will not be pushed to it", downstream.Url))
-		case transcriptSupportYes:
-			controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("downstream %v supports transcript-forward — transcripts will be pushed", downstream.Url))
-		}
-	}
-
-	return support == transcriptSupportYes
-}
-
-// SendTranscript pushes a completed transcript to this downstream if it
-// supports the transcript-forward feature. Returns nil for legacy downstreams
-// (404 on capabilities probe) so callers don't log spurious warnings.
-func (downstream *Downstream) SendTranscript(controller *Controller, call *Call) error {
-	if downstream.Disabled {
-		return nil
-	}
-
-	transcript, _ := call.Transcript.(string)
-	if transcript == "" {
-		return nil
-	}
-
-	if !downstream.probeTranscriptSupport(controller) {
-		return nil
-	}
-
-	u, err := url.Parse(downstream.Url)
-	if err != nil {
-		return fmt.Errorf("downstream.sendtranscript: %v", err)
-	}
-	u.Path = path.Join(u.Path, "/api/call-transcript")
-
-	payload := map[string]any{
-		"key":        downstream.Apikey,
-		"system":     call.System,
-		"talkgroup":  call.Talkgroup,
-		"dateTime":   call.DateTime.UTC().Format(time.RFC3339),
-		"transcript": transcript,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("downstream.sendtranscript: %v", err)
-	}
-
-	c := http.Client{Timeout: 30 * time.Second}
-	resp, err := c.Post(u.String(), "application/json", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("downstream.sendtranscript: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		// Call already pruned on the downstream — not an error.
-		return nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("downstream.sendtranscript: bad status %s", resp.Status)
-	}
-
-	return nil
-}
 
 type Downstreams struct {
 	List  []*Downstream
@@ -614,35 +467,6 @@ func (downstreams *Downstreams) Send(controller *Controller, call *Call) {
 			} else {
 				logEvent(LogLevelError, err.Error())
 			}
-		}
-	}
-}
-
-// SendTranscript pushes a completed transcript to all eligible downstreams.
-// Called from the transcription goroutine after UpdateTranscript succeeds, and
-// from CallTranscriptHandler / IngestCall when a transcript arrives from
-// upstream (so chained A->B->C forwarding propagates correctly).
-//
-// Silently skips downstreams that don't support transcript-forward — the
-// support-state log inside probeTranscriptSupport fires once on the
-// transition, then stays silent.
-func (downstreams *Downstreams) SendTranscript(controller *Controller, call *Call) {
-	downstreams.mutex.Lock()
-	list := make([]*Downstream, len(downstreams.List))
-	copy(list, downstreams.List)
-	downstreams.mutex.Unlock()
-
-	for _, downstream := range list {
-		if !downstream.HasAccess(call) {
-			continue
-		}
-		logEvent := func(logLevel string, message string) {
-			controller.Logs.LogEvent(logLevel, fmt.Sprintf("downstream.transcript: system=%v talkgroup=%v to %v %v", call.System, call.Talkgroup, downstream.Url, message))
-		}
-		if err := downstream.SendTranscript(controller, call); err != nil {
-			logEvent(LogLevelWarn, err.Error())
-		} else if downstream.supportsTranscript() {
-			logEvent(LogLevelInfo, "success")
 		}
 	}
 }

@@ -614,7 +614,6 @@ var reservedWsCommands = map[string]bool{
 	MessageCommandPin:            true,
 	MessageCommandPushId:         true,
 	MessageCommandServer:         true,
-	MessageCommandTranscript:     true,
 	MessageCommandVersion:        true,
 }
 
@@ -854,26 +853,20 @@ func (rt *PluginRuntime) searchCalls(options goja.Value) (*CallsSearchResults, e
 	return rt.controller.Calls.Search(searchOptions, client)
 }
 
-// updateCall writes core call metadata a plugin is authoritative about. The
-// field set is a whitelist rather than a passthrough: plugin data belongs in
-// plugin tables, and letting a plugin rewrite arbitrary columns would make the
-// call record's provenance impossible to reason about.
+// updateCall writes core call metadata a plugin is authoritative about.
+//
+// Nothing is currently writable. The whitelist is deliberately empty rather
+// than absent: every field a plugin might want to attach to a call belongs in
+// that plugin's own tables and reaches clients through calls.extendField, and
+// letting a plugin rewrite core columns would make a call record's provenance
+// impossible to reason about. This exists as the seam for the day a genuinely
+// core-owned field needs plugin correction.
 func (rt *PluginRuntime) updateCall(id uint, fields map[string]any) error {
-	allowed := map[string]bool{"transcript": true}
-
-	for key, value := range fields {
-		if !allowed[key] {
-			return fmt.Errorf("field %q cannot be updated by a plugin; store it in one of your own tables instead", key)
-		}
-
-		text, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("field %q must be a string", key)
-		}
-
-		if err := rt.controller.Calls.UpdateTranscript(id, text, rt.controller.Database); err != nil {
-			return err
-		}
+	for key := range fields {
+		return fmt.Errorf(
+			"field %q cannot be updated by a plugin; store it in one of your own tables and publish it with rdio.calls.extendField",
+			key,
+		)
 	}
 
 	return nil

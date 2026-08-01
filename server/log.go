@@ -169,8 +169,10 @@ var logCategoryPatterns = map[string][]string{
 	"connections": {"new listener%", "listener disconnected%"},
 	// Access denials and login attempts (listener access codes + admin login).
 	"access": {"invalid access code%", "locked access%", "expired access%", "too many concurrent%", "invalid login%", "too many login%"},
-	// Transcription lifecycle: transcribed/received/applied/deferred/skipped/failed.
-	"transcription": {"transcrib%", "transcript%"},
+	// Anything a plugin logs. Plugin log lines are prefixed "plugin <id>:", so
+	// this one category covers every installed plugin without the server
+	// needing to know which are present.
+	"plugin": {"plugin %"},
 	// Share-link / call-fetch requests (CAL websocket command).
 	"sharelink": {"CAL request%"},
 	// Configuration and admin account changes.
