@@ -104,8 +104,13 @@ func (client *Client) Init(controller *Controller, request *http.Request, conn *
 	client.Livefeed = NewLivefeed()
 	client.Send = make(chan *Message, 8192)
 	client.request = request
-	// The /stream overlay connects its WebSocket to the /stream path; flag it
-	// so it isn't double-counted as a listener.
+	// A display surface rather than a listener, so it is not counted as one.
+	//
+	// The path check is a fallback for the built-in overlay, which connects its
+	// WebSocket to /stream. It cannot survive that feature becoming a plugin
+	// free to choose its own path, so a client can also declare itself with an
+	// OVL message once connected — which is what a plugin does. Both work; the
+	// path form stays until nothing ships at /stream by convention any more.
 	client.Overlay = path.Base(request.URL.Path) == "stream"
 
 	go func() {

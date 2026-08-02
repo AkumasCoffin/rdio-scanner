@@ -28,7 +28,14 @@ const (
 	MessagecommandListenersCount = "LSC"
 	MessageCommandLivefeedMap    = "LFM"
 	MessageCommandMax            = "MAX"
-	MessageCommandPin            = "PIN"
+	// MessageCommandOverlay lets a client declare that it is a display surface
+	// rather than a listener, so it is not counted as one.
+	//
+	// Previously inferred from the URL — path.Base == "stream" — which only
+	// works while the overlay is a page the server knows about. Once it is a
+	// plugin at a path of its own choosing, the server has no business guessing.
+	MessageCommandOverlay = "OVL"
+	MessageCommandPin     = "PIN"
 	MessageCommandPushId         = "PID"
 	MessageCommandServer         = "SRV"
 	MessageCommandVersion        = "VER"

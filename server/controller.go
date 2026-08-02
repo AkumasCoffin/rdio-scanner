@@ -512,7 +512,20 @@ func (controller *Controller) IngestCall(call *Call) {
 }
 
 func (controller *Controller) LogClientsCount() {
-	controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("listeners count is %v", controller.Clients.Count()))
+	// Counted the same way as the number sent to clients, which excludes display
+	// surfaces. This used to report every connection, so an operator with an
+	// overlay open read a listener count one higher than every listener was
+	// being shown — and had no way to tell which number was wrong.
+	listeners := controller.Clients.CountListeners()
+
+	if total := controller.Clients.Count(); total != listeners {
+		controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf(
+			"listeners count is %v (%v connections, %v display)", listeners, total, total-listeners,
+		))
+		return
+	}
+
+	controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("listeners count is %v", listeners))
 }
 
 func (controller *Controller) ProcessMessage(client *Client, message *Message) error {
@@ -526,6 +539,9 @@ func (controller *Controller) ProcessMessage(client *Client, message *Message) e
 		if err := controller.ProcessMessageCommandCall(client, message); err != nil {
 			return err
 		}
+
+	} else if message.Command == MessageCommandOverlay {
+		controller.ProcessMessageCommandOverlay(client, message)
 
 	} else if message.Command == MessageCommandConfig {
 		controller.scopeClient(client)
@@ -752,6 +768,42 @@ func (controller *Controller) scopeClient(client *Client) {
 	client.Access = controller.PluginDispatch.ScopeAccess(
 		client.Access, client.GetRemoteAddr(), controller.Accesses.IsRestricted(),
 	)
+}
+
+// ProcessMessageCommandOverlay records that a client is a display surface, not a
+// listener, so the listener count reflects people rather than screens.
+//
+// Declared by the client instead of inferred from its URL. The built-in overlay
+// could be recognised by its path; a plugin that owns its own path cannot be,
+// and asking the server to keep a list of paths that are really overlays would
+// put knowledge of a plugin back into core.
+//
+// Idempotent, and the count is only rebroadcast when the flag actually changes —
+// a client re-declaring on every reconnect must not make the count flicker for
+// everyone else.
+func (controller *Controller) ProcessMessageCommandOverlay(client *Client, message *Message) {
+	overlay := true
+
+	// Absent payload means "yes"; anything explicit is honoured, so a client can
+	// also take the flag back off without reconnecting.
+	switch v := message.Payload.(type) {
+	case bool:
+		overlay = v
+	case float64:
+		overlay = v != 0
+	case string:
+		overlay = v == "true" || v == "1"
+	}
+
+	if client.Overlay == overlay {
+		return
+	}
+
+	client.Overlay = overlay
+
+	if controller.Options.ShowListenersCount {
+		controller.Clients.EmitListenersCount()
+	}
 }
 
 func (controller *Controller) ProcessMessageCommandVersion(client *Client) {

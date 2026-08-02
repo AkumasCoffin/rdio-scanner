@@ -90,6 +90,7 @@ enum WebsocketCommand {
     ListenersCount = 'LSC',
     LivefeedMap = 'LFM',
     Max = 'MAX',
+    Overlay = 'OVL',
     Pin = 'PIN',
     Transcript = 'TRX',
     Version = 'VER',
@@ -644,6 +645,19 @@ export class RdioScannerService implements OnDestroy {
         } catch (_) {
             //
         }
+    }
+
+    /**
+     * Declares this connection a display surface rather than a listener, so it
+     * is not counted as one.
+     *
+     * The server can also infer this from a /stream URL, but only while the
+     * overlay is a page it knows about. Declaring it keeps the count correct
+     * once the overlay is a plugin free to choose its own path — and a plugin
+     * page calls this through ctx.app.
+     */
+    setOverlay(overlay = true): void {
+        this.sendtoWebsocket(WebsocketCommand.Overlay, overlay);
     }
 
     private onStreamSyncMessage(msg: StreamSyncMessage): void {
