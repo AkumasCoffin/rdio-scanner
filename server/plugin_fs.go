@@ -234,6 +234,14 @@ func (rt *PluginRuntime) bindExec(vm *goja.Runtime, rdio *goja.Object, throw fun
 		var stdin []byte
 		env := []string{}
 
+		// Whether the program's output is data or text. A JavaScript string is
+		// UTF-8, so returning arbitrary bytes through one replaces every
+		// invalid sequence — roughly half of all byte values do not survive.
+		// That is silent corruption for anything binary, audio above all, so a
+		// plugin piping a call through its own program asks for bytes and gets
+		// an ArrayBuffer instead.
+		binary := false
+
 		if options != nil && !goja.IsUndefined(options) && !goja.IsNull(options) {
 			if m, ok := options.Export().(map[string]any); ok {
 				if ms, ok := numberFromMap(m, "timeoutMs"); ok && ms > 0 {
@@ -251,6 +259,9 @@ func (rt *PluginRuntime) bindExec(vm *goja.Runtime, rdio *goja.Object, throw fun
 					for key, value := range vars {
 						env = append(env, fmt.Sprintf("%s=%v", key, value))
 					}
+				}
+				if flag, ok := m["binary"].(bool); ok {
+					binary = flag
 				}
 			}
 		}
@@ -287,11 +298,22 @@ func (rt *PluginRuntime) bindExec(vm *goja.Runtime, rdio *goja.Object, throw fun
 				}
 			}
 
-			return map[string]any{
-				"code":   code,
-				"stdout": stdout.String(),
-				"stderr": stderr.String(),
-			}, nil
+			result := map[string]any{
+				"code": code,
+				// Reported rather than swallowed: a caller that got half a
+				// file needs to know it got half a file.
+				"truncated": stdout.truncated || stderr.truncated,
+			}
+
+			if binary {
+				result["stdout"] = vm.NewArrayBuffer(stdout.Bytes())
+				result["stderr"] = vm.NewArrayBuffer(stderr.Bytes())
+			} else {
+				result["stdout"] = stdout.String()
+				result["stderr"] = stderr.String()
+			}
+
+			return result, nil
 		})
 	}
 
@@ -303,27 +325,38 @@ func (rt *PluginRuntime) bindExec(vm *goja.Runtime, rdio *goja.Object, throw fun
 	})
 }
 
-// boundedBuffer collects output up to a limit and then quietly discards the
-// rest, so a program that writes without end cannot exhaust memory.
+// boundedBuffer collects output up to a limit and then discards the rest, so a
+// program that writes without end cannot exhaust memory. It remembers that it
+// had to, because output that stops halfway is not the same as output that
+// ended — for audio, a silent truncation is a corrupt file that still decodes.
 type boundedBuffer struct {
-	limit int
-	data  []byte
+	limit     int
+	data      []byte
+	truncated bool
 }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
-	if remaining := b.limit - len(b.data); remaining > 0 {
+	remaining := b.limit - len(b.data)
+
+	if remaining > 0 {
 		if len(p) <= remaining {
 			b.data = append(b.data, p...)
 		} else {
 			b.data = append(b.data, p[:remaining]...)
+			b.truncated = true
 		}
+	} else if len(p) > 0 {
+		b.truncated = true
 	}
+
 	// Always report the full length: refusing bytes makes the program see a
 	// write error, which is not what happened.
 	return len(p), nil
 }
 
 func (b *boundedBuffer) String() string { return string(b.data) }
+
+func (b *boundedBuffer) Bytes() []byte { return b.data }
 
 func (rt *PluginRuntime) bindCrypto(vm *goja.Runtime, rdio *goja.Object, throw func(string, ...any)) {
 	crypto := vm.NewObject()
