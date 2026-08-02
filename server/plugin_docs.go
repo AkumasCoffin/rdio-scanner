@@ -84,9 +84,17 @@ var pluginCapabilities = []struct {
 		"query(sql, args)", "exec(sql, args)", "queryAsync(sql, args)", "execAsync(sql, args)",
 	}},
 	{"models", "Read and write the server's configuration. See below.", nil},
-	{"calls", "Read calls and audio, and publish fields onto them.", []string{
+	{"calls", "Read calls and audio, publish fields onto them, and create new ones.", []string{
 		"get(id, {audio})", "search(options)", "findId(system, talkgroup, dateTime)",
 		"update(id, fields)", "extendField(spec)",
+		"create({system, talkgroup, audio, dateTime, audioName, audioType, meta}) — goes in the same door an upload does, so blacklists, duplicate detection, conversion and every extension point apply",
+	}},
+	{"plugins", "Call and be called by other plugins, and broadcast events between them.", []string{
+		"list()", "has(id)",
+		"handle(method, fn) — offer a method others may call",
+		"call(pluginId, method, args) — returns a promise; a call into a plugin already waiting on someone else is refused rather than deadlocked",
+		"publish(topic, payload) — returns how many received it; never waits",
+		"subscribe(topic, fn)",
 	}},
 	{"search", "Make one of your columns findable through the normal call search.", []string{
 		"extend(spec)",

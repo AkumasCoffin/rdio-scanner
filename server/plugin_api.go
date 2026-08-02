@@ -388,6 +388,23 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 		return vm.ToValue(id)
 	})
 
+	// A call from a plugin goes in the same door an upload does, so a new ingest
+	// source — a scanner protocol rdio does not speak, a bridge from another
+	// system — is an ordinary plugin rather than a change to core.
+	calls.Set("create", func(spec goja.Value) goja.Value {
+		m, ok := spec.Export().(map[string]any)
+		if !ok {
+			throw("calls.create requires an object")
+		}
+
+		id, err := rt.createCall(m)
+		if err != nil {
+			throw("calls.create: %v", err)
+		}
+
+		return vm.ToValue(id)
+	})
+
 	rdio.Set("calls", calls)
 
 	// --- rdio.fs / rdio.exec / rdio.crypto --------------------------------
@@ -396,6 +413,7 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	rt.bindExec(vm, rdio, throw)
 	rt.bindCrypto(vm, rdio, throw)
 	rt.bindAudio(vm, rdio, throw)
+	rt.bindPlugins(vm, rdio, throw)
 
 	// --- rdio.models ------------------------------------------------------
 

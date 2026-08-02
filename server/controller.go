@@ -47,6 +47,7 @@ type Controller struct {
 	Options        *Options
 	Plugins        *Plugins
 	PluginDispatch *PluginDispatch
+	PluginRpc      *PluginRpc
 	PluginStore    *PluginStore
 	Scheduler   *Scheduler
 	Stats       *Stats
@@ -118,6 +119,7 @@ func NewController(config *Config) *Controller {
 	controller.Database = NewDatabase(config)
 	controller.Delayer = NewDelayer(controller)
 	controller.PluginDispatch = NewPluginDispatch(controller)
+	controller.PluginRpc = NewPluginRpc(controller)
 	controller.PluginStore = NewPluginStore(controller)
 	controller.pluginFeatures = NewPluginFeatureCache()
 	controller.Scheduler = NewScheduler(controller)

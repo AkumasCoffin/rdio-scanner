@@ -502,6 +502,12 @@ func (plugins *Plugins) Stop(controller *Controller) {
 			if controller != nil && controller.PluginDispatch != nil {
 				controller.PluginDispatch.Unregister(plugin.PluginId)
 			}
+			// Same for the plugin bus. A method left registered would route
+			// into a dead runtime and fail every call, rather than reporting
+			// honestly that nobody offers it any more.
+			if controller != nil && controller.PluginRpc != nil {
+				controller.PluginRpc.Unregister(plugin.PluginId)
+			}
 			plugin.runtime.Stop()
 			plugin.runtime = nil
 		}
