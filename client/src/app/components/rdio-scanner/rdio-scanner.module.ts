@@ -108,15 +108,28 @@ export class RdioScannerModule {
             // The router resolved the initial URL long before this plugin
             // existed, so a path only a plugin claims was matched by the
             // catch-all and redirected home. Now that the route exists, go where
-            // the browser was actually pointed. Once, and only for the path the
-            // page was opened at.
-            const wanted = pluginHost.takeInitialPath();
+            // the browser was actually pointed.
+            //
+            // Matched against the route patterns rather than compared as
+            // strings: a page registered as `unit/:id` opened at `unit/5` is
+            // never equal to its own pattern, so a plain comparison meant every
+            // parameterized plugin page failed to replay — a documented feature
+            // that could not work from a cold open.
+            const wanted = pluginHost.takeInitialPath((opened) => paths.some((pattern) => {
+                const patternParts = pattern.split('/');
+                const openedParts = opened.split('/');
 
-            if (wanted && paths.indexOf(wanted) >= 0) {
+                return patternParts.length === openedParts.length
+                    && patternParts.every((part, i) => part.startsWith(':') || part === openedParts[i]);
+            }));
+
+            if (wanted) {
                 const current = router.url.split(/[?#]/)[0].replace(/^\/+|\/+$/g, '');
 
                 if (current !== wanted) {
-                    router.navigateByUrl('/' + wanted);
+                    // Query and fragment come along, since an overlay is often
+                    // opened with its configuration in the URL.
+                    router.navigateByUrl('/' + wanted + pluginHost.initialSearch);
                 }
             }
         });

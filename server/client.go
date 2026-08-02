@@ -438,17 +438,28 @@ func (clients *Clients) EmitCall(call *Call, restricted bool) (recipients int) {
 }
 
 func (clients *Clients) EmitConfig(groups *Groups, options *Options, systems *Systems, tags *Tags, restricted bool) {
+	// Snapshot under the lock, send outside it. SendConfig enters the
+	// client.config point, so holding the read lock across this loop would keep
+	// it for one plugin call per client — on a busy server that blocks the first
+	// connect or disconnect, and Go's RWMutex then blocks every later reader
+	// behind that writer, stalling emits and the register loop until the whole
+	// broadcast finishes. EmitCall was restructured for exactly this reason;
+	// this path was missed.
 	clients.mutex.RLock()
-	defer clients.mutex.RUnlock()
 
+	recipients := make([]*Client, 0, len(clients.Map))
 	count := 0
+
 	for c := range clients.Map {
+		recipients = append(recipients, c)
 		if !c.Overlay {
 			count++
 		}
 	}
 
-	for c := range clients.Map {
+	clients.mutex.RUnlock()
+
+	for _, c := range recipients {
 		if restricted {
 			c.enqueue(&Message{Command: MessageCommandPin})
 		} else {

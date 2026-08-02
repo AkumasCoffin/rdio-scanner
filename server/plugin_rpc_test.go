@@ -35,24 +35,26 @@ func rpcWithMethods(names ...string) *PluginRpc {
 	return rpc
 }
 
-// TestCallIntoAWaitingPluginIsRefused is the deadlock this whole guard exists
-// for. A plugin with an outbound call in flight has its event loop blocked
-// waiting on the answer, so it cannot run the handler an incoming call needs.
-// Answering would hang both plugins until a timeout neither could explain.
-func TestCallIntoAWaitingPluginIsRefused(t *testing.T) {
+// TestABusyPluginCanStillBeCalled is the correction to a guard that was built on
+// a false premise.
+//
+// It used to refuse any call into a plugin that had an outbound call of its own
+// in flight, reasoning that such a plugin has its event loop blocked. It does
+// not: a call runs on its own goroutine and returns a promise, so the caller
+// keeps running and can answer perfectly well. The old rule turned two plugins
+// happening to talk at the same time into an error.
+func TestABusyPluginCanStillBeCalled(t *testing.T) {
 	rpc := rpcWithMethods("alpha", "beta")
 
-	// alpha is mid-call, exactly as it would be while blocked inside Call.
+	// alpha is mid-call of its own.
 	rpc.waiting["alpha"] = 1
 
 	_, err := rpc.Call("beta", "alpha", "ping", nil)
 
-	if err == nil {
-		t.Fatal("a call into a blocked plugin was allowed; that is the deadlock")
-	}
-
-	if !strings.Contains(err.Error(), "cycle") || !strings.Contains(err.Error(), "alpha") {
-		t.Errorf("the error should name the cycle and the plugin: %v", err)
+	// It reaches the handler, which has no runtime here — so the failure must be
+	// about that, never about alpha being busy.
+	if err != nil && strings.Contains(err.Error(), "in flight") {
+		t.Errorf("a busy plugin was refused a call it could have answered: %v", err)
 	}
 }
 
@@ -66,23 +68,26 @@ func TestSelfCallIsRefused(t *testing.T) {
 	}
 }
 
-// TestChainDepthIsBounded stops a long chain of distinct plugins from tying up
-// every runtime at once.
-func TestChainDepthIsBounded(t *testing.T) {
-	rpc := rpcWithMethods("a", "b", "c", "d")
+// TestRunawayRecursionIsBounded keeps the thing actually worth stopping.
+//
+// A calling B calling A is answerable at every hop, so it never deadlocks — but
+// each level spawns another goroutine, and nothing else would ever stop it. The
+// ceiling is per plugin, so one plugin looping cannot refuse calls between two
+// others that have nothing to do with it.
+func TestRunawayRecursionIsBounded(t *testing.T) {
+	rpc := rpcWithMethods("alpha", "beta", "gamma")
 
-	for _, name := range []string{"a", "b", "c"} {
-		rpc.waiting[name] = 1
+	rpc.waiting["alpha"] = pluginRpcMaxInFlight
+
+	_, err := rpc.Call("alpha", "beta", "ping", nil)
+	if err == nil || !strings.Contains(err.Error(), "in flight") {
+		t.Fatalf("a plugin past its in-flight ceiling should be refused: %v", err)
 	}
 
-	_, err := rpc.Call("c", "d", "ping", nil)
-
-	if err == nil {
-		t.Fatal("a chain past the depth limit was allowed")
-	}
-
-	if !strings.Contains(err.Error(), "too deep") {
-		t.Errorf("the error should say the chain is too deep: %v", err)
+	// An unrelated pair is unaffected, which the old global cap got wrong.
+	_, other := rpc.Call("beta", "gamma", "ping", nil)
+	if other != nil && strings.Contains(other.Error(), "in flight") {
+		t.Errorf("one plugin looping refused an unrelated conversation: %v", other)
 	}
 }
 

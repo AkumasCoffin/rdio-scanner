@@ -202,11 +202,53 @@ func (dispatch *PluginDispatch) Active(point string) bool {
 
 // --- the four verbs -------------------------------------------------------
 
+// clonePluginValue deep-copies the containers in a dispatch payload.
+//
+// goja wraps a Go map by reference: a JavaScript property write lands in the
+// Go map itself. Handing one payload to several plugins therefore shares
+// mutable state between event loops that never synchronise with each other —
+// and a plugin filter that does the idiomatic `call.meta.x = 1; return call`
+// while another plugin's observer reads the same map is a concurrent map read
+// and write, which is a fatal error that takes the whole server down rather
+// than an error anyone can recover from.
+//
+// So every recipient gets its own copy. The maps involved are small; the audio
+// blob is deliberately not copied, because it is a byte slice rather than a
+// container — writing into it cannot crash the runtime, and copying a couple of
+// hundred kilobytes per handler per call would be a real cost to defend against
+// a plugin corrupting audio it was given in order to inspect.
+func clonePluginValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, entry := range v {
+			out[key] = clonePluginValue(entry)
+		}
+		return out
+
+	case []any:
+		out := make([]any, len(v))
+		for i, entry := range v {
+			out[i] = clonePluginValue(entry)
+		}
+		return out
+
+	case map[string]string:
+		out := make(map[string]string, len(v))
+		for key, entry := range v {
+			out[key] = entry
+		}
+		return out
+	}
+
+	return value
+}
+
 // Notify fires observers. Never blocks: the busiest caller is the single
 // goroutine draining ingest, and an observer must not be able to slow it.
 func (dispatch *PluginDispatch) Notify(point string, value any) {
 	for _, handler := range dispatch.handlersFor(point, verbOn) {
-		handler.runtime.EmitTo(point, value)
+		handler.runtime.EmitTo(point, clonePluginValue(value))
 	}
 }
 
@@ -293,7 +335,16 @@ func (dispatch *PluginDispatch) invoke(handler *pluginHandler, point string, tim
 	if timeout <= 0 {
 		timeout = pluginDispatchTimeout
 	}
-	return handler.runtime.CallSync(point, timeout, handler.callable, args...)
+
+	// Each handler gets its own copy, for the same reason observers do: goja
+	// hands the Go map itself to JavaScript, so without this two plugins on one
+	// point would be writing into the same map from two event loops.
+	copied := make([]any, len(args))
+	for i, arg := range args {
+		copied[i] = clonePluginValue(arg)
+	}
+
+	return handler.runtime.CallSync(point, timeout, handler.callable, copied...)
 }
 
 func (dispatch *PluginDispatch) logFailure(handler *pluginHandler, point string, err error) {

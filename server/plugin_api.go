@@ -819,9 +819,13 @@ func numberFromMap(m map[string]any, key string) (float64, bool) {
 // a call blob is typically 50-200 KB and copying it into the runtime for every
 // hook would be pure waste for the majority of plugins that never touch it.
 func pluginCallValue(call *Call, withAudio bool) map[string]any {
-	meta := call.meta
-	if meta == nil {
-		meta = map[string]string{}
+	// Copied, not shared. This is the live map on the call, and a downstream
+	// forward iterates it on another goroutine while a plugin could be writing
+	// to it from JavaScript — which is a fatal concurrent map access rather
+	// than something the server can survive.
+	meta := map[string]string{}
+	for key, value := range call.meta {
+		meta[key] = value
 	}
 
 	value := map[string]any{

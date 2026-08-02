@@ -156,11 +156,30 @@ func cloneAccess(access *Access) *Access {
 
 	copied := *access
 
-	// Systems is the one field held by reference. A plugin appending to the
-	// slice would otherwise reach the shared entry through the copy.
-	if systems, ok := access.Systems.([]any); ok {
-		copied.Systems = append([]any{}, systems...)
+	// Systems is held by reference, and deeply so: the slice contains maps
+	// describing each system. Copying only the slice left those maps shared, so
+	// `value.systems[0].talkgroups = [...]` in a filter still wrote through to
+	// the table entry — the exact leak this function exists to stop, one level
+	// further down than the original fix reached.
+	copied.Systems = clonePluginValue(access.Systems)
+
+	return &copied
+}
+
+// cloneApikey does the same for an upload key.
+//
+// GetApikey returns the live entry from Apikeys.List, and unlike accesses this
+// was being handed straight to a filter and written back to. A filter narrowing
+// one upload's systems rewrote the key for every later upload until the table
+// reloaded — and because uploads are served on independent HTTP goroutines, the
+// write raced concurrent readers of the same field.
+func cloneApikey(apikey *Apikey) *Apikey {
+	if apikey == nil {
+		return nil
 	}
+
+	copied := *apikey
+	copied.Systems = clonePluginValue(apikey.Systems)
 
 	return &copied
 }
@@ -264,7 +283,7 @@ func (dispatch *PluginDispatch) CheckApikey(key string, call *Call, found *Apike
 		return found, found != nil
 	}
 
-	apikey := found
+	apikey := cloneApikey(found)
 
 	value := map[string]any{
 		"key":       key,

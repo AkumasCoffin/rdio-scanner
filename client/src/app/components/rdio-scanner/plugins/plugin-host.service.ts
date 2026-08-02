@@ -96,6 +96,21 @@ const INITIAL_PATH = (() => {
     return path.replace(/^\/+|\/+$/g, '');
 })();
 
+/**
+ * The query string and fragment the page was opened with.
+ *
+ * Replayed alongside the path, because an overlay is routinely opened with
+ * configuration in its URL — and a replay that dropped it silently handed the
+ * plugin an empty `query` on every cold open.
+ */
+const INITIAL_SEARCH = (() => {
+    if (typeof window === 'undefined' || !window.location) {
+        return '';
+    }
+
+    return (window.location.search || '') + (window.location.hash || '');
+})();
+
 /** What a plugin page is handed when the router lands on it. */
 export interface PluginPageContext {
     params: { [key: string]: string };
@@ -176,18 +191,34 @@ export class RdioScannerPluginHostService {
     private routeInstaller?: (paths: string[]) => void;
 
     /**
-     * The path this page was opened at, before the router touched it.
+     * The path this page was opened at, before the router touched it — but only
+     * while it is still worth replaying.
      *
-     * Read once, by the route installer, so a page claimed after the router
-     * already gave up on it can still be shown. Cleared afterwards: it must
-     * happen on the first claim only, or disabling and re-enabling a plugin
-     * would drag whoever is browsing back to that page.
+     * Consumed when a claimed route actually matches it, not merely when some
+     * route is installed. Clearing it on the first install was wrong: a plugin
+     * registering two pages installs twice, and a second plugin installs again,
+     * so a page opened at the second path found the value already spent and the
+     * browser stayed parked on the home page.
+     *
+     * `matched` is the caller's decision because only the installer knows how
+     * routes match, parameters included.
      */
-    takeInitialPath(): string {
+    takeInitialPath(matched: (path: string) => boolean): string {
+        if (!this.initialPath || !matched(this.initialPath)) {
+            return '';
+        }
+
         const path = this.initialPath;
+
+        // Spent once it is used, so disabling and re-enabling a plugin later
+        // cannot drag whoever is browsing back to that page.
         this.initialPath = '';
+
         return path;
     }
+
+    /** Query and fragment as opened, so a replay does not drop them. */
+    readonly initialSearch = INITIAL_SEARCH;
 
     private initialPath = INITIAL_PATH;
 

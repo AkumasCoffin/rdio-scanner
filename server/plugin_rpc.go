@@ -34,28 +34,18 @@ import (
 //	call      — I need an answer from a specific plugin, and I will wait.
 //	publish   — this happened; anyone who cares can react. Nobody waits.
 //
-// The hazard here is cycles. A calling B calling A is not hypothetical once
-// plugins compose, and without a guard it deadlocks: A's event loop is blocked
-// inside the call to B, so when B calls back into A there is nothing left to run
-// A's handler.
-//
-// That deadlock is detected directly rather than by threading a call chain
-// through the runtimes. A plugin with an outbound call in flight has its loop
-// blocked, by construction — CallSync waits on the answer — so the set of
-// plugins currently waiting is exactly the set that cannot service an incoming
-// call. A call targeting one of them can never be answered, and is refused
-// immediately with an error naming it instead of hanging until a timeout that
-// tells nobody anything.
-//
-// The alternative, carrying the chain along with each call, cannot be made
-// correct here: a handler that awaits a promise yields the event loop, so two
-// unrelated calls interleave and a per-runtime "current chain" would blame
-// whichever arrived second.
+// The hazard is runaway recursion rather than deadlock. A call does not block
+// the caller's event loop — rdio.plugins.call returns a promise and the work
+// happens on its own goroutine — so A calling B calling A is answerable at every
+// hop. What it is not is bounded: each level spawns another goroutine. A ceiling
+// on how many calls one plugin may have out at once stops that without refusing
+// two plugins the right to talk at the same time.
 
-// pluginRpcMaxDepth bounds how many plugins may be waiting on each other at
-// once. Three covers the compositions that make sense — a detector calling an
-// enricher calling a store — and keeps a runaway chain short.
-const pluginRpcMaxDepth = 3
+// pluginRpcMaxInFlight caps how many calls one plugin may have out at once.
+// Generous enough that real concurrency is never refused, low enough that a
+// plugin calling in a loop is stopped early rather than spawning goroutines
+// until something else breaks.
+const pluginRpcMaxInFlight = 8
 
 // pluginRpcTimeout bounds one hop, not the whole chain.
 const pluginRpcTimeout = 30 * time.Second
@@ -72,8 +62,9 @@ type PluginRpc struct {
 	// topics maps a topic to everyone subscribed to it.
 	topics map[string][]*pluginSubscription
 
-	// waiting counts outbound calls in flight per plugin. A plugin listed here
-	// has its event loop blocked and cannot answer an incoming call.
+	// waiting counts outbound calls in flight per plugin, so runaway recursion
+	// can be stopped. It does not mean the plugin is blocked — a call runs on
+	// its own goroutine and the caller's event loop stays free.
 	waiting map[string]int
 }
 
@@ -164,26 +155,27 @@ func (rpc *PluginRpc) Call(from string, to string, method string, args any) (any
 
 	rpc.mutex.Lock()
 
-	// The target has an outbound call in flight, so its event loop is blocked
-	// waiting and cannot run the handler this call needs. Answering would
-	// deadlock both plugins until a timeout neither of them can explain.
-	if rpc.waiting[to] > 0 {
-		waiting := rpc.waitingList()
+	// Bounds runaway recursion, not deadlock.
+	//
+	// This guard used to refuse any call into a plugin that had an outbound call
+	// in flight, on the reasoning that such a plugin has its event loop blocked
+	// and cannot answer. That reasoning was wrong: rdio.plugins.call returns a
+	// promise and runs this on its own goroutine, so the caller's loop stays
+	// free the whole time and there is no deadlock to prevent. What it actually
+	// did was refuse perfectly answerable calls whenever two plugins happened to
+	// be talking at once — and the companion cap on the total waiting set let
+	// three unrelated conversations refuse a fourth anywhere on the server.
+	//
+	// What is worth bounding is A calling B calling A calling B: harmless per
+	// hop, but it spawns a goroutine per level and would climb without limit.
+	// Each level adds another outbound call for the same plugin, so a per-plugin
+	// ceiling stops it while leaving unrelated plugins alone.
+	if from != "" && rpc.waiting[from] >= pluginRpcMaxInFlight {
 		rpc.mutex.Unlock()
 
 		return nil, fmt.Errorf(
-			"plugin call cycle: %s is itself waiting on another plugin, so it cannot answer %s.%s (waiting: %v)",
-			to, to, method, waiting,
-		)
-	}
-
-	if len(rpc.waiting) >= pluginRpcMaxDepth {
-		waiting := rpc.waitingList()
-		rpc.mutex.Unlock()
-
-		return nil, fmt.Errorf(
-			"plugin call chain too deep calling %s.%s; already waiting: %v",
-			to, method, waiting,
+			"plugin %s already has %d calls in flight; refusing %s.%s in case this is a loop",
+			from, pluginRpcMaxInFlight, to, method,
 		)
 	}
 
@@ -193,10 +185,9 @@ func (rpc *PluginRpc) Call(from string, to string, method string, args any) (any
 		return nil, fmt.Errorf("plugin %s offers no method %q", to, method)
 	}
 
-	// Mark the caller as blocked for the duration. Counted rather than flagged
-	// because a plugin handling two unrelated points at once can legitimately
-	// have two calls in flight, and the first to finish must not clear the
-	// second's mark.
+	// Counted, not flagged: a plugin handling two unrelated points at once can
+	// legitimately have two calls out, and the first to finish must not clear
+	// the second's mark.
 	if from != "" {
 		rpc.waiting[from]++
 	}
@@ -218,16 +209,6 @@ func (rpc *PluginRpc) Call(from string, to string, method string, args any) (any
 	}()
 
 	return handler.runtime.CallSync("rpc:"+method, pluginRpcTimeout, handler.callable, args)
-}
-
-// waitingList names who is currently blocked, for an error message. Called with
-// the lock held.
-func (rpc *PluginRpc) waitingList() []string {
-	names := []string{}
-	for name := range rpc.waiting {
-		names = append(names, name)
-	}
-	return names
 }
 
 // Publish delivers an event to every subscriber except the sender.

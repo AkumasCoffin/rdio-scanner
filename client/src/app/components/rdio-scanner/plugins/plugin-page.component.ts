@@ -26,7 +26,8 @@ import {
     OnInit,
     ViewChild,
 } from '@angular/core';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, Params } from '@angular/router';
+import { combineLatest, Subscription } from 'rxjs';
 
 import { RdioScannerPluginHostService } from './plugin-host.service';
 
@@ -59,6 +60,7 @@ export class RdioScannerPluginPageComponent implements OnInit, OnDestroy {
     @ViewChild('container', { static: true }) container!: ElementRef<HTMLElement>;
 
     private teardown?: () => void;
+    private subscription?: Subscription;
 
     constructor(
         private ngZone: NgZone,
@@ -67,9 +69,21 @@ export class RdioScannerPluginPageComponent implements OnInit, OnDestroy {
     ) {}
 
     ngOnInit(): void {
-        // The path is carried on the route's data rather than read from the URL,
-        // because a registration may include parameters and the raw URL would
-        // not identify which registration matched.
+        // Remounted whenever the parameters or the query change, not just once.
+        //
+        // Angular reuses a component across navigations that hit the same route
+        // config, so ngOnInit does not run again going from `unit/1` to
+        // `unit/2` — the plugin would keep rendering the first one with nothing
+        // to tell it otherwise. combineLatest fires once on subscribe, which is
+        // the initial mount.
+        this.subscription = combineLatest([this.route.params, this.route.queryParams])
+            .subscribe(([params, query]) => this.remount(params, query));
+    }
+
+    private remount(params: Params, query: Params): void {
+        // The path comes from the route's data rather than the URL, because a
+        // registration may include parameters and the raw URL would not say
+        // which registration matched.
         const path = this.route.snapshot.data['rdioPluginPath'] as string | undefined;
         if (!path) {
             return;
@@ -78,14 +92,23 @@ export class RdioScannerPluginPageComponent implements OnInit, OnDestroy {
         // Outside the zone: plugin code should not schedule change detection on
         // every listener it attaches to its own DOM.
         this.ngZone.runOutsideAngular(() => {
+            const previous = this.teardown;
+            this.teardown = undefined;
+
+            if (previous) {
+                previous();
+            }
+
             this.teardown = this.pluginHost.mountPage(path, this.container.nativeElement, {
-                params: { ...this.route.snapshot.params },
-                query: { ...this.route.snapshot.queryParams },
+                params: { ...params },
+                query: { ...query },
             });
         });
     }
 
     ngOnDestroy(): void {
+        this.subscription?.unsubscribe();
+
         const teardown = this.teardown;
         this.teardown = undefined;
 
