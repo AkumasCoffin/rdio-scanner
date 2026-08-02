@@ -452,15 +452,24 @@ func (admin *Admin) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		admin.attemptsMu.Unlock()
 
 		ok := false
+		password := ""
 
 		switch v := m["password"].(type) {
 		case string:
+			password = v
 			if len(v) > 0 {
 				if err := bcrypt.CompareHashAndPassword([]byte(admin.Controller.Options.adminPassword), []byte(v)); err == nil {
 					ok = true
 				}
 			}
 		}
+
+		// A plugin may authenticate a login the local password rejected — an
+		// external directory, a one-time code — or refuse one it accepted, which
+		// is where a second factor or an address restriction goes. Provide only
+		// runs on failure, so an auth plugin can never lock out the local
+		// password and leave the server unreachable.
+		ok = admin.Controller.PluginDispatch.CheckAdmin(password, remoteAddr, ok)
 
 		if !ok {
 			admin.attemptsMu.Lock()

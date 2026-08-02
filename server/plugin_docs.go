@@ -273,10 +273,10 @@ var pointNotes = map[string]string{
 	PointDownstreamSend: "Per downstream, before forwarding.",
 	PointClientConfig:   "The configuration payload each client receives.",
 
-	PointAccessCheck: "Validate an access code. Provide to authenticate elsewhere.",
-	PointAccessScope: "What systems and talkgroups a session may see.",
-	PointApikeyCheck: "Validate an API key used for uploads.",
-	PointAdminCheck:  "Validate an admin session.",
+	PointAccessCheck: "A listener presented an access code. `provide` runs only when rdio's own table did not recognise it — return `{ident, systems}` to grant, nothing to refuse — so adding an auth plugin never invalidates the accounts already configured. `filter` always runs and may narrow the grant or refuse it with `{drop: true}`.",
+	PointAccessScope: "What systems and talkgroups a session may see. Runs for every listener once, including on a server with no access codes at all, so it is the point for deciding visibility rather than admission. Return `{systems}` to narrow; `{drop: true}` shows the client nothing rather than disconnecting it.",
+	PointApikeyCheck: "An upload presented an API key. Same shape as `access.check`: `provide` covers a key rdio has never seen, `filter` narrows or refuses one it has.",
+	PointAdminCheck:  "An admin login. `provide` runs only when the local password check failed, so a plugin can add an external directory without ever being able to lock out the local password. `filter` runs on success, which is where a second factor or an address restriction goes. The submitted password is included, because an external directory cannot verify a credential it is not given; it is never logged.",
 
 	PointCallSearch: "Search predicates and results.",
 	PointCallPrune:  "Whether a call may be deleted by retention.",

@@ -526,6 +526,7 @@ func (controller *Controller) ProcessMessage(client *Client, message *Message) e
 		}
 
 	} else if message.Command == MessageCommandConfig {
+		controller.scopeClient(client)
 		client.SendConfig(controller.Groups, controller.Options, controller.Systems, controller.Tags)
 
 	} else if message.Command == MessageCommandListCall {
@@ -663,13 +664,24 @@ func (controller *Controller) ProcessMessageCommandPin(client *Client, message *
 
 		if controller.Accesses.IsRestricted() {
 			code := string(b)
-			if access, ok := controller.Accesses.GetAccess(code); ok {
-				client.Access = access
-			} else {
+
+			// The local table answers first; a plugin may then vouch for a code
+			// rdio has never seen, or refuse one it has. Passing the local
+			// result in rather than replacing the lookup means adding an auth
+			// plugin never invalidates the accounts already configured.
+			found, _ := controller.Accesses.GetAccess(code)
+
+			access, allowed := controller.PluginDispatch.CheckAccess(code, client.GetRemoteAddr(), found)
+			if !allowed {
 				controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("invalid access code %s for ip %s", code, client.GetRemoteAddr()))
 				client.enqueue(&Message{Command: MessageCommandPin})
 				return nil
 			}
+
+			// Re-scope now the client has a real identity: the grant it just
+			// authenticated with is a different question from what that grant
+			// should be allowed to see.
+			client.Access = controller.PluginDispatch.ScopeAccess(access, client.GetRemoteAddr(), true)
 
 			if client.AuthCount == maxAuthCount {
 				controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("locked access for ident %s locked", client.Access.Ident))
@@ -695,10 +707,32 @@ func (controller *Controller) ProcessMessageCommandPin(client *Client, message *
 
 		client.AuthCount = 0
 
+		controller.scopeClient(client)
 		client.SendConfig(controller.Groups, controller.Options, controller.Systems, controller.Tags)
 	}
 
 	return nil
+}
+
+// scopeClient settles what this listener may see, immediately before the config
+// that answers that question is built.
+//
+// It has to run here rather than when the client registers, because
+// registration happens only once the first config has already been sent — a
+// plugin narrowing the scope there would be overruled by the payload the client
+// already had. Running it before every config also means a plugin can widen or
+// narrow a session later without the client reconnecting.
+//
+// Applies on an unrestricted server too, where there is no credential to check
+// but there is still a question of what this particular listener should see.
+func (controller *Controller) scopeClient(client *Client) {
+	if client == nil || client.Access == nil {
+		return
+	}
+
+	client.Access = controller.PluginDispatch.ScopeAccess(
+		client.Access, client.GetRemoteAddr(), controller.Accesses.IsRestricted(),
+	)
 }
 
 func (controller *Controller) ProcessMessageCommandVersion(client *Client) {

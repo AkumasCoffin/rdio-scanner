@@ -92,22 +92,21 @@ func (api *Api) CallUploadHandler(w http.ResponseWriter, r *http.Request) {
 func (api *Api) HandleCall(key string, call *Call, w http.ResponseWriter) {
 	msg := []byte(fmt.Sprintf("Invalid API key for system %v talkgroup %v.\n", call.System, call.Talkgroup))
 
-	if apikey, ok := api.Controller.Apikeys.GetApikey(key); ok {
-		if apikey.HasAccess(call) {
-			call.apiKeyIdent = apikey.Ident
-			api.Controller.Ingest <- call
+	// The local table answers first, then a plugin may vouch for a key rdio has
+	// never seen or refuse one it has. This is what lets an external system own
+	// the uploader credentials without rdio having to store them.
+	found, _ := api.Controller.Apikeys.GetApikey(key)
 
-		} else {
-			w.WriteHeader(http.StatusUnauthorized)
-			w.Write(msg)
-			return
-		}
+	apikey, allowed := api.Controller.PluginDispatch.CheckApikey(key, call, found)
 
-	} else {
+	if !allowed || apikey == nil || apikey.Disabled || !apikey.HasAccess(call) {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write(msg)
 		return
 	}
+
+	call.apiKeyIdent = apikey.Ident
+	api.Controller.Ingest <- call
 
 	w.Write([]byte("Call imported successfully.\n"))
 }
