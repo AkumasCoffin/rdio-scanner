@@ -172,6 +172,18 @@ func (admin *Admin) ConfigHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			// Before anything is written or stopped. A plugin observing here is
+			// how it notices the systems it mirrors have changed; a plugin
+			// filtering here can refuse a configuration it cannot work with,
+			// while the running one stays untouched.
+			config, allowed := admin.Controller.PluginDispatch.FilterConfigSave(m)
+			if !allowed {
+				w.WriteHeader(http.StatusConflict)
+				w.Write([]byte(`{"error":"configuration refused by a plugin"}`))
+				return
+			}
+			m = config
+
 			admin.mutex.Lock()
 			defer admin.mutex.Unlock()
 

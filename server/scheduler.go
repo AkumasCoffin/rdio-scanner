@@ -53,8 +53,14 @@ func (scheduler *Scheduler) pruneDatabase() error {
 	scheduler.Controller.Logs.LogEvent(LogLevelInfo, "database pruning")
 
 	if opts.PruneDays > 0 {
-		if err := scheduler.Controller.Calls.Prune(db, opts.PruneDays); err != nil {
-			return err
+		// A plugin may change how much is kept, or skip this cycle entirely
+		// while it archives what is about to go. Skipping is per cycle, not a
+		// switch — the next tick asks again, so nothing has to remember to turn
+		// retention back on.
+		if days, prune := scheduler.Controller.PluginDispatch.FilterPrune(opts.PruneDays); prune {
+			if err := scheduler.Controller.Calls.Prune(db, days); err != nil {
+				return err
+			}
 		}
 	}
 

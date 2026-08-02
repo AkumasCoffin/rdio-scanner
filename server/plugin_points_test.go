@@ -32,10 +32,6 @@ import (
 // nothing ever fired. A plugin could register for it and wait forever with no
 // error and no indication anything was wrong.
 var pointsNotYetDispatched = map[string]string{
-	PointCallSearch:       "phase 8",
-	PointCallPrune:        "phase 8",
-	PointCallAudio:        "phase 8",
-	PointConfigSave:       "phase 8",
 }
 
 // TestEveryPointIsDispatched checks that a point a plugin can register against

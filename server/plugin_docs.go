@@ -278,8 +278,8 @@ var pointNotes = map[string]string{
 	PointApikeyCheck: "An upload presented an API key. Same shape as `access.check`: `provide` covers a key rdio has never seen, `filter` narrows or refuses one it has.",
 	PointAdminCheck:  "An admin login. `provide` runs only when the local password check failed, so a plugin can add an external directory without ever being able to lock out the local password. `filter` runs on success, which is where a second factor or an address restriction goes. The submitted password is included, because an external directory cannot verify a credential it is not given; it is never logged.",
 
-	PointCallSearch: "Search predicates and results.",
-	PointCallPrune:  "Whether a call may be deleted by retention.",
-	PointCallAudio:  "Supply a call's audio when the server has none stored.",
-	PointConfigSave: "Configuration is being saved.",
+	PointCallSearch: "A search before it runs. Carries the query — `q`, `date`, `system`, `talkgroup`, `group`, `tag`, `limit`, `offset`, `sort` — and the `client` asking. Return any of those to narrow it, or `{drop: true}` for an empty result. Deliberately the query and not the results: filtering a page of calls would mean marshalling every row into the runtime on a path a user is waiting on. To contribute searchable data, use `rdio.search.extend`, which core resolves natively in the same SQL.",
+	PointCallPrune:  "Retention, once an hour at most. Carries `days` and the `before` cutoff it implies. Return `{days: N}` to change how much is kept, or `{drop: true}` to skip this cycle — skipping is per cycle rather than a switch, so a plugin archiving calls does not have to remember to turn retention back on. Do the archiving on `rdio.schedule`, not here; a prune waiting on an upload would hold the scheduler for as long as it took.",
+	PointCallAudio:  "`provide` a call's audio when the database no longer holds it. Only asked when the stored blob is empty, so an install keeping audio normally never reaches a plugin. Return the bytes, or `{audio, audioType, audioName}` if cold storage re-encoded them. This is what makes tiered retention possible: blank the column, keep the row, answer here.",
+	PointConfigSave: "An admin configuration about to be written, in `config`. Observe it to notice that the systems a plugin mirrors have changed; filter it to refuse a configuration the plugin cannot work with, in which case nothing is written and the running configuration stays untouched.",
 }

@@ -622,6 +622,11 @@ func (controller *Controller) ProcessMessageCommandCall(client *Client, message 
 	// computed by now even if it wasn't ready when the call was first emitted.
 	controller.ApplyPluginFields(call)
 
+	// The row survived but the audio may not have: a retention plugin can blank
+	// the column and keep the bytes elsewhere. Only asked when the blob is
+	// actually empty, so an install storing audio normally never gets here.
+	controller.PluginDispatch.ProvideCallAudio(call)
+
 	client.enqueue(&Message{Command: MessageCommandCall, Payload: call, Flag: message.Flag})
 
 	return nil
@@ -632,6 +637,18 @@ func (controller *Controller) ProcessMessageCommandListCall(client *Client, mess
 	case map[string]any:
 		searchOptions := CallsSearchOptions{searchPatchedTalkgroups: controller.Options.SearchPatchedTalkgroups}
 		searchOptions.fromMap(v)
+
+		// A plugin may narrow what this client is allowed to ask for. A veto
+		// returns an empty result rather than an error, because a search that a
+		// plugin decided not to answer is not a failure of the request.
+		if !controller.PluginDispatch.FilterSearch(&searchOptions, client) {
+			client.enqueue(&Message{Command: MessageCommandListCall, Payload: &CallsSearchResults{
+				Count:   0,
+				Results: []CallsSearchResult{},
+			}})
+			return nil
+		}
+
 		if searchResults, err := controller.Calls.Search(&searchOptions, client); err == nil {
 			client.enqueue(&Message{Command: MessageCommandListCall, Payload: searchResults})
 		} else {

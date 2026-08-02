@@ -393,7 +393,18 @@ func (p *PublicApi) apikeyWhere(apikey *Apikey) []string {
 }
 
 func (p *PublicApi) loadCallForAccess(id uint) (*Call, error) {
-	return p.Controller.Calls.GetCall(id, p.Controller.Database)
+	call, err := p.Controller.Calls.GetCall(id, p.Controller.Database)
+	if err != nil {
+		return call, err
+	}
+
+	// Same reason as the websocket path: a retention plugin may hold the audio
+	// somewhere other than the calls table. Without this the public API would
+	// serve a call with no sound and no error, which is the shape of bug that
+	// gets reported as "downloads are broken" months later.
+	p.Controller.PluginDispatch.ProvideCallAudio(call)
+
+	return call, nil
 }
 
 func (p *PublicApi) getCall(w http.ResponseWriter, id uint, apikey *Apikey) {
