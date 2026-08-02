@@ -423,6 +423,109 @@ func (store *PluginStore) Available(rawUrl string, branch string, fresh bool) ([
 	return available, nil
 }
 
+// PluginUpdate is one installed plugin measured against the repository and
+// branch it was installed from.
+type PluginUpdate struct {
+	PluginId         string `json:"pluginId"`
+	Name             string `json:"name"`
+	InstalledVersion string `json:"installedVersion"`
+	LatestVersion    string `json:"latestVersion,omitempty"`
+	Repo             string `json:"repo"`
+	Branch           string `json:"branch"`
+	UpdateAvailable  bool   `json:"updateAvailable"`
+	// Compatible describes the *offered* version. An update that this server is
+	// too old to run is worth showing and worth refusing to install, but it is
+	// not worth hiding — otherwise the answer to "why am I not being offered
+	// 2.0" is invisible.
+	Compatible   bool   `json:"compatible"`
+	Incompatible string `json:"incompatible,omitempty"`
+	// Error explains why this particular plugin could not be checked. One
+	// unreachable repository must not blank the whole report.
+	Error string `json:"error,omitempty"`
+}
+
+// Updates checks every installed plugin against the repository and branch it
+// came from.
+//
+// Plugins are grouped by source so a repository is listed once however many
+// plugins were installed from it, which matters against GitHub's rate limit.
+func (store *PluginStore) Updates(fresh bool) []*PluginUpdate {
+	store.Controller.Plugins.mutex.RLock()
+	installed := append([]*Plugin{}, store.Controller.Plugins.List...)
+	store.Controller.Plugins.mutex.RUnlock()
+
+	// Group by the exact pair the plugin was installed from. A plugin tracks
+	// the branch it came from, not main — someone running a plugin from a
+	// development branch wants updates from that branch.
+	type sourceKey struct{ repo, branch string }
+
+	groups := map[sourceKey][]*Plugin{}
+	order := []sourceKey{}
+
+	for _, plugin := range installed {
+		repo := plugin.Source
+		if strings.TrimSpace(repo) == "" {
+			repo = DefaultPluginRepo
+		}
+
+		branch := plugin.Branch
+		if strings.TrimSpace(branch) == "" {
+			branch = "main"
+		}
+
+		key := sourceKey{repo: repo, branch: branch}
+		if _, seen := groups[key]; !seen {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], plugin)
+	}
+
+	updates := []*PluginUpdate{}
+
+	for _, key := range order {
+		available, err := store.Available(key.repo, key.branch, fresh)
+
+		offered := map[string]*AvailablePlugin{}
+		for _, entry := range available {
+			if entry.Manifest != nil {
+				offered[entry.Manifest.Id] = entry
+			}
+		}
+
+		for _, plugin := range groups[key] {
+			update := &PluginUpdate{
+				PluginId:         plugin.PluginId,
+				Name:             plugin.Name,
+				InstalledVersion: plugin.Version,
+				Repo:             key.repo,
+				Branch:           key.branch,
+			}
+
+			switch {
+			case err != nil:
+				update.Error = err.Error()
+
+			case offered[plugin.PluginId] == nil:
+				// Installed from somewhere it is no longer offered: a removed
+				// plugin, a renamed branch, or a hand-placed folder. Not an
+				// error to report loudly, but not silently "up to date" either.
+				update.Error = fmt.Sprintf("no longer offered by %s on %s", key.repo, key.branch)
+
+			default:
+				entry := offered[plugin.PluginId]
+				update.LatestVersion = entry.Manifest.Version
+				update.Compatible = entry.Compatible
+				update.Incompatible = entry.Incompatible
+				update.UpdateAvailable = compareVersions(entry.Manifest.Version, plugin.Version) > 0
+			}
+
+			updates = append(updates, update)
+		}
+	}
+
+	return updates
+}
+
 // Install downloads a plugin and writes it into the plugins directory.
 //
 // The whole branch archive is fetched and only the one plugin's directory is

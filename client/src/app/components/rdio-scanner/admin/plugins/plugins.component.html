@@ -35,6 +35,31 @@
             <code>{{ pluginsDir }}</code> and restart.
         </p>
 
+        <!-- Update checking. Each plugin is measured against the repository and
+             branch it was installed from, not against the one being browsed. -->
+        <div class="row update-bar" *ngIf="plugins.length">
+            <p class="mat-caption">
+                <ng-container *ngIf="updatesAvailable">
+                    {{ updatesAvailable }} update{{ updatesAvailable === 1 ? '' : 's' }} available.
+                </ng-container>
+                <ng-container *ngIf="updateCheckRan && !updatesAvailable">
+                    No updates found. Every plugin is at the newest version its repository offers.
+                </ng-container>
+                <ng-container *ngIf="!updateCheckRan">
+                    Each plugin is checked against the repository and branch it was installed from.
+                </ng-container>
+            </p>
+            <span class="spacer"></span>
+            <button type="button" mat-button color="accent" [disabled]="busy || checkingUpdates"
+                (click)="checkUpdates()">
+                {{ checkingUpdates ? 'Checking…' : 'Check for updates' }}
+            </button>
+            <button type="button" mat-raised-button color="primary" *ngIf="updatesAvailable > 1"
+                [disabled]="busy || checkingUpdates" (click)="updateAll()">
+                Update all
+            </button>
+        </div>
+
         <div class="plugin-card" *ngFor="let plugin of plugins; trackBy: trackByPluginId">
             <div class="plugin-head">
                 <div class="plugin-identity">
@@ -59,9 +84,24 @@
                 <span class="chip pending" *ngIf="plugin.restartRequired">Restart required</span>
                 <span class="chip missing" *ngIf="!plugin.present">Files missing</span>
                 <span class="chip warn" *ngIf="plugin.error" [matTooltip]="plugin.error">{{ plugin.error }}</span>
+                <span class="chip update" *ngIf="updateFor(plugin)"
+                    [matTooltip]="'From ' + updateFor(plugin)?.repo + ' on ' + updateFor(plugin)?.branch">
+                    v{{ plugin.version }} &rarr; v{{ updateFor(plugin)?.latestVersion }}
+                </span>
+                <span class="chip warn" *ngIf="updateFor(plugin) && !updateFor(plugin)?.compatible">
+                    {{ updateFor(plugin)?.incompatible }}
+                </span>
+                <span class="chip missing" *ngIf="updateError(plugin)" [matTooltip]="updateError(plugin)">
+                    Not checked
+                </span>
             </div>
 
             <div class="plugin-actions">
+                <button type="button" mat-raised-button color="primary" *ngIf="updateFor(plugin)"
+                    [disabled]="busy || checkingUpdates || !updateFor(plugin)?.compatible"
+                    (click)="update(plugin)">
+                    Update to {{ updateFor(plugin)?.latestVersion }}
+                </button>
                 <button type="button" mat-button color="primary" [disabled]="busy || !plugin.manifest?.config?.length"
                     (click)="toggleConfig(plugin)">
                     {{ expandedConfig === plugin.pluginId ? 'Close settings' : 'Settings' }}

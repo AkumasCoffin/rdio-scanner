@@ -144,6 +144,8 @@ func (admin *Admin) PluginsActionHandler(w http.ResponseWriter, r *http.Request)
 		admin.pluginBranches(w, r)
 	case "available":
 		admin.pluginAvailable(w, r)
+	case "updates":
+		admin.pluginUpdates(w, r)
 	case "install":
 		admin.pluginInstall(w, r)
 	case "toggle":
@@ -209,6 +211,27 @@ func (admin *Admin) pluginAvailable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJson(w, map[string]any{"available": available})
+}
+
+// pluginUpdates answers the "check for updates" button: every installed plugin
+// measured against the repository and branch it came from, in one request.
+//
+// Always fetches fresh. Someone pressing this has a reason to think something
+// changed, and answering from a cache that predates the change is the one
+// outcome that makes the button look broken.
+func (admin *Admin) pluginUpdates(w http.ResponseWriter, r *http.Request) {
+	admin.Controller.PluginStore.InvalidateCache()
+
+	updates := admin.Controller.PluginStore.Updates(true)
+
+	count := 0
+	for _, update := range updates {
+		if update.UpdateAvailable {
+			count++
+		}
+	}
+
+	writeJson(w, map[string]any{"updates": updates, "updateCount": count})
 }
 
 func (admin *Admin) pluginInstall(w http.ResponseWriter, r *http.Request) {

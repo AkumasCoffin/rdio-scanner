@@ -23,6 +23,7 @@ import {
     AdminAvailablePlugin,
     AdminPlugin,
     AdminPluginRepo,
+    AdminPluginUpdate,
     PluginConfigField,
     RdioScannerAdminService,
 } from '../admin.service';
@@ -51,6 +52,14 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
     busy = false;
     browsing = false;
     status = '';
+
+    /** Result of the last update check, keyed by pluginId. Empty until asked. */
+    updates: { [pluginId: string]: AdminPluginUpdate } = {};
+
+    checkingUpdates = false;
+
+    /** Empty until a check has run, so "none found" can be said only once it has. */
+    updateCheckRan = false;
 
     /** pluginId of the plugin whose settings form is open. */
     expandedConfig = '';
@@ -197,6 +206,108 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
         }
 
         this.busy = false;
+    }
+
+    /**
+     * Asks the server to measure every installed plugin against the repository
+     * and branch it came from.
+     */
+    async checkUpdates(): Promise<void> {
+        this.checkingUpdates = true;
+        this.status = '';
+
+        try {
+            const response = await this.adminService.getPluginUpdates();
+
+            const next: { [pluginId: string]: AdminPluginUpdate } = {};
+            for (const update of response.updates || []) {
+                next[update.pluginId] = update;
+            }
+            this.updates = next;
+            this.updateCheckRan = true;
+
+            const failed = (response.updates || []).filter((update) => update.error);
+
+            if (response.updateCount > 0) {
+                this.matSnackBar.open(
+                    `${response.updateCount} plugin update${response.updateCount === 1 ? '' : 's'} available.`,
+                    '', { duration: 5000 });
+            } else if (failed.length) {
+                // Nothing found, but not everything was actually checked —
+                // saying "up to date" here would be a claim we cannot make.
+                this.status = `${failed.length} plugin${failed.length === 1 ? '' : 's'} could not be checked.`;
+            } else {
+                this.matSnackBar.open('All plugins are up to date.', '', { duration: 3000 });
+            }
+        } catch (err) {
+            this.status = this.errMsg(err, 'Could not check for plugin updates.');
+        }
+
+        this.checkingUpdates = false;
+    }
+
+    /** The pending update for a plugin, if the last check found one. */
+    updateFor(plugin: AdminPlugin): AdminPluginUpdate | undefined {
+        const update = this.updates[plugin.pluginId];
+        return update && update.updateAvailable ? update : undefined;
+    }
+
+    /** Why a plugin could not be checked, if it could not be. */
+    updateError(plugin: AdminPlugin): string {
+        return this.updates[plugin.pluginId]?.error || '';
+    }
+
+    /** True when a check found updates for at least one plugin. */
+    get updatesAvailable(): number {
+        return Object.values(this.updates).filter((update) => update.updateAvailable).length;
+    }
+
+    /**
+     * Installs the newer version over the top. The install path already keeps
+     * the plugin's enabled state and its stored settings, so this is an update
+     * rather than a reinstall.
+     */
+    async update(plugin: AdminPlugin): Promise<void> {
+        const pending = this.updateFor(plugin);
+        if (!pending) {
+            return;
+        }
+
+        if (!pending.compatible) {
+            this.status = `${plugin.name} ${pending.latestVersion} ${pending.incompatible || 'is not compatible with this server'}.`;
+            return;
+        }
+
+        this.busy = true;
+        this.status = `Updating ${plugin.name}…`;
+
+        try {
+            await this.adminService.installPlugin(pending.repo, pending.branch, plugin.pluginId);
+            this.matSnackBar.open(
+                `${plugin.name} updated to ${pending.latestVersion}. Restart Rdio Scanner to load it.`,
+                '', { duration: 5000 });
+
+            delete this.updates[plugin.pluginId];
+
+            await this.load();
+            this.status = '';
+        } catch (err) {
+            this.status = this.errMsg(err, `Could not update ${plugin.name}.`);
+        }
+
+        this.busy = false;
+    }
+
+    /** Updates every plugin the last check found a newer version for. */
+    async updateAll(): Promise<void> {
+        const pending = this.plugins.filter((plugin) => {
+            const update = this.updateFor(plugin);
+            return !!update && update.compatible;
+        });
+
+        for (const plugin of pending) {
+            await this.update(plugin);
+        }
     }
 
     async toggle(plugin: AdminPlugin): Promise<void> {

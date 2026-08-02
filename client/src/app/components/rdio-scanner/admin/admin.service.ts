@@ -172,6 +172,27 @@ export interface AdminPluginRepoInput {
     token?: string;
 }
 
+/** One installed plugin measured against the repository it was installed from. */
+export interface AdminPluginUpdate {
+    pluginId: string;
+    name: string;
+    installedVersion: string;
+    latestVersion?: string;
+    repo: string;
+    branch: string;
+    updateAvailable: boolean;
+    compatible: boolean;
+    incompatible?: string;
+    // Why this one plugin could not be checked. The rest of the report is still
+    // good — an unreachable repository does not invalidate the others.
+    error?: string;
+}
+
+export interface AdminPluginUpdatesResponse {
+    updates: AdminPluginUpdate[];
+    updateCount: number;
+}
+
 export interface AdminPluginsResponse {
     plugins: AdminPlugin[];
     repos: AdminPluginRepo[];
@@ -803,6 +824,18 @@ export class RdioScannerAdminService implements OnDestroy {
     async getPluginsAvailable(repo: string, branch: string, refresh = false): Promise<{ available: AdminAvailablePlugin[] }> {
         return await firstValueFrom(this.ngHttpClient.get<{ available: AdminAvailablePlugin[] }>(
             this.pluginUrl(`/available?repo=${encodeURIComponent(repo)}&branch=${encodeURIComponent(branch)}${refresh ? '&refresh=1' : ''}`),
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    /**
+     * Checks every installed plugin against the repository and branch it came
+     * from. Always fetches fresh server-side — someone pressing the button has
+     * a reason to think something changed.
+     */
+    async getPluginUpdates(): Promise<AdminPluginUpdatesResponse> {
+        return await firstValueFrom(this.ngHttpClient.get<AdminPluginUpdatesResponse>(
+            this.pluginUrl('/updates'),
             { headers: this.getHeaders(), responseType: 'json' },
         ));
     }

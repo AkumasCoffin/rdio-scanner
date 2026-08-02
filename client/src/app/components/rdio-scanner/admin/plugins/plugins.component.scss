@@ -24,6 +24,22 @@
     &.config-actions {
         justify-content: flex-end;
     }
+
+    // Sits above the installed list: a summary on the left, the check and
+    // update-all buttons pushed to the right.
+    &.update-bar {
+        border-bottom: 1px solid rgba(127, 127, 127, 0.25);
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+
+        p {
+            opacity: 0.8;
+        }
+    }
+
+    .spacer {
+        flex: 1;
+    }
 }
 
 .empty {
@@ -127,6 +143,13 @@
     &.missing,
     &.warn {
         background: rgba(var(--state-danger-rgb), 0.22);
+    }
+
+    // A pending update is good news, not a fault — it reads as success rather
+    // than as one more thing gone wrong on the card.
+    &.update {
+        background: rgba(var(--state-success-rgb), 0.22);
+        font-weight: 500;
     }
 
     // Permissions are informational: they tell the admin what a plugin is
