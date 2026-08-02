@@ -18,10 +18,13 @@
  */
 
 import { NgModule } from '@angular/core';
+import { Route, Router } from '@angular/router';
 import { RdioScannerModule } from '../../components/rdio-scanner';
+import { RdioScannerPluginHostService } from '../../components/rdio-scanner/plugins/plugin-host.service';
 import { AppSharedModule } from '../../shared/shared.module';
 import { RdioScannerPageComponent } from './rdio-scanner.component';
 import { RdioScannerMainPageComponent } from './rdio-scanner-main.component';
+import { RdioScannerPluginPageComponent } from './rdio-scanner-plugin-page.component';
 import { RdioScannerStreamPageComponent } from './rdio-scanner-stream.component';
 import { routes } from './rdio-scanner.routes';
 
@@ -29,12 +32,57 @@ import { routes } from './rdio-scanner.routes';
     declarations: [
         RdioScannerPageComponent,
         RdioScannerMainPageComponent,
+        RdioScannerPluginPageComponent,
         RdioScannerStreamPageComponent,
     ],
     exports: [RdioScannerPageComponent],
     imports: [
         RdioScannerModule,
-        AppSharedModule.forChild({routerRoutes: routes }),
+        AppSharedModule.forChild({ routerRoutes: routes }),
     ],
 })
-export class RdioScannerPageModule { }
+export class RdioScannerPageModule {
+    constructor(router: Router, pluginHost: RdioScannerPluginHostService) {
+        // Plugins are not known when the routes above are declared, so pages
+        // they claim have to be added afterwards. This is the only place that
+        // can do it: the router is here, and so is the component that hosts one.
+        let installed = 0;
+
+        pluginHost.setRouteInstaller((paths) => {
+            // Nothing to add and nothing added before: leave the router exactly
+            // as the application declared it. Every install without a
+            // page-claiming plugin — which is all of them today — then never
+            // touches routing at all, so this cannot regress navigation for
+            // anyone who is not using the feature.
+            if (!paths.length && !installed) {
+                return;
+            }
+            installed = paths.length;
+
+            const config = router.config.map((route) => ({ ...route }));
+
+            const parent = config.find((route) => route.path === '' && route.children);
+            if (!parent?.children) {
+                return;
+            }
+
+            // Rebuild from the routes the application declared, so a plugin
+            // being disabled removes its page rather than accumulating stale
+            // ones every time this runs.
+            const declared = parent.children.filter((child) => !child.data?.['rdioPluginPath']);
+
+            const claimed: Route[] = paths.map((path) => ({
+                component: RdioScannerPluginPageComponent,
+                data: { rdioPluginPath: path },
+                path,
+            }));
+
+            // Plugin pages go last so a plugin cannot shadow a built-in route by
+            // claiming its path — Angular matches in order, and '' would win
+            // over nothing but itself.
+            parent.children = [...declared, ...claimed];
+
+            router.resetConfig(config);
+        });
+    }
+}

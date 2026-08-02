@@ -68,6 +68,18 @@ interface WsRegistration {
     handler: (payload: unknown) => void;
 }
 
+/** What a plugin page is handed when the router lands on it. */
+export interface PluginPageContext {
+    params: { [key: string]: string };
+    query: { [key: string]: string };
+}
+
+interface PageRegistration {
+    pluginId: string;
+    path: string;
+    mount: (container: HTMLElement, context: PluginPageContext) => (() => void) | void;
+}
+
 /**
  * A plugin attaching to arbitrary page elements rather than a named slot.
  *
@@ -124,6 +136,59 @@ export class RdioScannerPluginHostService {
     /** Called once by RdioScannerService so plugins can reach it. */
     setApp(app: unknown): void {
         this.app = app;
+    }
+
+    /**
+     * Pages plugins have claimed, by path. Registered at runtime, which is why
+     * the router config is rebuilt rather than declared: a plugin is not known
+     * when the application's routes are defined.
+     */
+    private pages = new Map<string, PageRegistration>();
+
+    private routeInstaller?: (paths: string[]) => void;
+
+    /**
+     * Handed in by the page module, which owns the router and the component that
+     * hosts a plugin page. Keeping it a callback means this service does not
+     * depend on the router or on any routed component, so it stays usable from
+     * the stream overlay and anywhere else that does not have them.
+     */
+    setRouteInstaller(installer: (paths: string[]) => void): void {
+        this.routeInstaller = installer;
+        this.routeInstaller(Array.from(this.pages.keys()));
+    }
+
+    /** Mounts a claimed page into a container. Returns its teardown. */
+    mountPage(path: string, container: HTMLElement, context: PluginPageContext): () => void {
+        const registration = this.pages.get(path);
+        if (!registration) {
+            return () => undefined;
+        }
+
+        let cleanup: (() => void) | void;
+
+        this.safely(() => {
+            cleanup = registration.mount(container, context);
+        });
+
+        return () => {
+            this.safely(() => {
+                if (typeof cleanup === 'function') {
+                    cleanup();
+                }
+            });
+            container.innerHTML = '';
+        };
+    }
+
+    hasPage(path: string): boolean {
+        return this.pages.has(path);
+    }
+
+    /** Rebuilds the router config. No-op before the page module hands one in. */
+    private installRoutes(): void {
+        // Angular renders navigation, so this has to re-enter the zone.
+        this.ngZone.run(() => this.routeInstaller?.(Array.from(this.pages.keys())));
     }
 
     /**
@@ -332,6 +397,20 @@ export class RdioScannerPluginHostService {
         this.loaded.delete(pluginId);
         this.eventHandlers.delete(pluginId);
 
+        // Pages first. A route left pointing at a plugin that is gone renders an
+        // empty page rather than a missing one, which reads as the application
+        // being broken rather than the plugin being off.
+        let droppedPage = false;
+        for (const [path, registration] of Array.from(this.pages.entries())) {
+            if (registration.pluginId === pluginId) {
+                this.pages.delete(path);
+                droppedPage = true;
+            }
+        }
+        if (droppedPage) {
+            this.installRoutes();
+        }
+
         for (const [name, regs] of Array.from(this.slots.entries())) {
             const kept = regs.filter((reg) => reg.pluginId !== pluginId);
             if (kept.length !== regs.length) {
@@ -432,6 +511,41 @@ export class RdioScannerPluginHostService {
                     regs.push({ pluginId, factory });
                     host.slots.set(name, regs);
                     host.notifySlot(name);
+                },
+            },
+
+            /**
+             * A whole page at a URL of the plugin's choosing, rendered with no
+             * application chrome around it — the scanner's peer rather than
+             * something inside it.
+             *
+             * This is what a feature the size of the stream overlay needs to
+             * live in a plugin: its own top-level address, rendering nothing but
+             * itself. A view cannot do it, because a view is always inside the
+             * scanner.
+             */
+            routes: {
+                register(spec: {
+                    path: string;
+                    mount: (container: HTMLElement, context: PluginPageContext) => (() => void) | void;
+                }): void {
+                    const path = String(spec?.path || '').replace(/^\/+|\/+$/g, '');
+
+                    if (!path || typeof spec?.mount !== 'function') {
+                        console.error(`[rdio-scanner] plugin ${pluginId} routes.register() needs a path and a mount function`);
+                        return;
+                    }
+
+                    const existing = host.pages.get(path);
+                    if (existing && existing.pluginId !== pluginId) {
+                        console.error(
+                            `[rdio-scanner] plugin ${pluginId} cannot claim /${path}; ${existing.pluginId} already has it`,
+                        );
+                        return;
+                    }
+
+                    host.pages.set(path, { pluginId, path, mount: spec.mount });
+                    host.installRoutes();
                 },
             },
 
