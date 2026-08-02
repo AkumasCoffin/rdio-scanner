@@ -78,6 +78,17 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	pluginInfo.Set("dataDir", rt.dataDir)
 	rdio.Set("plugin", pluginInfo)
 
+	// --- rdio.server ------------------------------------------------------
+
+	// What a plugin is running inside. Manifests already declare a
+	// minServerVersion, so a plugin can be refused for being too old for the
+	// server — but it had no way to ask at runtime, which is what anything doing
+	// feature detection, or simply displaying the version, actually needs.
+	serverInfo := vm.NewObject()
+	serverInfo.Set("version", Version)
+	serverInfo.Set("apiVersion", CurrentPluginApiVersion)
+	rdio.Set("server", serverInfo)
+
 	// --- rdio.log ---------------------------------------------------------
 
 	logAt := func(level string, message string) {

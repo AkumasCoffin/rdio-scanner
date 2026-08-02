@@ -74,6 +74,10 @@ var pluginCapabilities = []struct {
 	{"plugin", "Identity and directories.", []string{
 		"id", "version", "dir — where this plugin's files live", "dataDir — storage that survives updates",
 	}},
+	{"server", "What this plugin is running inside.", []string{
+		"version — the running rdio version",
+		"apiVersion — the plugin API version this server implements",
+	}},
 	{"log", "Write to the server log. Appears under the Plugins category.", []string{
 		"rdio.log(level, message)", "console.log / warn / error",
 	}},
