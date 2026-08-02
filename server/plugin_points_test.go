@@ -55,6 +55,26 @@ func TestEveryPointIsDispatched(t *testing.T) {
 	}
 }
 
+// TestEveryPointHasAConstantEntry keeps the lookup table below honest.
+//
+// pointConstants is hand-maintained, and a point missing from it makes
+// pointConstantName return "" — which pointIsDispatched reads as "not
+// dispatched". The result is a failure blaming the wrong thing entirely: a point
+// that is wired and working reported as never reached. Checking it directly
+// turns that into a message naming the actual problem.
+func TestEveryPointHasAConstantEntry(t *testing.T) {
+	known := map[string]bool{}
+	for _, value := range pointConstants {
+		known[value] = true
+	}
+
+	for _, point := range pluginPoints {
+		if !known[point] {
+			t.Errorf("point %q has no entry in pointConstants, so the dispatch check cannot see it", point)
+		}
+	}
+}
+
 // TestNoUnknownPointExemptions guards the exemption list itself against drift.
 func TestNoUnknownPointExemptions(t *testing.T) {
 	known := map[string]bool{}
@@ -176,6 +196,7 @@ func pointConstantName(point string) string {
 
 var pointConstants = map[string]string{
 	"PointStartup":          PointStartup,
+	"PointPluginsReady":     PointPluginsReady,
 	"PointShutdown":         PointShutdown,
 	"PointTick":             PointTick,
 	"PointConfigChanged":    PointConfigChanged,

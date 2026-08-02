@@ -833,6 +833,13 @@ func (controller *Controller) Start() error {
 			controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("plugins reread: %v", err))
 		} else if err = controller.Plugins.Start(controller); err != nil {
 			controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("plugins start: %v", err))
+		} else {
+			// Everything is up. Plugins that compose with each other wire up
+			// here rather than in their own startup handler, where the answer to
+			// "what else is running" depends on load order.
+			controller.PluginDispatch.Notify(PointPluginsReady, map[string]any{
+				"count": len(controller.Plugins.Enabled()),
+			})
 		}
 	}
 

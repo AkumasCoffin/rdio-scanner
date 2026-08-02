@@ -31,8 +31,16 @@ import "time"
 
 const (
 	// Lifecycle.
-	PointStartup          = "startup"
-	PointShutdown         = "shutdown"
+	PointStartup = "startup"
+	// PointPluginsReady fires once, after every plugin has started.
+	//
+	// startup fires per plugin as it loads, so a plugin asking what else is
+	// running from there sees only the ones that happened to load first — and
+	// load order is not something a plugin should depend on. Found exactly that
+	// way: a plugin logged "transcripts present: false" at startup and then
+	// called into transcripts successfully a moment later.
+	PointPluginsReady = "plugins.ready"
+	PointShutdown     = "shutdown"
 	PointTick             = "tick"
 	PointConfigChanged    = "config.changed"
 	PointClientConnect    = "client.connect"
@@ -71,6 +79,7 @@ const (
 // rdio.definePoint so they can extend each other without core changes.
 var pluginPoints = []string{
 	PointStartup,
+	PointPluginsReady,
 	PointShutdown,
 	PointTick,
 	PointConfigChanged,

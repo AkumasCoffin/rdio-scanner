@@ -260,7 +260,8 @@ func writeModelsSection(b *strings.Builder) {
 // derivable from its name. Anything missing here shows as a blank cell rather
 // than a wrong description.
 var pointNotes = map[string]string{
-	PointStartup:          "After the plugin loads and its tables exist.",
+	PointStartup:          "After the plugin loads and its tables exist. Fires per plugin, in load order, so this is the wrong place to ask what else is running — use `plugins.ready`.",
+	PointPluginsReady:     "Once, after every plugin has started. Carries `count`. This is where a plugin that composes with another one wires up: `rdio.plugins.list()` and `has()` are only complete here, because `startup` fires while other plugins are still loading.",
 	PointShutdown:         "The server is stopping. Best effort.",
 	PointTick:             "Hourly, alongside the built-in maintenance run.",
 	PointConfigChanged:    "This plugin's settings were saved.",
