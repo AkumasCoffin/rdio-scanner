@@ -45,7 +45,10 @@ func NewDelayer(controller *Controller) *Delayer {
 }
 
 func (delayer *Delayer) Delay(call *Call) {
-	delay := delayer.getDelay(call)
+	// A plugin may override how long this call is held, or release it at once.
+	// Asked before the zero check so a plugin can introduce a delay on a call
+	// rdio would have sent immediately, not only shorten one it was holding.
+	delay := delayer.controller.PluginDispatch.FilterDelay(call, delayer.getDelay(call))
 
 	if delay == 0 {
 		delayer.controller.EmitCallToClients(call)
@@ -62,7 +65,11 @@ func (delayer *Delayer) Delay(call *Call) {
 		return
 	}
 
-	timestamp := delayer.getTimestamp(call)
+	// Built from the delay resolved above rather than by calling getTimestamp,
+	// which would read the configured value again and quietly discard whatever
+	// a plugin decided — leaving call.delay able to turn a hold on and off but
+	// never to change its length.
+	timestamp := call.DateTime.Add(time.Duration(delay) * time.Second)
 	remaining := time.Until(timestamp)
 	if remaining <= 0 {
 		delayer.controller.EmitCallToClients(call)

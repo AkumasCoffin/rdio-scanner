@@ -462,6 +462,13 @@ func (downstreams *Downstreams) Send(controller *Controller, call *Call) {
 		}
 
 		if downstream.HasAccess(call) {
+			// A plugin may hold a call back from one downstream without
+			// affecting the others or the local listeners.
+			if !controller.PluginDispatch.ShouldSendDownstream(call, downstream.Url, downstream.Disabled) {
+				logEvent(LogLevelInfo, "held back by plugin")
+				continue
+			}
+
 			if err := downstream.Send(call); err == nil {
 				logEvent(LogLevelInfo, "success")
 			} else {

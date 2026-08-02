@@ -833,7 +833,14 @@ func (controller *Controller) Start() error {
 			// plugin has already computed reaches the live feed — and Android,
 			// which reads those fields inline off the call payload.
 			controller.ApplyPluginFields(call)
-			controller.Clients.EmitCall(call, controller.Accesses.IsRestricted())
+
+			// Shape the payload once, here, rather than once per listener: the
+			// JSON of a call is the same for everyone receiving it.
+			controller.PluginDispatch.FilterCallPayload(call)
+
+			recipients := controller.Clients.EmitCall(call, controller.Accesses.IsRestricted())
+
+			controller.PluginDispatch.NotifyEmitted(call, recipients)
 		}
 	}()
 	go func() {
@@ -923,10 +930,12 @@ func (controller *Controller) Start() error {
 			select {
 			case client := <-controller.Register:
 				controller.Clients.Add(client)
+				controller.PluginDispatch.NotifyClient(PointClientConnect, client)
 				doClientsCount()
 
 			case client := <-controller.Unregister:
 				controller.Clients.Remove(client)
+				controller.PluginDispatch.NotifyClient(PointClientDisconnect, client)
 				doClientsCount()
 			}
 		}

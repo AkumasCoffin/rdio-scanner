@@ -98,10 +98,6 @@ type PluginRuntime struct {
 	configMu sync.RWMutex
 
 	stopped bool
-	// dispatching guards against a blocking handler causing core to dispatch
-	// back into this same runtime, which would wait on an event loop the
-	// handler is itself occupying.
-	dispatching bool
 }
 
 func NewPluginRuntime(controller *Controller, plugin *Plugin) (*PluginRuntime, error) {
@@ -556,7 +552,7 @@ func (rt *PluginRuntime) CallSync(point string, timeout time.Duration, callable 
 	}
 
 	if !rt.enterDispatch() {
-		return nil, fmt.Errorf("re-entrant dispatch at %s refused", point)
+		return nil, fmt.Errorf("plugin %s is stopped", rt.manifest.Id)
 	}
 	defer rt.leaveDispatch()
 
@@ -604,25 +600,34 @@ func (rt *PluginRuntime) CallSync(point string, timeout time.Duration, callable 
 	}
 }
 
-// enterDispatch reports whether a blocking dispatch may proceed, guarding
-// against the runtime being asked to wait on itself.
+// enterDispatch reports whether a blocking dispatch may proceed.
+//
+// This used to refuse a dispatch whenever the runtime was already handling one,
+// meaning to guard against a handler causing core to dispatch back into the
+// event loop it was itself occupying. It refused far more than that: any two
+// dispatches overlapping in time were treated as re-entrant, however unrelated.
+//
+// That was harmless while every point was an observer fired from one goroutine.
+// It stopped being harmless once auth and delivery became extension points,
+// because those are reached from every connection at once. Two listeners
+// connecting in the same instant meant one of them silently did not get the
+// plugin's configuration — no error to the client, just a different server than
+// the one next to it. Found exactly that way: two clients, one filtered config.
+//
+// Concurrency was never the danger. runOnLoop already funnels every handler onto
+// the single event loop goroutine, so overlapping dispatches queue and run one
+// at a time whether or not anything guards them. Genuine re-entrancy — a handler
+// synchronously provoking a dispatch into its own runtime — would still stall,
+// but CallSync's own deadline bounds that and turns it into a logged failure
+// rather than a hang.
 func (rt *PluginRuntime) enterDispatch() bool {
 	rt.mutex.Lock()
 	defer rt.mutex.Unlock()
 
-	if rt.stopped || rt.dispatching {
-		return false
-	}
-
-	rt.dispatching = true
-	return true
+	return !rt.stopped
 }
 
-func (rt *PluginRuntime) leaveDispatch() {
-	rt.mutex.Lock()
-	rt.dispatching = false
-	rt.mutex.Unlock()
-}
+func (rt *PluginRuntime) leaveDispatch() {}
 
 // awaitPromise resolves a promise by attaching Go-backed callbacks with its own
 // then(), rather than polling its state on a timer. Polling worked but added up

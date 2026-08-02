@@ -256,7 +256,7 @@ var pointNotes = map[string]string{
 	PointShutdown:         "The server is stopping. Best effort.",
 	PointTick:             "Hourly, alongside the built-in maintenance run.",
 	PointConfigChanged:    "This plugin's settings were saved.",
-	PointClientConnect:    "A listener connected.",
+	PointClientConnect:    "A listener connected. Fires once the client is registered, which is after its first configuration has been sent — use `client.config` to change what that first payload contains.",
 	PointClientDisconnect: "A listener disconnected.",
 
 	PointCallReceive:   "A call arrived, before its system or talkgroup has been resolved. Carries audio. Rewrite `system` or `talkgroup` to reroute it, or return `{drop: true}` to discard it before any work is spent.",
@@ -266,12 +266,12 @@ var pointNotes = map[string]string{
 	PointCallStore:     "Last chance before the write. Carries audio, so this is where processing that must be persisted belongs — normalisation, trimming, re-encoding — as well as a final `{drop: true}`.",
 	PointCallStored:    "The call has an id. Where most work belongs.",
 
-	PointCallDelay:      "How long to hold the call before listeners see it.",
-	PointCallEmit:       "Per listener, before delivery. Redact or withhold.",
-	PointCallPayload:    "The JSON shape a client receives.",
-	PointCallEmitted:    "The call has been sent to listeners.",
-	PointDownstreamSend: "Per downstream, before forwarding.",
-	PointClientConfig:   "The configuration payload each client receives.",
+	PointCallDelay:      "How long to hold a call before listeners see it. Carries `delaySeconds`, what rdio's own per-system and per-talkgroup settings produced; return a different number to override it, or 0 to release the call at once. A veto here means \"do not hold it\", not \"do not send it\" — dropping is what the ingest points are for.",
+	PointCallEmit:       "Runs once per listener per call, so it is the hottest point in the server and has a 250ms limit. The native access and livefeed checks have already passed by this point. Return `{drop: true}` to withhold the call from this listener alone. Carries a `client` describing the recipient.",
+	PointCallPayload:    "The JSON a call is delivered as. Runs once per call rather than once per listener, because the payload is the same for everyone receiving it — use `rdio.ws` if you genuinely need to say something different to one client. Returned keys are merged as extra fields, so a plugin cannot remove the id or the audio and leave the webapp with a call it cannot play.",
+	PointCallEmitted:    "A call finished going out to live listeners. Carries `recipients`, how many received it.",
+	PointDownstreamSend: "Runs per downstream per call, before forwarding. Return `{drop: true}` to hold a call back from one downstream without affecting the others or the local listeners.",
+	PointClientConfig:   "The configuration payload one client receives, in `config`. Runs on connect and on reconfiguration, not per call. This is where a theme ships its settings, and where anything varying by listener reaches the webapp. `groups`, `systems` and `tags` are restored if a result drops them, since a client without those has nothing to show and no way to say why.",
 
 	PointAccessCheck: "A listener presented an access code. `provide` runs only when rdio's own table did not recognise it — return `{ident, systems}` to grant, nothing to refuse — so adding an auth plugin never invalidates the accounts already configured. `filter` always runs and may narrow the grant or refuse it with `{drop: true}`.",
 	PointAccessScope: "What systems and talkgroups a session may see. Runs for every listener once, including on a server with no access codes at all, so it is the point for deciding visibility rather than admission. Return `{systems}` to narrow; `{drop: true}` shows the client nothing rather than disconnecting it.",

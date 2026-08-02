@@ -32,14 +32,6 @@ import (
 // nothing ever fired. A plugin could register for it and wait forever with no
 // error and no indication anything was wrong.
 var pointsNotYetDispatched = map[string]string{
-	PointClientConnect:    "phase 7",
-	PointClientDisconnect: "phase 7",
-	PointCallDelay:        "phase 7",
-	PointCallEmit:         "phase 7",
-	PointCallPayload:      "phase 7",
-	PointCallEmitted:      "phase 7",
-	PointDownstreamSend:   "phase 7",
-	PointClientConfig:     "phase 7",
 	PointCallSearch:       "phase 8",
 	PointCallPrune:        "phase 8",
 	PointCallAudio:        "phase 8",
@@ -109,7 +101,11 @@ func pointIsDispatched(sources map[string]string, point string) bool {
 		// filter chain for one point. It has to be listed, because the verbs it
 		// calls internally take a variable rather than the constant, and without
 		// it every point wired through the wrapper would read as unreachable.
-		for _, verb := range []string{"Notify(", "Filter(", "FilterCall(", "Override(", "Provide(", "Emit(", "dispatchSync("} {
+		// FilterCall and NotifyClient are the two wrappers that take the point as
+		// a parameter, so the verbs they call internally see a variable rather
+		// than the constant. Without listing them, every point wired through a
+		// wrapper would read as unreachable.
+		for _, verb := range []string{"Notify(", "NotifyClient(", "Filter(", "FilterCall(", "Override(", "Provide(", "Emit(", "dispatchSync("} {
 			if dispatchesPoint(body, verb, name) {
 				return true
 			}

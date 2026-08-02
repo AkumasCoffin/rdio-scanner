@@ -306,6 +306,14 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 		}
 	}
 
+	// Last word on what this client is configured with. After the plugin-exposed
+	// keys above, because those are a declaration and this is a decision — a
+	// plugin filtering here can see everything the client would have received,
+	// including what other plugins published.
+	if client.Controller != nil {
+		payload = client.Controller.PluginDispatch.FilterClientConfig(payload, client)
+	}
+
 	client.enqueue(&Message{Command: MessageCommandConfig, Payload: payload})
 
 	// Send the listener count immediately so the LCD doesn't show an empty
@@ -386,15 +394,42 @@ func (clients *Clients) CountListeners() int {
 	return count
 }
 
-func (clients *Clients) EmitCall(call *Call, restricted bool) {
+func (clients *Clients) EmitCall(call *Call, restricted bool) (recipients int) {
+	var dispatch *PluginDispatch
+
+	// Collect the recipients under the lock, then release it before anything
+	// slow happens. When no plugin is registered for call.emit this is the
+	// original loop with one extra slice; when one is, the alternative would be
+	// entering a JavaScript runtime once per listener while holding the lock
+	// that connects and disconnects also need.
 	clients.mutex.RLock()
-	defer clients.mutex.RUnlock()
+
+	candidates := make([]*Client, 0, len(clients.Map))
 
 	for c := range clients.Map {
 		if (!restricted || c.Access.HasAccess(call)) && c.Livefeed.IsEnabled(call) {
-			c.enqueue(&Message{Command: MessageCommandCall, Payload: call})
+			candidates = append(candidates, c)
+
+			if dispatch == nil && c.Controller != nil {
+				dispatch = c.Controller.PluginDispatch
+			}
 		}
 	}
+
+	clients.mutex.RUnlock()
+
+	filtering := dispatch != nil && dispatch.Active(PointCallEmit)
+
+	for _, c := range candidates {
+		if filtering && !dispatch.ShouldEmit(call, c) {
+			continue
+		}
+
+		c.enqueue(&Message{Command: MessageCommandCall, Payload: call})
+		recipients++
+	}
+
+	return recipients
 }
 
 func (clients *Clients) EmitConfig(groups *Groups, options *Options, systems *Systems, tags *Tags, restricted bool) {
