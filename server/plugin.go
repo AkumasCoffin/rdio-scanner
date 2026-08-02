@@ -489,7 +489,7 @@ func (plugins *Plugins) startPlugin(controller *Controller, plugin *Plugin) erro
 
 // Stop shuts every running plugin down. Best effort — a plugin that refuses to
 // stop must not hold up server shutdown.
-func (plugins *Plugins) Stop() {
+func (plugins *Plugins) Stop(controller *Controller) {
 	plugins.mutex.Lock()
 	list := append([]*Plugin{}, plugins.List...)
 	plugins.started = false
@@ -497,6 +497,11 @@ func (plugins *Plugins) Stop() {
 
 	for _, plugin := range list {
 		if plugin.runtime != nil {
+			// Deregister before stopping, so nothing can be dispatched into a
+			// runtime that is on its way down.
+			if controller != nil && controller.PluginDispatch != nil {
+				controller.PluginDispatch.Unregister(plugin.PluginId)
+			}
 			plugin.runtime.Stop()
 			plugin.runtime = nil
 		}

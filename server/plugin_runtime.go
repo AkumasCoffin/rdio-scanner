@@ -36,27 +36,6 @@ const pluginCallTimeout = 30 * time.Second
 // because startup should only be registering handlers.
 const pluginStartupTimeout = 15 * time.Second
 
-// Lifecycle events dispatched to plugins.
-const (
-	PluginEventStartup       = "startup"
-	PluginEventShutdown      = "shutdown"
-	PluginEventCallIngested  = "call.ingested"
-	PluginEventCallStored    = "call.stored"
-	PluginEventCallEmitted   = "call.emitted"
-	PluginEventConfigChanged = "config.changed"
-	PluginEventTick          = "tick"
-)
-
-var pluginEvents = map[string]bool{
-	PluginEventStartup:       true,
-	PluginEventShutdown:      true,
-	PluginEventCallIngested:  true,
-	PluginEventCallStored:    true,
-	PluginEventCallEmitted:   true,
-	PluginEventConfigChanged: true,
-	PluginEventTick:          true,
-}
-
 // pluginRoute is one HTTP endpoint a plugin has registered.
 type pluginRoute struct {
 	method   string
@@ -119,6 +98,10 @@ type PluginRuntime struct {
 	configMu sync.RWMutex
 
 	stopped bool
+	// dispatching guards against a blocking handler causing core to dispatch
+	// back into this same runtime, which would wait on an event loop the
+	// handler is itself occupying.
+	dispatching bool
 }
 
 func NewPluginRuntime(controller *Controller, plugin *Plugin) (*PluginRuntime, error) {
@@ -195,7 +178,7 @@ func (rt *PluginRuntime) Start() error {
 		return startErr
 	}
 
-	rt.Emit(PluginEventStartup, nil)
+	rt.Emit(PointStartup, nil)
 
 	return nil
 }
@@ -287,7 +270,7 @@ func (rt *PluginRuntime) Stop() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		rt.dispatchSync(PluginEventShutdown, nil)
+		rt.dispatchSync(PointShutdown, nil)
 	}()
 
 	select {
@@ -518,6 +501,127 @@ func (rt *PluginRuntime) DispatchRoute(route *pluginRoute, request map[string]an
 	case <-time.After(pluginCallTimeout + 5*time.Second):
 		return nil, fmt.Errorf("plugin %s timed out handling %s", rt.manifest.Id, route.path)
 	}
+}
+
+// gojaCallable adapts a JS function to the engine-agnostic shape the dispatch
+// registry works with.
+type gojaCallable struct {
+	fn goja.Callable
+}
+
+func (c *gojaCallable) call(args ...any) (any, error) {
+	// Unused: dispatch always goes through PluginRuntime.CallSync, which owns
+	// the event loop and the watchdog. Present only to satisfy the interface.
+	return nil, fmt.Errorf("plugin callables must be invoked through CallSync")
+}
+
+// EmitTo fires an observer asynchronously. Separate from Emit because the
+// dispatch registry already knows which handler it wants, and re-scanning the
+// plugin's own handler list would run every handler for the point again.
+func (rt *PluginRuntime) EmitTo(point string, payload any) {
+	rt.mutex.RLock()
+	handlers := append([]goja.Callable{}, rt.handlers[point]...)
+	stopped := rt.stopped
+	rt.mutex.RUnlock()
+
+	if stopped || len(handlers) == 0 {
+		return
+	}
+
+	rt.runOnLoop(func(vm *goja.Runtime) {
+		stop := rt.armWatchdog(vm, point, pluginCallTimeout)
+		defer stop()
+
+		value := rt.toValue(vm, payload)
+
+		for _, handler := range handlers {
+			if _, err := handler(goja.Undefined(), value); err != nil {
+				rt.logCallError(point, err)
+			}
+		}
+	})
+}
+
+// CallSync invokes one handler and waits for its result, resolving a returned
+// promise before answering. Used by the blocking verbs.
+//
+// Re-entrancy is refused rather than risked: a handler that causes core to
+// dispatch back into the same plugin would be waiting on an event loop it is
+// itself occupying. That is a deadlock, and the only safe answer is to decline
+// the inner call and let the failure rule treat it as a no-op.
+func (rt *PluginRuntime) CallSync(point string, timeout time.Duration, callable pluginCallable, args ...any) (any, error) {
+	adapter, ok := callable.(*gojaCallable)
+	if !ok {
+		return nil, fmt.Errorf("unknown callable")
+	}
+
+	if !rt.enterDispatch() {
+		return nil, fmt.Errorf("re-entrant dispatch at %s refused", point)
+	}
+	defer rt.leaveDispatch()
+
+	type outcome struct {
+		value any
+		err   error
+	}
+
+	ch := make(chan outcome, 1)
+
+	scheduled := rt.runOnLoop(func(vm *goja.Runtime) {
+		stop := rt.armWatchdog(vm, point, timeout)
+		defer stop()
+
+		converted := make([]goja.Value, len(args))
+		for i, arg := range args {
+			converted[i] = rt.toValue(vm, arg)
+		}
+
+		value, err := adapter.fn(goja.Undefined(), converted...)
+		if err != nil {
+			ch <- outcome{nil, err}
+			return
+		}
+
+		if promise, ok := value.Export().(*goja.Promise); ok {
+			rt.awaitPromise(vm, promise, func(v any, err error) {
+				ch <- outcome{v, err}
+			})
+			return
+		}
+
+		ch <- outcome{value.Export(), nil}
+	})
+
+	if !scheduled {
+		return nil, fmt.Errorf("plugin %s is not running", rt.manifest.Id)
+	}
+
+	select {
+	case out := <-ch:
+		return out.value, out.err
+	case <-time.After(timeout + time.Second):
+		return nil, fmt.Errorf("plugin %s timed out at %s", rt.manifest.Id, point)
+	}
+}
+
+// enterDispatch reports whether a blocking dispatch may proceed, guarding
+// against the runtime being asked to wait on itself.
+func (rt *PluginRuntime) enterDispatch() bool {
+	rt.mutex.Lock()
+	defer rt.mutex.Unlock()
+
+	if rt.stopped || rt.dispatching {
+		return false
+	}
+
+	rt.dispatching = true
+	return true
+}
+
+func (rt *PluginRuntime) leaveDispatch() {
+	rt.mutex.Lock()
+	rt.dispatching = false
+	rt.mutex.Unlock()
 }
 
 // awaitPromise resolves a promise by attaching Go-backed callbacks with its own

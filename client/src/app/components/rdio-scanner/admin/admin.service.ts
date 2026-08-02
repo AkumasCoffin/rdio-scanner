@@ -123,7 +123,7 @@ export interface PluginManifest {
     maxServerVersion?: string;
     main?: string;
     web?: string;
-    permissions?: string[];
+    apiVersion?: number;
     config?: PluginConfigField[];
     tables?: { name: string; columns: unknown[] }[];
 }

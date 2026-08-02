@@ -467,7 +467,7 @@ func (admin *Admin) pluginConfig(w http.ResponseWriter, r *http.Request) {
 			plugin.runtime.config = config
 			plugin.runtime.configMu.Unlock()
 		}
-		plugin.runtime.Emit(PluginEventConfigChanged, nil)
+		plugin.runtime.Emit(PointConfigChanged, nil)
 	}
 
 	admin.BroadcastConfig()

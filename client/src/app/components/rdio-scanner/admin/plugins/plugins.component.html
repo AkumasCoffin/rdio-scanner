@@ -229,7 +229,6 @@
 
             <div class="plugin-flags">
                 <span class="chip warn" *ngIf="!entry.compatible">{{ entry.incompatible }}</span>
-                <span class="chip perm" *ngFor="let permission of entry.manifest.permissions">{{ permission }}</span>
             </div>
         </div>
     </mat-expansion-panel>

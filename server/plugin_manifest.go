@@ -43,34 +43,15 @@ var pluginTableNameRegexp = regexp.MustCompile(`^[a-z][a-z0-9_]{1,31}$`)
 
 var pluginColumnNameRegexp = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
 
-// Permissions a manifest may request. Anything outside this set is rejected at
-// parse time rather than silently ignored, so a typo can't quietly leave a
-// plugin without the access it expects.
-const (
-	PluginPermissionAdminVerify    = "admin-verify"
-	PluginPermissionApikeysVerify  = "apikeys-verify"
-	PluginPermissionCallsRead      = "calls-read"
-	PluginPermissionCallsWrite     = "calls-write"
-	PluginPermissionConfigExpose   = "config-expose"
-	PluginPermissionDownstreams    = "downstreams-forward"
-	PluginPermissionHttp           = "http"
-	PluginPermissionRoutes         = "routes"
-	PluginPermissionRoutesAbsolute = "routes-absolute"
-	PluginPermissionWs             = "ws"
-)
+// CurrentPluginApiVersion is the version of the plugin API this server speaks.
+//
+// A plugin declares which version it was written against. The server refuses
+// one written for a newer API than it knows, and supports one version back, so
+// a plugin keeps working across server updates without being rebuilt.
+const CurrentPluginApiVersion = 1
 
-var pluginPermissions = map[string]bool{
-	PluginPermissionAdminVerify:    true,
-	PluginPermissionApikeysVerify:  true,
-	PluginPermissionCallsRead:      true,
-	PluginPermissionCallsWrite:     true,
-	PluginPermissionConfigExpose:   true,
-	PluginPermissionDownstreams:    true,
-	PluginPermissionHttp:           true,
-	PluginPermissionRoutes:         true,
-	PluginPermissionRoutesAbsolute: true,
-	PluginPermissionWs:             true,
-}
+// MinPluginApiVersion is the oldest API version still accepted.
+const MinPluginApiVersion = 1
 
 // Config field types the admin panel knows how to render. Kept in sync with
 // the form builder in the webapp's plugin config component.
@@ -99,20 +80,29 @@ var pluginColumnTypes = map[string]bool{
 }
 
 type PluginManifest struct {
-	Id               string                `json:"id"`
-	Name             string                `json:"name"`
-	Version          string                `json:"version"`
-	Description      string                `json:"description"`
-	Author           string                `json:"author,omitempty"`
-	License          string                `json:"license,omitempty"`
-	Homepage         string                `json:"homepage,omitempty"`
-	MinServerVersion string                `json:"minServerVersion,omitempty"`
-	MaxServerVersion string                `json:"maxServerVersion,omitempty"`
-	Main             string                `json:"main,omitempty"`
-	Web              string                `json:"web,omitempty"`
-	Permissions      []string              `json:"permissions,omitempty"`
-	Config           []PluginConfigField   `json:"config,omitempty"`
-	Tables           []PluginTable         `json:"tables,omitempty"`
+	Id      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	// ApiVersion is the plugin API this was written against. Absent means 1,
+	// so manifests predating the field keep loading.
+	ApiVersion       int                 `json:"apiVersion,omitempty"`
+	Description      string              `json:"description"`
+	Author           string              `json:"author,omitempty"`
+	License          string              `json:"license,omitempty"`
+	Homepage         string              `json:"homepage,omitempty"`
+	MinServerVersion string              `json:"minServerVersion,omitempty"`
+	MaxServerVersion string              `json:"maxServerVersion,omitempty"`
+	Main             string              `json:"main,omitempty"`
+	Web              string              `json:"web,omitempty"`
+	Config           []PluginConfigField `json:"config,omitempty"`
+	Tables           []PluginTable       `json:"tables,omitempty"`
+
+	// Permissions is accepted and ignored. The plugin system has no permission
+	// gates — a plugin does what it does, and the admin decides at install time
+	// whether to trust it. Kept so manifests written against the earlier design
+	// still load rather than being rejected over a field that no longer means
+	// anything.
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 type PluginConfigField struct {
@@ -222,10 +212,20 @@ func (manifest *PluginManifest) Validate() error {
 		}
 	}
 
-	for _, permission := range manifest.Permissions {
-		if !pluginPermissions[permission] {
-			return fmt.Errorf("plugin %s: unknown permission %q", manifest.Id, permission)
-		}
+	if manifest.ApiVersion == 0 {
+		manifest.ApiVersion = 1
+	}
+	if manifest.ApiVersion > CurrentPluginApiVersion {
+		return fmt.Errorf(
+			"plugin %s needs plugin API version %d; this server speaks %d. Update Rdio Scanner",
+			manifest.Id, manifest.ApiVersion, CurrentPluginApiVersion,
+		)
+	}
+	if manifest.ApiVersion < MinPluginApiVersion {
+		return fmt.Errorf(
+			"plugin %s was written for plugin API version %d, which this server no longer supports",
+			manifest.Id, manifest.ApiVersion,
+		)
 	}
 
 	seenKeys := map[string]bool{}
@@ -349,15 +349,6 @@ func (manifest *PluginManifest) TablePrefix() string {
 // TableName maps a manifest-declared table name onto its real, namespaced name.
 func (manifest *PluginManifest) TableName(declared string) string {
 	return manifest.TablePrefix() + declared
-}
-
-func (manifest *PluginManifest) HasPermission(permission string) bool {
-	for _, p := range manifest.Permissions {
-		if p == permission {
-			return true
-		}
-	}
-	return false
 }
 
 // CompatibleWith reports whether this plugin can run on the given server

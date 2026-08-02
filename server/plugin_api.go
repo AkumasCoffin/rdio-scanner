@@ -53,18 +53,15 @@ func newPluginClientHandle(client *Client) *pluginClientHandle {
 	return &pluginClientHandle{client: client, Id: fmt.Sprintf("%p", client)}
 }
 
-// bindHostApi installs the `rdio` global and a console shim. Every entry point
-// that needs a permission checks it here rather than at call time, so a plugin
-// missing a permission fails loudly at the point of use.
+// bindHostApi installs the `rdio` global and a console shim.
+//
+// There are no permission gates. A plugin does what it does, and the decision
+// about whether to trust it happens once, at install, where a human is present
+// — rather than being asked repeatedly by a mechanism that could only ever have
+// refused things the manifest already declared.
 func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	throw := func(format string, args ...any) {
 		panic(vm.NewGoError(fmt.Errorf(format, args...)))
-	}
-
-	requirePermission := func(permission string) {
-		if !rt.manifest.HasPermission(permission) {
-			throw("plugin %s requires the %q permission in %s to do that", rt.manifest.Id, permission, PluginManifestName)
-		}
 	}
 
 	rdio := vm.NewObject()
@@ -173,7 +170,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	})
 
 	config.Set("expose", func(key string, value goja.Value) goja.Value {
-		requirePermission(PluginPermissionConfigExpose)
 
 		rt.mutex.Lock()
 		rt.exposedConfig[key] = value.Export()
@@ -190,18 +186,50 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 
 	// --- rdio.on / rdio.schedule -----------------------------------------
 
-	rdio.Set("on", func(event string, handler goja.Callable) goja.Value {
-		if !pluginEvents[event] {
-			throw("unknown event %q", event)
-		}
-		if handler == nil {
-			throw("rdio.on(%q) requires a function", event)
-		}
+	// The four verbs. Every way a plugin reaches into the server is one of
+	// these, registered against a named point.
+	register := func(verb pluginVerb) func(string, goja.Callable) goja.Value {
+		return func(point string, handler goja.Callable) goja.Value {
+			if handler == nil {
+				throw("rdio.%s(%q) requires a function", verb, point)
+			}
 
-		rt.mutex.Lock()
-		rt.handlers[event] = append(rt.handlers[event], handler)
-		rt.mutex.Unlock()
+			// Refused loudly rather than accepted and never fired. A handler
+			// registered against a point that does not exist would otherwise
+			// wait forever with no indication anything was wrong.
+			if !rt.controller.PluginDispatch.KnownPoint(point) {
+				throw("rdio.%s: unknown extension point %q", verb, point)
+			}
 
+			if verb == verbOn {
+				rt.mutex.Lock()
+				rt.handlers[point] = append(rt.handlers[point], handler)
+				rt.mutex.Unlock()
+			}
+
+			rt.controller.PluginDispatch.Register(&pluginHandler{
+				pluginId: rt.manifest.Id,
+				verb:     verb,
+				runtime:  rt,
+				callable: &gojaCallable{fn: handler},
+			}, point)
+
+			return goja.Undefined()
+		}
+	}
+
+	rdio.Set("on", register(verbOn))
+	rdio.Set("filter", register(verbFilter))
+	rdio.Set("override", register(verbOverride))
+	rdio.Set("provide", register(verbProvide))
+
+	// Lets a plugin publish an extension point of its own, so plugins can
+	// extend each other without waiting on a core release.
+	rdio.Set("definePoint", func(point string) goja.Value {
+		if strings.TrimSpace(point) == "" {
+			throw("definePoint requires a name")
+		}
+		rt.controller.PluginDispatch.DefinePoint(point)
 		return goja.Undefined()
 	})
 
@@ -277,7 +305,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	calls := vm.NewObject()
 
 	calls.Set("get", func(id int64, options goja.Value) goja.Value {
-		requirePermission(PluginPermissionCallsRead)
 
 		call, err := rt.controller.Calls.GetCall(uint(id), rt.controller.Database)
 		if err != nil {
@@ -300,7 +327,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	})
 
 	calls.Set("search", func(options goja.Value) goja.Value {
-		requirePermission(PluginPermissionCallsRead)
 
 		results, err := rt.searchCalls(options)
 		if err != nil {
@@ -311,7 +337,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	})
 
 	calls.Set("update", func(id int64, fields goja.Value) goja.Value {
-		requirePermission(PluginPermissionCallsWrite)
 
 		// Deliberately narrow. A plugin's own data belongs in its own tables;
 		// this exists so a plugin can correct core metadata it is authoritative
@@ -354,7 +379,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	})
 
 	calls.Set("findId", func(system int64, talkgroup int64, dateTime string) goja.Value {
-		requirePermission(PluginPermissionCallsRead)
 
 		id, err := rt.controller.PluginFindCallId(uint(system), uint(talkgroup), dateTime)
 		if err != nil {
@@ -384,7 +408,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	apikeys := vm.NewObject()
 
 	apikeys.Set("verify", func(key string, system int64, talkgroup int64) goja.Value {
-		requirePermission(PluginPermissionApikeysVerify)
 
 		valid, ident := rt.controller.PluginVerifyApikey(key, uint(system), uint(talkgroup))
 
@@ -398,7 +421,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	admin := vm.NewObject()
 
 	admin.Set("verifyToken", func(token string) goja.Value {
-		requirePermission(PluginPermissionAdminVerify)
 		return vm.ToValue(rt.controller.PluginVerifyAdminToken(token))
 	})
 
@@ -409,7 +431,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	downstreams := vm.NewObject()
 
 	downstreams.Set("forward", func(spec goja.Value) goja.Value {
-		requirePermission(PluginPermissionDownstreams)
 
 		options, ok := spec.Export().(map[string]any)
 		if !ok {
@@ -475,12 +496,10 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	httpObj := vm.NewObject()
 
 	httpObj.Set("request", func(spec goja.Value) goja.Value {
-		requirePermission(PluginPermissionHttp)
 		return rt.httpPromise(vm, spec, false)
 	})
 
 	httpObj.Set("multipart", func(spec goja.Value) goja.Value {
-		requirePermission(PluginPermissionHttp)
 		return rt.httpPromise(vm, spec, true)
 	})
 
@@ -491,7 +510,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	routes := vm.NewObject()
 
 	routes.Set("register", func(method string, path string, handler goja.Callable) goja.Value {
-		requirePermission(PluginPermissionRoutes)
 		if handler == nil {
 			throw("routes.register requires a function")
 		}
@@ -508,7 +526,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	})
 
 	routes.Set("registerAbsolute", func(path string, handler goja.Callable) goja.Value {
-		requirePermission(PluginPermissionRoutesAbsolute)
 		if handler == nil {
 			throw("routes.registerAbsolute requires a function")
 		}
@@ -541,7 +558,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	ws := vm.NewObject()
 
 	ws.Set("on", func(command string, handler goja.Callable) goja.Value {
-		requirePermission(PluginPermissionWs)
 		if handler == nil {
 			throw("ws.on requires a function")
 		}
@@ -559,7 +575,6 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	})
 
 	ws.Set("emit", func(filter goja.Value, command string, payload goja.Value) goja.Value {
-		requirePermission(PluginPermissionWs)
 
 		command = strings.ToUpper(strings.TrimSpace(command))
 		if reservedWsCommands[command] {

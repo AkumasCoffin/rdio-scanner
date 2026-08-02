@@ -44,9 +44,10 @@ type Controller struct {
 	FFMpeg      *FFMpeg
 	Groups      *Groups
 	Logs        *Logs
-	Options     *Options
-	Plugins     *Plugins
-	PluginStore *PluginStore
+	Options        *Options
+	Plugins        *Plugins
+	PluginDispatch *PluginDispatch
+	PluginStore    *PluginStore
 	Scheduler   *Scheduler
 	Stats       *Stats
 	Systems     *Systems
@@ -116,6 +117,7 @@ func NewController(config *Config) *Controller {
 	controller.PublicApi = NewPublicApi(controller)
 	controller.Database = NewDatabase(config)
 	controller.Delayer = NewDelayer(controller)
+	controller.PluginDispatch = NewPluginDispatch(controller)
 	controller.PluginStore = NewPluginStore(controller)
 	controller.pluginFeatures = NewPluginFeatureCache()
 	controller.Scheduler = NewScheduler(controller)
@@ -428,7 +430,7 @@ func (controller *Controller) IngestCall(call *Call) {
 	// which also means a plugin cannot reliably mutate what gets stored. That
 	// tradeoff is deliberate: ingest throughput matters more than giving
 	// plugins a synchronous veto.
-	controller.Plugins.EmitEvent(PluginEventCallIngested, pluginCallValue(call, false))
+	controller.PluginDispatch.Notify(PointCallReceive, pluginCallValue(call, false))
 
 	if id, err = controller.Calls.WriteCall(call, controller.Database); err == nil {
 		call.Id = id
@@ -460,7 +462,7 @@ func (controller *Controller) IngestCall(call *Call) {
 		// Now that the call has an id, plugins can key their own tables to it.
 		// This is the hook most plugins actually want, and it is where anything
 		// that enriches a call — transcription included — now happens.
-		controller.Plugins.EmitEvent(PluginEventCallStored, pluginCallValue(call, false))
+		controller.PluginDispatch.Notify(PointCallStored, pluginCallValue(call, false))
 
 		controller.Delayer.Delay(call)
 
@@ -868,7 +870,7 @@ func (controller *Controller) Terminate() {
 
 	// Stop plugins before closing the database — a shutdown handler that wants
 	// to flush state needs its tables to still be reachable.
-	controller.Plugins.Stop()
+	controller.Plugins.Stop(controller)
 
 	if err := controller.Database.Sql.Close(); err != nil {
 		log.Println(err)

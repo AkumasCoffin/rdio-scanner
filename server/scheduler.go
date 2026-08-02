@@ -90,7 +90,7 @@ func (scheduler *Scheduler) run() {
 	// Plugins share the maintenance tick rather than each running their own
 	// timer, so periodic plugin work lands on a predictable schedule alongside
 	// pruning instead of scattered across the hour.
-	scheduler.Controller.Plugins.EmitEvent(PluginEventTick, nil)
+	scheduler.Controller.PluginDispatch.Notify(PointTick, nil)
 }
 
 func (scheduler *Scheduler) Start() error {

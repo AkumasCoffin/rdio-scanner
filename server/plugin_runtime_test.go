@@ -184,7 +184,7 @@ func TestPluginManifestValidation(t *testing.T) {
 		{"traversing main", `{"id":"ok","name":"x","version":"1","description":"d","main":"../../etc/passwd"}`},
 		{"absolute main", `{"id":"ok","name":"x","version":"1","description":"d","main":"/etc/passwd"}`},
 		{"no entry point", `{"id":"ok","name":"x","version":"1","description":"d"}`},
-		{"unknown permission", `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","permissions":["root"]}`},
+		{"future api version", `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","apiVersion":99}`},
 		{"reserved table", `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","tables":[{"name":"config","columns":[{"name":"a","type":"int"}]}]}`},
 		{"unknown column type", `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","tables":[{"name":"t","columns":[{"name":"a","type":"money"}]}]}`},
 		{"varchar without length", `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","tables":[{"name":"t","columns":[{"name":"a","type":"varchar"}]}]}`},
@@ -211,8 +211,16 @@ func TestPluginManifestValidation(t *testing.T) {
 		t.Fatalf("table name was %q, expected plugin_my_plugin_notes", got)
 	}
 
-	if !manifest.HasPermission("http") || manifest.HasPermission("ws") {
-		t.Fatal("permission checks are wrong")
+	// A manifest with no apiVersion is treated as version 1, so plugins written
+	// before the field existed keep loading.
+	if manifest.ApiVersion != 1 {
+		t.Fatalf("apiVersion defaulted to %d, expected 1", manifest.ApiVersion)
+	}
+
+	// permissions is accepted and ignored rather than rejected, so a manifest
+	// written against the earlier design still loads.
+	if len(manifest.Permissions) != 1 {
+		t.Fatal("a legacy permissions field should be accepted and carried, not dropped or rejected")
 	}
 
 	if v, _ := manifest.DefaultConfig()["k"].(string); v != "v" {
