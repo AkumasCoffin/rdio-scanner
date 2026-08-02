@@ -28,7 +28,7 @@ import {
 } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 
-import { RdioScannerPluginHostService } from '../../components/rdio-scanner/plugins/plugin-host.service';
+import { RdioScannerPluginHostService } from './plugin-host.service';
 
 /**
  * Hosts a whole page owned by a plugin, at a URL the plugin chose.

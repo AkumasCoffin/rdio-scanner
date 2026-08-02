@@ -68,6 +68,34 @@ interface WsRegistration {
     handler: (payload: unknown) => void;
 }
 
+/**
+ * The path the browser was asked for, captured when this module is first
+ * evaluated — which is while the bundle loads, before Angular bootstraps and so
+ * before the router can rewrite it.
+ *
+ * It has to be captured this early. Plugin code loads asynchronously, after the
+ * server's config arrives, by which point the router has already resolved the
+ * initial URL. A path only a plugin claims matches nothing at that moment, falls
+ * through the catch-all to the home page, and the address is rewritten — so by
+ * the time the plugin registers its route, the path it was opened at is gone.
+ */
+const INITIAL_PATH = (() => {
+    if (typeof window === 'undefined' || !window.location) {
+        return '';
+    }
+
+    let path = window.location.pathname || '';
+
+    // Strip the base href when the app is served under a sub-path, since routes
+    // are relative to it.
+    const base = document.querySelector('base')?.getAttribute('href') || '/';
+    if (base !== '/' && path.startsWith(base)) {
+        path = path.slice(base.length);
+    }
+
+    return path.replace(/^\/+|\/+$/g, '');
+})();
+
 /** What a plugin page is handed when the router lands on it. */
 export interface PluginPageContext {
     params: { [key: string]: string };
@@ -146,6 +174,22 @@ export class RdioScannerPluginHostService {
     private pages = new Map<string, PageRegistration>();
 
     private routeInstaller?: (paths: string[]) => void;
+
+    /**
+     * The path this page was opened at, before the router touched it.
+     *
+     * Read once, by the route installer, so a page claimed after the router
+     * already gave up on it can still be shown. Cleared afterwards: it must
+     * happen on the first claim only, or disabling and re-enabling a plugin
+     * would drag whoever is browsing back to that page.
+     */
+    takeInitialPath(): string {
+        const path = this.initialPath;
+        this.initialPath = '';
+        return path;
+    }
+
+    private initialPath = INITIAL_PATH;
 
     /**
      * Handed in by the page module, which owns the router and the component that
