@@ -105,6 +105,13 @@ var pluginCapabilities = []struct {
 		"base64Encode(data)", "base64Decode(text)", "hexEncode(data)", "hexDecode(text)",
 		"randomBytes(n)", "uuid()",
 	}},
+	{"audio", "Decode, analyse and re-encode call audio. Needs ffmpeg installed.", []string{
+		"probe(data) — duration, codec, sample rate, channels",
+		"decode(data, {sampleRate, channels}) — 16-bit PCM as an Int16Array",
+		"encode(samples, {sampleRate, channels, format})",
+		"convert(data, {format, bitrate, sampleRate, normalize, filter})",
+		"goertzel(samples, frequencies, {sampleRate, windowSize}) — energy per window, for tone detection",
+	}},
 	{"http", "Outbound requests, including multipart uploads.", []string{
 		"request(options)", "multipart(options)",
 	}},
