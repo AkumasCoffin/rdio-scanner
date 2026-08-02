@@ -138,13 +138,15 @@ func TestPluginTableRewriting(t *testing.T) {
 		t.Fatalf("column name was mangled: %s", rewritten)
 	}
 
-	if _, err := pluginDb.rewrite("select * from `rdioScannerCalls`"); err == nil {
-		t.Fatal("a plugin was allowed to read a core table directly")
+	// Core tables are reachable and pass through untouched. A plugin can read
+	// and write anything in the database; the prefix mapping is a convenience
+	// for its own tables, not a fence around everyone else's.
+	core, err := pluginDb.rewrite("select * from `rdioScannerCalls`")
+	if err != nil {
+		t.Fatalf("a core table was refused: %v", err)
 	}
-
-	// Case is not a way around the guard.
-	if _, err := pluginDb.rewrite("select * from `rdioscannercalls`"); err == nil {
-		t.Fatal("the core table guard was bypassed by lowercasing the name")
+	if !bytes.Contains([]byte(core), []byte("`rdioScannerCalls`")) {
+		t.Fatalf("a core table name was rewritten: %s", core)
 	}
 
 	// The config table is host-owned but legitimately addressable.
@@ -153,21 +155,28 @@ func TestPluginTableRewriting(t *testing.T) {
 	}
 }
 
-// TestPluginStatementKinds checks that the read path cannot be used to write.
+// TestPluginStatementKinds checks the one remaining guard on rdio.db, which
+// exists to prevent confusion rather than to withhold capability: a write sent
+// to the read path would run and return nothing, looking like a query that
+// matched no rows.
 func TestPluginStatementKinds(t *testing.T) {
 	manifest := &PluginManifest{Id: "my-plugin", Tables: []PluginTable{{Name: "notes"}}}
 	pluginDb := NewPluginDb(nil, manifest)
 
 	if _, err := pluginDb.Query("delete from `notes`", nil); err == nil {
-		t.Fatal("a write was accepted through the read path")
+		t.Fatal("a write through the read path should be refused with an explanation")
 	}
 
-	if _, err := pluginDb.Exec("drop table `notes`", nil); err == nil {
-		t.Fatal("DDL was accepted through the write path")
-	}
-
-	if _, err := pluginDb.Exec("select 1 from `notes`", nil); err == nil {
-		t.Fatal("a read was accepted through the write path")
+	// Everything else is allowed, including schema changes. Rewriting is all
+	// that happens here — these do not touch a database.
+	for _, statement := range []string{
+		"drop table `notes`",
+		"create table `extra` (`a` int)",
+		"alter table `notes` add column `b` text",
+	} {
+		if _, err := pluginDb.rewrite(statement); err != nil {
+			t.Errorf("%q was refused: %v", statement, err)
+		}
 	}
 }
 

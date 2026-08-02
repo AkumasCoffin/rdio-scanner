@@ -42,15 +42,16 @@ var pluginTableIdentifier = regexp.MustCompile("`([a-zA-Z_][a-zA-Z0-9_]*)`")
 // be held to the statement kinds each is meant for.
 var pluginSqlLeadingKeyword = regexp.MustCompile(`^\s*([a-zA-Z]+)`)
 
+// Statements that return rows, so query and exec can give a useful error when
+// one is used for the other's job. Neither list restricts what may be run —
+// anything not named here is allowed through to whichever method was called.
 var pluginQueryStatements = map[string]bool{
-	"select": true,
-	"with":   true,
-}
-
-var pluginExecStatements = map[string]bool{
-	"delete": true,
-	"insert": true,
-	"update": true,
+	"select":  true,
+	"with":    true,
+	"pragma":  true,
+	"explain": true,
+	"show":    true,
+	"values":  true,
 }
 
 // PluginDb is the database handle handed to one plugin. Every statement is
@@ -79,17 +80,17 @@ func NewPluginDb(database *Database, manifest *PluginManifest) *PluginDb {
 }
 
 // rewrite maps every backtick-quoted identifier that names one of this plugin's
-// declared tables onto its namespaced form, and refuses identifiers that look
-// like a table the plugin doesn't own.
+// declared tables onto its namespaced form.
 //
-// Column names are also backtick-quoted, so the rule is: an identifier that
-// matches a declared table name gets rewritten; an identifier that matches a
-// known core table is rejected outright; anything else is assumed to be a
-// column and left alone. Rejecting core tables by name is the part that stops
-// a plugin reaching into rdioScannerCalls directly.
+// Nothing is refused. A plugin may read and write any table in the database,
+// core's included — a query it could not run here it could run by other means,
+// and pretending otherwise only made the boundary look stronger than it was.
+// The prefix mapping stays because it is a convenience: a plugin writes the
+// table name it declared and does not have to know or repeat its own namespace.
+//
+// Column names are backtick-quoted too, so the rule is simply: an identifier
+// matching a declared table name is rewritten, anything else is left alone.
 func (pluginDb *PluginDb) rewrite(query string) (string, error) {
-	var rejected string
-
 	rewritten := pluginTableIdentifier.ReplaceAllStringFunc(query, func(match string) string {
 		name := strings.Trim(match, "`")
 
@@ -97,40 +98,10 @@ func (pluginDb *PluginDb) rewrite(query string) (string, error) {
 			return "`" + pluginDb.prefix + name + "`"
 		}
 
-		if pluginReservedTables[strings.ToLower(name)] {
-			if rejected == "" {
-				rejected = name
-			}
-		}
-
 		return match
 	})
 
-	if rejected != "" {
-		return "", fmt.Errorf("access to table %q is not permitted; plugins may only use their own declared tables", rejected)
-	}
-
 	return rewritten, nil
-}
-
-// pluginReservedTables are the core tables a plugin must never touch directly.
-// Reading calls goes through rdio.calls, which applies the permission checks.
-var pluginReservedTables = map[string]bool{
-	"rdioscanneraccesses":    true,
-	"rdioscannerapikeys":     true,
-	"rdioscannercalls":       true,
-	"rdioscannerconfigs":     true,
-	"rdioscannerdelayed":     true,
-	"rdioscannerdirwatches":  true,
-	"rdioscannerdownstreams": true,
-	"rdioscannergroups":      true,
-	"rdioscannerlogs":        true,
-	"rdioscannermeta":        true,
-	"rdioscannerplugins":     true,
-	"rdioscannersystems":     true,
-	"rdioscannertags":        true,
-	"rdioscannertalkgroups":  true,
-	"rdioscannerunits":       true,
 }
 
 func leadingKeyword(query string) string {
@@ -141,11 +112,15 @@ func leadingKeyword(query string) string {
 	return strings.ToLower(m[1])
 }
 
-// Query runs a read. Restricted to select/with so a plugin can't smuggle a
-// write through the read path and skip the exec checks.
+// Query runs a statement that returns rows.
+//
+// A write sent here would run but return nothing, which looks like a query that
+// found no rows rather than a mistake — so it is rejected with an explanation
+// instead. That is a guard against confusion, not against capability: the same
+// statement works through Exec.
 func (pluginDb *PluginDb) Query(query string, args []any) ([]map[string]any, error) {
-	if !pluginQueryStatements[leadingKeyword(query)] {
-		return nil, fmt.Errorf("query only accepts select statements; use exec for writes")
+	if keyword := leadingKeyword(query); keyword != "" && !pluginQueryStatements[keyword] {
+		return nil, fmt.Errorf("%s returns no rows; use rdio.db.exec for it", strings.ToUpper(keyword))
 	}
 
 	rewritten, err := pluginDb.rewrite(query)
@@ -194,13 +169,12 @@ func (pluginDb *PluginDb) Query(query string, args []any) ([]map[string]any, err
 	return results, rows.Err()
 }
 
-// Exec runs a write. DDL is deliberately excluded: schema comes from the
-// manifest so the host knows what exists and can namespace and clean it up.
+// Exec runs any statement, including schema changes.
+//
+// Declaring tables in the manifest is still the better path — the server then
+// creates them, namespaces them, and knows to remove them on purge — but a
+// plugin that needs to build schema at runtime is not stopped from doing so.
 func (pluginDb *PluginDb) Exec(query string, args []any) (int64, error) {
-	if !pluginExecStatements[leadingKeyword(query)] {
-		return 0, fmt.Errorf("exec only accepts insert, update and delete statements; declare tables in %s instead", PluginManifestName)
-	}
-
 	rewritten, err := pluginDb.rewrite(query)
 	if err != nil {
 		return 0, err

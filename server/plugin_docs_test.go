@@ -84,6 +84,74 @@ func TestEveryModelIsDescribed(t *testing.T) {
 	}
 }
 
+// TestEveryCapabilityIsDocumented reads the bindings straight out of the source
+// and fails if one is not in the capability catalogue.
+//
+// This is the check that would have caught the previous drift: six capabilities
+// were bound and working while being documented nowhere at all, because the
+// bindings and the documentation were two lists maintained by different hands
+// at different times.
+func TestEveryCapabilityIsDocumented(t *testing.T) {
+	documented := map[string]bool{}
+	for _, capability := range pluginCapabilities {
+		documented[capability.name] = true
+	}
+
+	// Every rdio.Set("name", ...) anywhere in the bindings is something a
+	// plugin can reach, so every one has to appear in the catalogue.
+	for name, file := range boundCapabilities(t) {
+		if !documented[name] {
+			t.Errorf("rdio.%s is bound in %s but missing from pluginCapabilities, so it appears in no documentation", name, file)
+		}
+	}
+}
+
+// boundCapabilities finds every rdio.Set("x", …) across the plugin source,
+// mapping the capability name to the file that binds it. Scanning only one file
+// would let a binding added elsewhere escape the check — which is exactly what
+// happened the first time this test ran.
+func boundCapabilities(t *testing.T) map[string]string {
+	t.Helper()
+
+	found := map[string]string{}
+
+	for file, body := range readServerSources(t) {
+		if !strings.HasPrefix(file, "plugin_") || strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+
+		for _, line := range strings.Split(body, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, `rdio.Set("`) {
+				continue
+			}
+
+			rest := trimmed[len(`rdio.Set("`):]
+			end := strings.Index(rest, `"`)
+			if end < 0 {
+				continue
+			}
+
+			found[rest[:end]] = file
+		}
+	}
+
+	return found
+}
+
+// TestNoPhantomCapabilities is the other direction: something documented that
+// is not actually bound, which is how a reference ends up describing a feature
+// that does nothing.
+func TestNoPhantomCapabilities(t *testing.T) {
+	bound := boundCapabilities(t)
+
+	for _, capability := range pluginCapabilities {
+		if _, ok := bound[capability.name]; !ok {
+			t.Errorf("pluginCapabilities documents rdio.%s, but nothing binds it", capability.name)
+		}
+	}
+}
+
 // TestModelNamesAreUnique guards against a copy-paste shadowing an entity.
 func TestModelNamesAreUnique(t *testing.T) {
 	seen := map[string]bool{}

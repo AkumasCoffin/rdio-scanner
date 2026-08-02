@@ -51,10 +51,99 @@ func writePluginDocs(path string) error {
 		"updates without being rebuilt.\n\n")
 
 	writeVerbsSection(&b)
+	writeCapabilitiesSection(&b)
 	writePointsSection(&b)
 	writeModelsSection(&b)
 
 	return os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+// pluginCapabilities describes each top-level rdio.* namespace.
+//
+// Unlike points and models these cannot be derived — a Go closure bound into a
+// runtime does not carry its JavaScript signature — so this is written by hand.
+// What stops it drifting is TestEveryCapabilityIsDocumented, which reads the
+// bindings out of plugin_api.go and fails if one is missing here. That is the
+// check that would have caught the six capabilities the review found working
+// but documented nowhere.
+var pluginCapabilities = []struct {
+	name    string
+	summary string
+	methods []string
+}{
+	{"plugin", "Identity and directories.", []string{
+		"id", "version", "dir — where this plugin's files live", "dataDir — storage that survives updates",
+	}},
+	{"log", "Write to the server log. Appears under the Plugins category.", []string{
+		"rdio.log(level, message)", "console.log / warn / error",
+	}},
+	{"config", "This plugin's settings, and values published to the webapp.", []string{
+		"get(key)", "getAll()", "set(key, value)", "expose(key, value)",
+	}},
+	{"db", "SQL against any table in the database, core's included.", []string{
+		"query(sql, args)", "exec(sql, args)", "queryAsync(sql, args)", "execAsync(sql, args)",
+	}},
+	{"models", "Read and write the server's configuration. See below.", nil},
+	{"calls", "Read calls and audio, and publish fields onto them.", []string{
+		"get(id, {audio})", "search(options)", "findId(system, talkgroup, dateTime)",
+		"update(id, fields)", "extendField(spec)",
+	}},
+	{"search", "Make one of your columns findable through the normal call search.", []string{
+		"extend(spec)",
+	}},
+	{"systems", "The configured systems and talkgroups.", []string{"list()"}},
+	{"fs", "The filesystem. Relative paths resolve inside this plugin's data directory.", []string{
+		"readFile(path)", "readText(path)", "writeFile(path, data)", "appendFile(path, data)",
+		"exists(path)", "stat(path)", "list(path)", "mkdir(path)", "remove(path)",
+		"rename(from, to)", "resolve(path)", "tempDir()",
+	}},
+	{"exec", "Run a program. Returns a promise with its exit code and output.", []string{
+		"rdio.exec(name, args, options)",
+	}},
+	{"crypto", "Hashing and encoding, which JavaScript does not provide.", []string{
+		"hash(algorithm, data)", "hmac(algorithm, key, data)",
+		"base64Encode(data)", "base64Decode(text)", "hexEncode(data)", "hexDecode(text)",
+		"randomBytes(n)", "uuid()",
+	}},
+	{"http", "Outbound requests, including multipart uploads.", []string{
+		"request(options)", "multipart(options)",
+	}},
+	{"routes", "Serve HTTP endpoints.", []string{
+		"register(method, path, handler)", "registerAbsolute(path, handler)",
+	}},
+	{"ws", "Your own websocket commands, over the connection clients already have.", []string{
+		"on(command, handler)", "emit(filter, command, payload)",
+	}},
+	{"apikeys", "Validate an API key someone handed you.", []string{"verify(key, system, talkgroup)"}},
+	{"admin", "Validate an admin session token.", []string{"verifyToken(token)"}},
+	{"downstreams", "Forward to downstream servers without handling their keys.", []string{"forward(spec)"}},
+	{"capabilities", "Advertise a feature to peer servers via /api/capabilities.", []string{"advertise(name)"}},
+	{"schedule", "Run something on an interval.", []string{"rdio.schedule(intervalMs, fn)"}},
+	{"definePoint", "Publish an extension point of your own.", []string{"rdio.definePoint(name)"}},
+	{"on", "Observe an extension point.", nil},
+	{"filter", "Modify or veto at an extension point.", nil},
+	{"override", "Replace the server's behaviour at an extension point.", nil},
+	{"provide", "Supply something the server does not have.", nil},
+}
+
+func writeCapabilitiesSection(b *strings.Builder) {
+	b.WriteString("## What a plugin can reach\n\n")
+	b.WriteString("Nothing here is gated. A plugin does what it does, and the decision about\n")
+	b.WriteString("whether to trust it happens once, at install.\n\n")
+
+	for _, capability := range pluginCapabilities {
+		if len(capability.methods) == 0 {
+			continue
+		}
+
+		b.WriteString("### `rdio." + capability.name + "`\n\n")
+		b.WriteString(capability.summary + "\n\n")
+
+		for _, method := range capability.methods {
+			b.WriteString("- `" + method + "`\n")
+		}
+		b.WriteString("\n")
+	}
 }
 
 func writeVerbsSection(b *strings.Builder) {
