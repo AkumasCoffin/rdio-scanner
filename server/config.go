@@ -117,7 +117,20 @@ func NewConfig() *Config {
 	flag.StringVar(&config.SslCertFile, "ssl_cert_file", "", "ssl PEM formated certificate")
 	flag.StringVar(&config.SslKeyFile, "ssl_key_file", "", "ssl PEM formated key")
 	flag.StringVar(&config.SslListen, "ssl_listen", "", "listening address for ssl")
+	pluginDocs := flag.String("plugin_docs", "", "write the plugin API reference to this file, then exit")
 	flag.Parse()
+
+	// Emitted from the same declarations the server runs on, so the reference
+	// cannot describe something that is not there. Runs before the base
+	// directory check because writing documentation needs no data directory.
+	if *pluginDocs != "" {
+		if err := writePluginDocs(*pluginDocs); err != nil {
+			fmt.Printf("error: %s\n", err.Error())
+			os.Exit(-1)
+		}
+		fmt.Printf("%s written\n", *pluginDocs)
+		os.Exit(0)
+	}
 
 	if !config.isBaseDirWritable() {
 		log.Fatalf("no write permissions in %s", config.BaseDir)

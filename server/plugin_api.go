@@ -390,6 +390,60 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 
 	rdio.Set("calls", calls)
 
+	// --- rdio.models ------------------------------------------------------
+
+	models := vm.NewObject()
+
+	for i := range pluginModels {
+		name := pluginModels[i].name
+
+		entity := vm.NewObject()
+
+		entity.Set("list", func() goja.Value {
+			entries, err := rt.controller.modelList(name)
+			if err != nil {
+				throw("models.%s.list: %v", name, err)
+			}
+			return vm.ToValue(entries)
+		})
+
+		entity.Set("get", func(key goja.Value) goja.Value {
+			entry, err := rt.controller.modelGet(name, key.Export())
+			if err != nil {
+				throw("models.%s.get: %v", name, err)
+			}
+			if entry == nil {
+				return goja.Null()
+			}
+			return vm.ToValue(entry)
+		})
+
+		entity.Set("set", func(value goja.Value) goja.Value {
+			entry, ok := value.Export().(map[string]any)
+			if !ok {
+				throw("models.%s.set requires an object", name)
+			}
+			if err := rt.controller.modelSet(name, entry); err != nil {
+				throw("models.%s.set: %v", name, err)
+			}
+			// Configuration changed, so listeners need the new view.
+			rt.controller.EmitConfig()
+			return goja.Undefined()
+		})
+
+		entity.Set("remove", func(key goja.Value) goja.Value {
+			if err := rt.controller.modelRemove(name, key.Export()); err != nil {
+				throw("models.%s.remove: %v", name, err)
+			}
+			rt.controller.EmitConfig()
+			return goja.Undefined()
+		})
+
+		models.Set(name, entity)
+	}
+
+	rdio.Set("models", models)
+
 	// --- rdio.systems -----------------------------------------------------
 
 	systems := vm.NewObject()
