@@ -267,8 +267,29 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
         this.configDraft = { ...(plugin.config || {}) };
     }
 
+    /**
+     * Whether a password field has a stored value. The value itself is blanked
+     * before it reaches us, so without this the form cannot tell a configured
+     * key from an empty one and looks like the setting was lost.
+     */
+    secretIsSet(plugin: AdminPlugin, field: PluginConfigField): boolean {
+        return !!plugin.configSet && !!plugin.configSet[field.key];
+    }
+
     configFields(plugin: AdminPlugin): PluginConfigField[] {
-        return plugin.manifest?.config || [];
+        const fields = plugin.manifest?.config || [];
+
+        // A field can declare that it only applies when another field holds a
+        // particular value — one provider's credentials, say. Hiding is purely
+        // visual: the draft still carries the value, so saving while a field is
+        // hidden leaves it exactly as it was.
+        return fields.filter((field) => {
+            if (!field.showIf) return true;
+
+            const current = this.configDraft[field.showIf.key];
+
+            return field.showIf.equals.some((value) => value === current);
+        });
     }
 
     async saveConfig(plugin: AdminPlugin): Promise<void> {

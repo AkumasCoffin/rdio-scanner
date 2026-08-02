@@ -29,6 +29,11 @@ import (
 type installedPluginView struct {
 	*Plugin
 	Config map[string]any `json:"config,omitempty"`
+	// ConfigSet names the password fields that do have a stored value. The
+	// value itself never leaves the server, so without this the form cannot
+	// tell a configured API key from an empty one and looks like the setting
+	// was lost.
+	ConfigSet map[string]bool `json:"configSet,omitempty"`
 	// RestartRequired is true when the plugin's enabled state doesn't match
 	// what is actually loaded, which is the whole reason the UI shows a
 	// restart banner.
@@ -65,7 +70,7 @@ func (admin *Admin) PluginsHandler(w http.ResponseWriter, r *http.Request) {
 
 		if plugin.Manifest != nil {
 			if config, err := ReadPluginConfig(controller.Database, plugin.Manifest); err == nil {
-				view.Config = redactPluginConfig(plugin.Manifest, config)
+				view.Config, view.ConfigSet = redactPluginConfig(plugin.Manifest, config)
 			}
 		}
 
@@ -94,8 +99,13 @@ func (admin *Admin) PluginsHandler(w http.ResponseWriter, r *http.Request) {
 // redactPluginConfig blanks values the manifest declared as passwords, so a
 // stored API key is never sent to the browser. The admin form treats an empty
 // password field as "unchanged".
-func redactPluginConfig(manifest *PluginManifest, config map[string]any) map[string]any {
+//
+// The second return names the password fields that were blanked because they
+// held a value, which is the only way the form can show that a key is set
+// without the key itself crossing the wire.
+func redactPluginConfig(manifest *PluginManifest, config map[string]any) (map[string]any, map[string]bool) {
 	redacted := map[string]any{}
+	set := map[string]bool{}
 
 	secrets := map[string]bool{}
 	for i := range manifest.Config {
@@ -108,13 +118,14 @@ func redactPluginConfig(manifest *PluginManifest, config map[string]any) map[str
 		if secrets[key] {
 			if text, ok := value.(string); ok && text != "" {
 				redacted[key] = ""
+				set[key] = true
 				continue
 			}
 		}
 		redacted[key] = value
 	}
 
-	return redacted
+	return redacted, set
 }
 
 // PluginsActionHandler routes the state-changing plugin endpoints. They are

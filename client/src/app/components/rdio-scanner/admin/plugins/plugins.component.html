@@ -100,10 +100,13 @@
 
                         <mat-form-field *ngSwitchCase="'password'">
                             <input matInput type="password" autocomplete="new-password"
-                                placeholder="unchanged"
+                                [placeholder]="secretIsSet(plugin, field) ? '••••••••••••' : (field.placeholder || '')"
                                 [ngModel]="configDraft[field.key]"
                                 (ngModelChange)="configDraft[field.key] = $event"
                                 [ngModelOptions]="{ standalone: true }">
+                            <mat-hint *ngIf="secretIsSet(plugin, field)">
+                                Saved. Leave blank to keep it, or type a new value to replace it.
+                            </mat-hint>
                         </mat-form-field>
 
                         <mat-form-field *ngSwitchCase="'textarea'">

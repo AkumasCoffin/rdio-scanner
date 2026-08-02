@@ -117,6 +117,19 @@ type PluginConfigField struct {
 	MaxLength   *int                 `json:"maxLength,omitempty"`
 	Required    bool                 `json:"required,omitempty"`
 	Placeholder string               `json:"placeholder,omitempty"`
+
+	// ShowIf hides this field unless another field currently holds one of the
+	// listed values. Presentation only — a hidden field keeps its stored value
+	// and is still saved, so switching away from a provider does not discard
+	// its credentials.
+	ShowIf *PluginConfigShowIf `json:"showIf,omitempty"`
+}
+
+// PluginConfigShowIf is the condition form of a field's visibility: field X is
+// one of these values.
+type PluginConfigShowIf struct {
+	Key    string `json:"key"`
+	Equals []any  `json:"equals"`
 }
 
 type PluginConfigOption struct {
@@ -248,6 +261,29 @@ func (manifest *PluginManifest) Validate() error {
 		}
 		if field.Type == "select" && len(field.Options) == 0 {
 			return fmt.Errorf("plugin %s: config field %q is a select but declares no options", manifest.Id, field.Key)
+		}
+	}
+
+	// Second pass: a showIf may point forwards as well as backwards, so it can
+	// only be checked once every key is known. A typo here would hide a field
+	// permanently with nothing to show for it, which is worth failing over.
+	for i := range manifest.Config {
+		field := &manifest.Config[i]
+
+		if field.ShowIf == nil {
+			continue
+		}
+		if !seenKeys[field.ShowIf.Key] {
+			return fmt.Errorf(
+				"plugin %s: config field %q is shown conditionally on %q, which is not a config field",
+				manifest.Id, field.Key, field.ShowIf.Key,
+			)
+		}
+		if field.ShowIf.Key == field.Key {
+			return fmt.Errorf("plugin %s: config field %q cannot be conditional on itself", manifest.Id, field.Key)
+		}
+		if len(field.ShowIf.Equals) == 0 {
+			return fmt.Errorf("plugin %s: config field %q has a showIf with no values to match", manifest.Id, field.Key)
 		}
 	}
 

@@ -109,6 +109,9 @@ export interface PluginConfigField {
     maxLength?: number;
     required?: boolean;
     placeholder?: string;
+    // Show this field only while another one holds one of these values. The
+    // value is kept and saved either way — hiding is presentation only.
+    showIf?: { key: string; equals: unknown[] };
 }
 
 export interface PluginManifest {
@@ -141,6 +144,9 @@ export interface AdminPlugin {
     present: boolean;
     running: boolean;
     config?: { [key: string]: unknown };
+    // Password fields are blanked before they reach us. This says which of them
+    // actually hold a value, so the form can show "saved" instead of empty.
+    configSet?: { [key: string]: boolean };
     restartRequired: boolean;
 }
 

@@ -198,6 +198,9 @@ func TestPluginManifestValidation(t *testing.T) {
 		{"unknown column type", `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","tables":[{"name":"t","columns":[{"name":"a","type":"money"}]}]}`},
 		{"varchar without length", `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","tables":[{"name":"t","columns":[{"name":"a","type":"varchar"}]}]}`},
 		{"select without options", `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","config":[{"key":"k","type":"select","label":"L"}]}`},
+		{"showIf on unknown field", `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","config":[{"key":"k","type":"text","label":"L","showIf":{"key":"nope","equals":["a"]}}]}`},
+		{"showIf on itself", `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","config":[{"key":"k","type":"text","label":"L","showIf":{"key":"k","equals":["a"]}}]}`},
+		{"showIf with no values", `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","config":[{"key":"a","type":"text","label":"A"},{"key":"k","type":"text","label":"L","showIf":{"key":"a","equals":[]}}]}`},
 	}
 
 	for _, c := range cases {
@@ -218,6 +221,16 @@ func TestPluginManifestValidation(t *testing.T) {
 
 	if got := manifest.TableName("notes"); got != "plugin_my_plugin_notes" {
 		t.Fatalf("table name was %q, expected plugin_my_plugin_notes", got)
+	}
+
+	// A showIf may point at a field declared later in the list, so validation
+	// cannot simply check the keys it has seen so far.
+	forward := `{"id":"ok","name":"x","version":"1","description":"d","main":"main.js","config":[
+		{"key":"k","type":"text","label":"L","showIf":{"key":"provider","equals":["a","b"]}},
+		{"key":"provider","type":"select","label":"P","options":[{"value":"a","label":"A"}]}]}`
+
+	if _, err := ParsePluginManifest([]byte(forward)); err != nil {
+		t.Fatalf("a forward showIf reference was rejected: %v", err)
 	}
 
 	// A manifest with no apiVersion is treated as version 1, so plugins written
@@ -273,4 +286,42 @@ func firstDifference(a, b []byte) int {
 		}
 	}
 	return n
+}
+
+// A stored password is never sent to the browser, but the form still has to be
+// able to say that one exists — otherwise a configured API key is
+// indistinguishable from an empty field and reads as lost settings.
+func TestRedactPluginConfigReportsWhichSecretsAreSet(t *testing.T) {
+	manifest := &PluginManifest{
+		Id: "transcripts",
+		Config: []PluginConfigField{
+			{Key: "groqApiKey", Type: "password", Label: "Groq"},
+			{Key: "openaiApiKey", Type: "password", Label: "OpenAI"},
+			{Key: "model", Type: "text", Label: "Model"},
+		},
+	}
+
+	config := map[string]any{
+		"groqApiKey":   "gsk_secret",
+		"openaiApiKey": "",
+		"model":        "whisper-1",
+	}
+
+	redacted, set := redactPluginConfig(manifest, config)
+
+	if got := redacted["groqApiKey"]; got != "" {
+		t.Fatalf("the stored key reached the browser as %q", got)
+	}
+	if !set["groqApiKey"] {
+		t.Fatal("a key that is set was not reported as set, so the form shows it as empty")
+	}
+	if set["openaiApiKey"] {
+		t.Fatal("an empty key was reported as set")
+	}
+	if set["model"] {
+		t.Fatal("a non-password field was reported as a set secret")
+	}
+	if got := redacted["model"]; got != "whisper-1" {
+		t.Fatalf("a plain field was altered: %v", got)
+	}
 }
