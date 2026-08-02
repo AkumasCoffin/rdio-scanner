@@ -259,11 +259,11 @@ var pointNotes = map[string]string{
 	PointClientConnect:    "A listener connected.",
 	PointClientDisconnect: "A listener disconnected.",
 
-	PointCallReceive:   "A call arrived, before anything has been decided about it.",
-	PointCallAccept:    "Whether to accept the call at all. Veto to discard it.",
-	PointCallDuplicate: "Whether the call is a duplicate of one already stored.",
-	PointCallConvert:   "Audio conversion. Override to replace ffmpeg entirely.",
-	PointCallStore:     "Last chance before storage: modify, replace the audio, or drop.",
+	PointCallReceive:   "A call arrived, before its system or talkgroup has been resolved. Carries audio. Rewrite `system` or `talkgroup` to reroute it, or return `{drop: true}` to discard it before any work is spent.",
+	PointCallAccept:    "The call is fully resolved and passed the blacklists. Return `{drop: true}` to discard it. Metadata only, no audio.",
+	PointCallDuplicate: "Fires only once rdio has already decided the call is a duplicate. Reads inverted from the others: returning nothing leaves the rejection standing, and only `{keep: true}` overrules it — so observing this point cannot accidentally disable duplicate detection.",
+	PointCallConvert:   "Audio conversion. Override to replace ffmpeg entirely; return the new `audio`, and `audioType` if it changed. The only point with no fallback, so a failure here stores the call unconverted.",
+	PointCallStore:     "Last chance before the write. Carries audio, so this is where processing that must be persisted belongs — normalisation, trimming, re-encoding — as well as a final `{drop: true}`.",
 	PointCallStored:    "The call has an id. Where most work belongs.",
 
 	PointCallDelay:      "How long to hold the call before listeners see it.",

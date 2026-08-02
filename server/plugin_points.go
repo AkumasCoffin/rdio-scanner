@@ -111,6 +111,16 @@ var pointTimeouts = map[string]time.Duration{
 	PointClientConfig: 250 * time.Millisecond,
 	PointAccessScope:  250 * time.Millisecond,
 	PointCallSearch:   2 * time.Second,
+
+	// The ingest points block the single goroutine draining the ingest channel,
+	// because a veto cannot mean anything otherwise. The decision points get a
+	// short leash: they answer a question about a call that is already in hand,
+	// so a second is already generous and a slow one throttles every upload.
+	// call.convert and call.store keep the default, since both do real work on
+	// audio and a plugin re-encoding a long call legitimately needs the time.
+	PointCallAccept:    time.Second,
+	PointCallDuplicate: time.Second,
+	PointCallReceive:   5 * time.Second,
 }
 
 func pointTimeout(point string) time.Duration {

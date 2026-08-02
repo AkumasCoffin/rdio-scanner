@@ -34,10 +34,6 @@ import (
 var pointsNotYetDispatched = map[string]string{
 	PointClientConnect:    "phase 7",
 	PointClientDisconnect: "phase 7",
-	PointCallAccept:       "phase 5",
-	PointCallDuplicate:    "phase 5",
-	PointCallConvert:      "phase 5",
-	PointCallStore:        "phase 5",
 	PointCallDelay:        "phase 7",
 	PointCallEmit:         "phase 7",
 	PointCallPayload:      "phase 7",
@@ -113,14 +109,45 @@ func pointIsDispatched(sources map[string]string, point string) bool {
 		if file == "plugin_points.go" || strings.HasSuffix(file, "_test.go") {
 			continue
 		}
-		for _, verb := range []string{"Notify(", "Filter(", "Override(", "Provide(", "Emit(", "dispatchSync("} {
-			if containsCall(body, verb+name) {
+		// FilterCall is the ingest wrapper: it notifies observers and runs the
+		// filter chain for one point. It has to be listed, because the verbs it
+		// calls internally take a variable rather than the constant, and without
+		// it every point wired through the wrapper would read as unreachable.
+		for _, verb := range []string{"Notify(", "Filter(", "FilterCall(", "Override(", "Provide(", "Emit(", "dispatchSync("} {
+			if dispatchesPoint(body, verb, name) {
 				return true
 			}
 		}
 	}
 
 	return false
+}
+
+// dispatchesPoint reports whether body passes the named constant as the first
+// argument to verb.
+//
+// Whitespace between the paren and the constant is skipped, because gofmt wraps
+// a long call across lines and a literal match would then read a perfectly good
+// dispatch as missing. That is a false alarm in the direction that matters
+// least — it would push someone to reformat working code to satisfy a test.
+func dispatchesPoint(body string, verb string, name string) bool {
+	from := 0
+
+	for {
+		i := strings.Index(body[from:], verb)
+		if i < 0 {
+			return false
+		}
+
+		rest := strings.TrimLeft(body[from+i+len(verb):], " \t\r\n")
+
+		if strings.HasPrefix(rest, name) &&
+			(len(rest) == len(name) || !isIdentifierByte(rest[len(name)])) {
+			return true
+		}
+
+		from += i + len(verb)
+	}
 }
 
 // containsCall finds needle in body only where it is not followed by another

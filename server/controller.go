@@ -256,6 +256,15 @@ func (controller *Controller) IngestCall(call *Call) {
 		controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("controller.ingestcall: %v", err.Error()))
 	}
 
+	// First sight of the call, before anything has been resolved about it. A
+	// filter here can rewrite system or talkgroup, which is what makes routing
+	// and re-tagging plugins possible, or drop it outright before any work is
+	// spent on conversion and storage.
+	if !controller.PluginDispatch.FilterCall(PointCallReceive, call) {
+		logCall(call, LogLevelInfo, "dropped by plugin at receive")
+		return
+	}
+
 	if system, ok = controller.Systems.GetSystem(call.System); ok {
 		if system.Blacklists.IsBlacklisted(call.Talkgroup) {
 			logCall(call, LogLevelInfo, "blacklisted")
@@ -414,23 +423,52 @@ func (controller *Controller) IngestCall(call *Call) {
 		return
 	}
 
+	// The call is now fully resolved — system, talkgroup, group and tag all
+	// known. This is where a plugin decides whether it belongs here at all,
+	// which is the natural place for anything acting on what the call is rather
+	// than on how it sounds.
+	if !controller.PluginDispatch.FilterCall(PointCallAccept, call) {
+		logCall(call, LogLevelInfo, "dropped by plugin at accept")
+		return
+	}
+
 	if !controller.Options.DisableDuplicateDetection {
 		if controller.Calls.CheckDuplicate(call, controller.Options.DuplicateDetectionTimeFrame, controller.Database) {
-			logCall(call, LogLevelWarn, "duplicate call rejected")
-			return
+			// Core has decided to reject. A plugin may overrule that, which is
+			// what makes a smarter duplicate rule possible without replacing the
+			// built-in one — but it has to say so explicitly, so a plugin that
+			// merely observes this point cannot accidentally disable duplicate
+			// detection for the whole server.
+			if !controller.PluginDispatch.KeepDuplicate(call) {
+				logCall(call, LogLevelWarn, "duplicate call rejected")
+				return
+			}
+
+			logCall(call, LogLevelInfo, "duplicate kept by plugin")
 		}
 	}
 
-	if err := controller.FFMpeg.Convert(call, controller.Systems, controller.Tags, controller.Options.AudioConversion); err != nil {
+	// A plugin may take over conversion entirely — a different encoder, a
+	// different bitrate policy, or none at all. When none does, the built-in
+	// ffmpeg path runs exactly as before.
+	if handled, err := controller.PluginDispatch.ConvertCall(call); handled {
+		if err != nil {
+			// Override is the one verb with no fallback: the plugin asked to own
+			// this and failed, so the call goes on with whatever audio it had
+			// rather than being lost.
+			controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("plugin conversion failed, storing unconverted: %v", err))
+		}
+	} else if err := controller.FFMpeg.Convert(call, controller.Systems, controller.Tags, controller.Options.AudioConversion); err != nil {
 		controller.Logs.LogEvent(LogLevelWarn, err.Error())
 	}
 
-	// Plugins see the call before it is written. Dispatch is asynchronous
-	// inside each runtime, so this cannot stall the single ingest goroutine —
-	// which also means a plugin cannot reliably mutate what gets stored. That
-	// tradeoff is deliberate: ingest throughput matters more than giving
-	// plugins a synchronous veto.
-	controller.PluginDispatch.Notify(PointCallReceive, pluginCallValue(call, false))
+	// Last chance before the call is written. Audio travels with it here, so
+	// this is where processing that must be persisted belongs — normalisation,
+	// noise reduction, trimming — as well as the final opportunity to drop.
+	if !controller.PluginDispatch.FilterCall(PointCallStore, call) {
+		logCall(call, LogLevelInfo, "dropped by plugin at store")
+		return
+	}
 
 	if id, err = controller.Calls.WriteCall(call, controller.Database); err == nil {
 		call.Id = id
