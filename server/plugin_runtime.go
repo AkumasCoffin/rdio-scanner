@@ -97,6 +97,9 @@ type PluginRuntime struct {
 	plugin     *Plugin
 	manifest   *PluginManifest
 	db         *PluginDb
+	// dataDir is this plugin's persistent storage, outside the code directory
+	// the installer rewrites on update.
+	dataDir string
 
 	loop *eventloop.EventLoop
 	vm   *goja.Runtime
@@ -128,11 +131,17 @@ func NewPluginRuntime(controller *Controller, plugin *Plugin) (*PluginRuntime, e
 		return nil, fmt.Errorf("config: %v", err)
 	}
 
+	dataDir, err := controller.Plugins.DataDir(controller.Config, plugin.Manifest.Id)
+	if err != nil {
+		return nil, fmt.Errorf("data directory: %v", err)
+	}
+
 	return &PluginRuntime{
 		controller:    controller,
 		plugin:        plugin,
 		manifest:      plugin.Manifest,
 		db:            NewPluginDb(controller.Database, plugin.Manifest),
+		dataDir:       dataDir,
 		handlers:      map[string][]goja.Callable{},
 		wsHandlers:    map[string]goja.Callable{},
 		routes:        []*pluginRoute{},

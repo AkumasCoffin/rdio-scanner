@@ -136,15 +136,6 @@ func (controller *Controller) ApplyPluginFields(call *Call) {
 	}
 }
 
-// SetPluginField writes a single field value onto a call without a database
-// round trip. Used where the value is already in hand.
-func (call *Call) SetPluginField(field string, value any) {
-	if call.pluginFields == nil {
-		call.pluginFields = map[string]any{}
-	}
-	call.pluginFields[field] = value
-}
-
 // PluginWebEntries lists the frontend entry points of enabled plugins, in the
 // shape the webapp's plugin loader expects. Sent on the CFG payload because the
 // webapp needs it before it has an admin session.

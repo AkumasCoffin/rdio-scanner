@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Transcription has moved into a plugin
+
+**Read this before upgrading if you use transcription.**
+
+Call transcription is no longer part of the server. It is now the Transcripts
+plugin, installed from the plugin repository. Everything it did, it still does —
+the same providers, the same multi-key rotation and rate limiting, the same
+transcript forwarding between servers — and the scanner looks exactly as it did
+before, because the plugin puts transcripts back where they have always been.
+
+**What happens when you upgrade:**
+
+- Your transcripts, your settings and your API keys are **migrated
+  automatically** into the plugin's own tables. Nothing is thrown away.
+- The migration verifies it copied everything before touching the originals. If
+  the counts do not match it stops, leaves your data exactly as it was, and
+  retries on the next start.
+- If transcription was switched on, the server **installs and enables the
+  Transcripts plugin for you** on first boot and carries your settings across.
+- If the server cannot reach the internet at that moment, nothing is lost. Your
+  settings stay put, a message explains what happened, and it tries again next
+  time — or install the plugin yourself from **Plugins** in the admin panel.
+
+**What changes for you:**
+
+- Transcription settings move from **Config → Options** to **Plugins →
+  Transcripts**.
+- The per-system and per-talkgroup transcribe switches move to the plugin. They
+  default to on, so transcription keeps working as before.
+- Transcript forwarding between two servers now needs the plugin installed on
+  **both** ends.
+- The old `transcript` columns are left in place, unused. Dropping them rewrites
+  the calls table, which takes a long time on a large database, so it is not
+  done automatically — start the server with `-drop_legacy_columns` when you can
+  afford the downtime and want the space back. Below ten thousand calls it is
+  quick enough that it happens on its own.
+
+Nothing changes in the Android app.
+
 ### Plugins
 
 - **New: plugin support.** Rdio Scanner can now be extended without being

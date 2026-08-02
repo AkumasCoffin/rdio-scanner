@@ -33,6 +33,15 @@ import (
 // install where the binary's own directory isn't writable.
 const PluginsDirName = "plugins"
 
+// PluginDataDirName holds each plugin's persistent storage, deliberately kept
+// out of the plugins directory.
+//
+// A plugin's code directory is destroyed and rewritten on every update — the
+// installer removes it before unpacking the new version — so anything a plugin
+// wrote alongside its own code was silently lost the first time it updated.
+// This location is never touched by install or uninstall.
+const PluginDataDirName = "plugin-data"
+
 // Plugin is one installed plugin: its registry row, its manifest, and its
 // runtime once started.
 type Plugin struct {
@@ -108,6 +117,23 @@ func (plugins *Plugins) Dir(config *Config) string {
 		plugins.dir = filepath.Join(config.BaseDir, PluginsDirName)
 	}
 	return plugins.dir
+}
+
+// DataDir returns a plugin's persistent storage directory, creating it if it
+// does not exist. Survives update and uninstall — reinstalling a plugin finds
+// whatever it left behind, which is the same promise its settings already make.
+func (plugins *Plugins) DataDir(config *Config, pluginId string) (string, error) {
+	if !pluginIdRegexp.MatchString(pluginId) {
+		return "", fmt.Errorf("invalid plugin id %q", pluginId)
+	}
+
+	dir := filepath.Join(config.BaseDir, PluginDataDirName, pluginId)
+
+	if err := os.MkdirAll(dir, 0o770); err != nil {
+		return "", err
+	}
+
+	return dir, nil
 }
 
 // Get returns an installed plugin by its manifest id.
@@ -490,13 +516,30 @@ func (plugins *Plugins) EmitEvent(event string, payload any) {
 	}
 }
 
-// PurgeData drops every table a plugin owns, including its settings. Only
-// reachable from the explicit admin action.
-func (plugins *Plugins) PurgeData(db *Database, plugin *Plugin) error {
+// PurgeData removes everything a plugin left behind: its tables, its settings,
+// and its data directory. Only reachable from the explicit admin action —
+// uninstalling deliberately keeps all of it.
+func (plugins *Plugins) PurgeData(db *Database, config *Config, plugin *Plugin) error {
 	if plugin.Manifest == nil {
 		return fmt.Errorf("plugin %q has no manifest; cannot determine which tables to remove", plugin.PluginId)
 	}
-	return DropPluginSchema(db, plugin.Manifest)
+
+	if err := DropPluginSchema(db, plugin.Manifest); err != nil {
+		return err
+	}
+
+	// The data directory outlives uninstall by design, so purge is the only
+	// thing that clears it.
+	dir, err := plugins.DataDir(config, plugin.PluginId)
+	if err != nil {
+		return err
+	}
+
+	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	return nil
 }
 
 // RemoveFiles deletes a plugin's directory from disk.

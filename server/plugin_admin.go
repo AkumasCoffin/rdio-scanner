@@ -402,7 +402,7 @@ func (admin *Admin) pluginPurge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := controller.Plugins.PurgeData(controller.Database, plugin); err != nil {
+	if err := controller.Plugins.PurgeData(controller.Database, controller.Config, plugin); err != nil {
 		writeJsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -74,7 +74,11 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	pluginInfo := vm.NewObject()
 	pluginInfo.Set("id", rt.manifest.Id)
 	pluginInfo.Set("version", rt.manifest.Version)
-	pluginInfo.Set("dataDir", rt.plugin.dir)
+	// Where the plugin's own files live. Read-only in practice: the installer
+	// removes and rewrites this on every update.
+	pluginInfo.Set("dir", rt.plugin.dir)
+	// Where a plugin should keep anything it wants to survive an update.
+	pluginInfo.Set("dataDir", rt.dataDir)
 	rdio.Set("plugin", pluginInfo)
 
 	// --- rdio.log ---------------------------------------------------------

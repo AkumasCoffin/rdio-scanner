@@ -25,6 +25,7 @@ import (
 	"os/signal"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -783,7 +784,12 @@ func (controller *Controller) Start() error {
 
 	go func() {
 		c := make(chan os.Signal, 8)
-		signal.Notify(c, os.Interrupt)
+		// SIGTERM as well as interrupt: Docker, systemd and most supervisors
+		// stop a process with SIGTERM, so listening only for interrupt meant a
+		// container was always killed without running Terminate — no plugin
+		// shutdown, and the database closed by the process dying rather than
+		// by us.
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 		<-c
 		controller.Terminate()
 	}()
