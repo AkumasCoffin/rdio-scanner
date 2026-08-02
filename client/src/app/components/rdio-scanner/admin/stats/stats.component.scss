@@ -17,10 +17,10 @@
         margin: 0;
         font-size: 1.5rem;
         font-weight: 400;
-        color: #e0e0e0;
+        color: var(--stats-text);
 
         mat-icon {
-            color: #00bcd4;
+            color: var(--chart-cyan);
         }
     }
 
@@ -42,14 +42,14 @@
     align-items: center;
     justify-content: center;
     padding: 64px;
-    color: #a0a0a0;
+    color: var(--stats-text-muted);
 
     mat-icon {
         font-size: 48px;
         width: 48px;
         height: 48px;
         margin-bottom: 16px;
-        color: #f44336;
+        color: var(--chart-red);
     }
 
     p {
@@ -68,7 +68,7 @@
     display: flex;
     align-items: center;
     padding: 16px;
-    background: #2d2d2d;
+    background: var(--stats-surface-raised);
     border-left: 4px solid;
     border-radius: 8px;
     transition: transform 0.2s, box-shadow 0.2s;
@@ -100,13 +100,13 @@
         .stat-value {
             font-size: 1.5rem;
             font-weight: 600;
-            color: #ffffff;
+            color: var(--text-strong);
             line-height: 1.2;
         }
 
         .stat-label {
             font-size: 0.75rem;
-            color: #a0a0a0;
+            color: var(--stats-text-muted);
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
@@ -126,7 +126,7 @@
 .chart-card {
     flex: 1;
     padding: 16px;
-    background: #2d2d2d;
+    background: var(--stats-surface-raised);
     border-radius: 8px;
 
     &.wide {
@@ -153,13 +153,13 @@
 }
 
 .table-card {
-    background: #2d2d2d;
+    background: var(--stats-surface-raised);
     border-radius: 8px;
     margin-bottom: 24px;
 
     &.last-hour-card {
         mat-card-header mat-card-title mat-icon {
-            color: #9c27b0;
+            color: var(--chart-purple);
         }
     }
 
@@ -172,16 +172,16 @@
             gap: 8px;
             font-size: 1rem;
             font-weight: 500;
-            color: #e0e0e0;
+            color: var(--stats-text);
 
             mat-icon {
-                color: #ff9800;
+                color: var(--chart-orange);
             }
 
             .subtitle {
                 display: block;
                 font-size: 0.75rem;
-                color: #888;
+                color: var(--stats-text-faint);
                 margin-left: 8px;
             }
         }
@@ -206,13 +206,13 @@
             transition: background 0.2s;
 
             &:hover td {
-                background: rgba(156, 39, 176, 0.1) !important;
+                background: rgba(var(--chart-purple-rgb), 0.1) !important;
             }
         }
     }
 
     th {
-        color: #a0a0a0;
+        color: var(--stats-text-muted);
         font-weight: 500;
         text-transform: uppercase;
         font-size: 0.75rem;
@@ -222,7 +222,7 @@
     }
 
     td {
-        color: #e0e0e0;
+        color: var(--stats-text);
         padding: 12px 16px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     }
@@ -233,8 +233,8 @@
 
     .call-count {
         display: inline-block;
-        background: rgba(0, 188, 212, 0.2);
-        color: #00bcd4;
+        background: rgba(var(--chart-cyan-rgb), 0.2);
+        color: var(--chart-cyan);
         padding: 4px 12px;
         border-radius: 16px;
         font-weight: 500;
@@ -247,7 +247,7 @@
     background: transparent;
 
     th {
-        color: #a0a0a0;
+        color: var(--stats-text-muted);
         font-weight: 500;
         text-transform: uppercase;
         font-size: 0.75rem;
@@ -257,7 +257,7 @@
     }
 
     td {
-        color: #e0e0e0;
+        color: var(--stats-text);
         padding: 12px 16px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     }
@@ -268,8 +268,8 @@
 
     .call-count {
         display: inline-block;
-        background: rgba(156, 39, 176, 0.2);
-        color: #9c27b0;
+        background: rgba(var(--chart-purple-rgb), 0.2);
+        color: var(--chart-purple);
         padding: 4px 12px;
         border-radius: 16px;
         font-weight: 500;
@@ -283,7 +283,7 @@
     justify-content: center;
     gap: 8px;
     padding: 32px;
-    color: #666;
+    color: var(--stats-text-dim);
 
     mat-icon {
         opacity: 0.5;
@@ -304,7 +304,7 @@
     padding: 16px;
 
     .units-dialog {
-        background: #2d2d2d;
+        background: var(--stats-surface-raised);
         border-radius: 12px;
         max-width: 600px;
         width: 100%;
@@ -319,7 +319,7 @@
             justify-content: space-between;
             padding: 16px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            background: rgba(156, 39, 176, 0.1);
+            background: rgba(var(--chart-purple-rgb), 0.1);
 
             mat-card-title {
                 display: flex;
@@ -328,7 +328,7 @@
                 flex: 1;
 
                 mat-icon {
-                    color: #9c27b0;
+                    color: var(--chart-purple);
                     font-size: 28px;
                     width: 28px;
                     height: 28px;
@@ -347,7 +347,7 @@
                 align-items: center;
                 justify-content: center;
                 padding: 32px;
-                color: #a0a0a0;
+                color: var(--stats-text-muted);
 
                 mat-icon {
                     font-size: 40px;
@@ -368,7 +368,7 @@
 
 ::ng-deep {
     .mat-mdc-card {
-        --mdc-elevated-card-container-color: #2d2d2d;
+        --mdc-elevated-card-container-color: var(--stats-surface-raised);
     }
 
     .mat-mdc-table {

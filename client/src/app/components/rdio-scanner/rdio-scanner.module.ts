@@ -28,7 +28,6 @@ import { RdioScannerMainComponent } from './main/main.component';
 import { RdioScannerSupportComponent } from './main/support/support.component';
 import { RdioScannerNativeModule } from './native/native.module';
 import { RdioScannerPluginHostService } from './plugins/plugin-host.service';
-import { RdioScannerPluginSlotComponent } from './plugins/plugin-slot.component';
 import { RdioScannerPluginViewComponent } from './plugins/plugin-view.component';
 import { RdioScannerSearchComponent } from './search/search.component';
 import { RdioScannerSelectComponent } from './select/select.component';
@@ -40,7 +39,6 @@ import { RdioScannerStreamComponent } from './stream/stream.component';
     declarations: [
         RdioScannerComponent,
         RdioScannerMainComponent,
-        RdioScannerPluginSlotComponent,
         RdioScannerPluginViewComponent,
         RdioScannerPublicStatsComponent,
         RdioScannerSearchComponent,

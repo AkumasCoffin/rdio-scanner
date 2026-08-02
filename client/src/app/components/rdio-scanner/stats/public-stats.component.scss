@@ -1,6 +1,6 @@
 .stats-container {
     padding: 16px;
-    background: #1a1a1a;
+    background: var(--stats-surface);
     min-height: 100%;
 }
 
@@ -10,7 +10,7 @@
     align-items: center;
     justify-content: center;
     padding: 48px 16px;
-    color: #a0a0a0;
+    color: var(--stats-text-muted);
     text-align: center;
 
     mat-icon {
@@ -18,7 +18,7 @@
         width: 40px;
         height: 40px;
         margin-bottom: 12px;
-        color: #f44336;
+        color: var(--chart-red);
     }
 
     p {
@@ -38,7 +38,7 @@
     display: flex;
     align-items: center;
     padding: 12px;
-    background: #2d2d2d;
+    background: var(--stats-surface-raised);
     border-left: 3px solid;
     border-radius: 6px;
 
@@ -68,13 +68,13 @@
         .stat-value {
             font-size: 1.1rem;
             font-weight: 600;
-            color: #ffffff;
+            color: var(--text-strong);
             line-height: 1.2;
         }
 
         .stat-label {
             font-size: 0.65rem;
-            color: #888;
+            color: var(--stats-text-faint);
             text-transform: uppercase;
             letter-spacing: 0.3px;
             white-space: nowrap;
@@ -87,7 +87,7 @@
 .chart-card {
     margin-bottom: 16px;
     padding: 12px;
-    background: #2d2d2d !important;
+    background: var(--stats-surface-raised) !important;
     border-radius: 8px;
 
     .chart-container {
@@ -105,7 +105,7 @@
 }
 
 .table-card {
-    background: #2d2d2d !important;
+    background: var(--stats-surface-raised) !important;
     border-radius: 8px;
     overflow: hidden;
 
@@ -113,10 +113,10 @@
         margin-bottom: 16px;
         
         .table-header {
-            background: rgba(156, 39, 176, 0.1);
+            background: rgba(var(--chart-purple-rgb), 0.1);
             
             mat-icon {
-                color: #9c27b0;
+                color: var(--chart-purple);
             }
         }
     }
@@ -126,11 +126,11 @@
         align-items: center;
         gap: 8px;
         padding: 12px 16px;
-        background: rgba(255, 152, 0, 0.1);
+        background: rgba(var(--chart-orange-rgb), 0.1);
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 
         mat-icon {
-            color: #ff9800;
+            color: var(--chart-orange);
             font-size: 20px;
             width: 20px;
             height: 20px;
@@ -139,7 +139,7 @@
         span {
             font-size: 0.875rem;
             font-weight: 500;
-            color: #e0e0e0;
+            color: var(--stats-text);
         }
     }
 
@@ -164,11 +164,11 @@
                 cursor: pointer;
                 
                 &:hover {
-                    background: rgba(156, 39, 176, 0.1);
+                    background: rgba(var(--chart-purple-rgb), 0.1);
                 }
 
                 .chevron {
-                    color: #9c27b0;
+                    color: var(--chart-purple);
                     font-size: 20px;
                     width: 20px;
                     height: 20px;
@@ -182,8 +182,8 @@
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                background: rgba(0, 188, 212, 0.2);
-                color: #00bcd4;
+                background: rgba(var(--chart-cyan-rgb), 0.2);
+                color: var(--chart-cyan);
                 border-radius: 50%;
                 font-size: 0.75rem;
                 font-weight: 600;
@@ -197,7 +197,7 @@
 
                 .tg-name {
                     display: block;
-                    color: #e0e0e0;
+                    color: var(--stats-text);
                     font-size: 0.875rem;
                     white-space: nowrap;
                     overflow: hidden;
@@ -206,7 +206,7 @@
 
                 .tg-system {
                     display: block;
-                    color: #666;
+                    color: var(--stats-text-dim);
                     font-size: 0.7rem;
                     white-space: nowrap;
                     overflow: hidden;
@@ -215,8 +215,8 @@
             }
 
             .call-count {
-                background: rgba(0, 188, 212, 0.2);
-                color: #00bcd4;
+                background: rgba(var(--chart-cyan-rgb), 0.2);
+                color: var(--chart-cyan);
                 padding: 4px 10px;
                 border-radius: 12px;
                 font-weight: 500;
@@ -241,7 +241,7 @@
     padding: 16px;
 
     .units-dialog {
-        background: #2d2d2d;
+        background: var(--stats-surface-raised);
         border-radius: 12px;
         max-width: 500px;
         width: 100%;
@@ -256,7 +256,7 @@
             justify-content: space-between;
             padding: 16px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            background: rgba(156, 39, 176, 0.1);
+            background: rgba(var(--chart-purple-rgb), 0.1);
 
             .header-content {
                 display: flex;
@@ -265,7 +265,7 @@
                 flex: 1;
 
                 mat-icon {
-                    color: #9c27b0;
+                    color: var(--chart-purple);
                     font-size: 28px;
                     width: 28px;
                     height: 28px;
@@ -275,13 +275,13 @@
                     margin: 0;
                     font-size: 1rem;
                     font-weight: 500;
-                    color: #e0e0e0;
+                    color: var(--stats-text);
                 }
 
                 .subtitle {
                     display: block;
                     font-size: 0.75rem;
-                    color: #888;
+                    color: var(--stats-text-faint);
                     margin-top: 2px;
                 }
             }
@@ -298,7 +298,7 @@
                 align-items: center;
                 justify-content: center;
                 padding: 32px;
-                color: #a0a0a0;
+                color: var(--stats-text-muted);
 
                 mat-icon {
                     font-size: 40px;
@@ -336,8 +336,8 @@
                         display: flex;
                         align-items: center;
                         justify-content: center;
-                        background: rgba(156, 39, 176, 0.2);
-                        color: #9c27b0;
+                        background: rgba(var(--chart-purple-rgb), 0.2);
+                        color: var(--chart-purple);
                         border-radius: 50%;
                         font-size: 0.75rem;
                         font-weight: 600;
@@ -351,22 +351,22 @@
 
                         .unit-label {
                             display: block;
-                            color: #e0e0e0;
+                            color: var(--stats-text);
                             font-size: 0.875rem;
                             font-weight: 500;
                         }
 
                         .unit-last-call {
                             display: block;
-                            color: #666;
+                            color: var(--stats-text-dim);
                             font-size: 0.7rem;
                             margin-top: 2px;
                         }
                     }
 
                     .call-count {
-                        background: rgba(156, 39, 176, 0.2);
-                        color: #9c27b0;
+                        background: rgba(var(--chart-purple-rgb), 0.2);
+                        color: var(--chart-purple);
                         padding: 4px 10px;
                         border-radius: 12px;
                         font-weight: 500;
@@ -381,7 +381,7 @@
 
 ::ng-deep {
     .mat-mdc-card {
-        --mdc-elevated-card-container-color: #2d2d2d;
+        --mdc-elevated-card-container-color: var(--stats-surface-raised);
     }
 }
 

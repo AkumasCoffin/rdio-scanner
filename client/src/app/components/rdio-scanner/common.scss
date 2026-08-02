@@ -1,12 +1,12 @@
 .rdio-button,
 .rdio-button-mini {
-  --def: rgba(15, 23, 42, 0.9);
-  --green: #22c55e;
-  --red: #ef4444;
-  --yellow: #eab308;
+  --def: rgba(var(--surface-panel-rgb), 0.9);
+  --green: var(--state-success);
+  --red: var(--state-danger);
+  --yellow: var(--state-warn);
 
   background: var(--def);
-  border: 1px solid rgba(148, 163, 184, 0.3);
+  border: 1px solid rgba(var(--line-rgb), 0.3);
   border-radius: 8px;
   color: var(--text-main);
   font-family: inherit;
@@ -32,8 +32,8 @@
      of firing click — the button animates but the action never runs. */
   @media (hover: hover) {
     &:hover {
-      background: rgba(30, 41, 59, 0.9);
-      border-color: rgba(148, 163, 184, 0.5);
+      background: rgba(var(--surface-raised-rgb), 0.9);
+      border-color: rgba(var(--line-rgb), 0.5);
       transform: translateY(-1px);
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
@@ -76,8 +76,8 @@
   }
 
   &.off {
-    border-color: rgba(239, 68, 68, 0.5);
-    background: radial-gradient(circle at 0 0, rgba(239, 68, 68, 0.2), rgba(15, 23, 42, 0.9));
+    border-color: rgba(var(--state-danger-rgb), 0.5);
+    background: radial-gradient(circle at 0 0, rgba(var(--state-danger-rgb), 0.2), rgba(var(--surface-panel-rgb), 0.9));
   }
 
   &.off.blink::after {
@@ -102,8 +102,8 @@
   }
 
   &.on {
-    border-color: rgba(34, 197, 94, 0.5);
-    background: radial-gradient(circle at 0 0, rgba(34, 197, 94, 0.2), rgba(15, 23, 42, 0.9));
+    border-color: rgba(var(--state-success-rgb), 0.5);
+    background: radial-gradient(circle at 0 0, rgba(var(--state-success-rgb), 0.2), rgba(var(--surface-panel-rgb), 0.9));
   }
 
   &.on.blink::after {
@@ -128,8 +128,8 @@
   }
 
   &.partial {
-    border-color: rgba(234, 179, 8, 0.5);
-    background: radial-gradient(circle at 0 0, rgba(234, 179, 8, 0.2), rgba(15, 23, 42, 0.9));
+    border-color: rgba(var(--state-warn-rgb), 0.5);
+    background: radial-gradient(circle at 0 0, rgba(var(--state-warn-rgb), 0.2), rgba(var(--surface-panel-rgb), 0.9));
   }
 
   &.partial.blink::after {

@@ -3,7 +3,7 @@
 </ng-container>
 <ng-container *ngIf="authenticated">
     <rdio-scanner-admin-todos></rdio-scanner-admin-todos>
-    <mat-accordion displayMode="flat">
+    <mat-accordion displayMode="flat" data-rdio="admin">
         <mat-expansion-panel (afterExpand)="statsComponent.refresh()">
             <mat-expansion-panel-header>
                 <mat-panel-title>
@@ -49,6 +49,10 @@
             </mat-expansion-panel-header>
             <rdio-scanner-admin-tools #toolsComponent (config)="configComponent.reset($event, { dirty: true }); configPanel.open()"></rdio-scanner-admin-tools>
         </mat-expansion-panel>
+        <!-- Plugins add their own sections here. Placed before Logout so a
+             plugin panel never appears below it, which would read as being part
+             of logging out. -->
+        <rdio-plugin-slot name="admin-panel"></rdio-plugin-slot>
         <mat-expansion-panel hideToggle (click)="logout()">
             <mat-expansion-panel-header>
                 <mat-panel-title>

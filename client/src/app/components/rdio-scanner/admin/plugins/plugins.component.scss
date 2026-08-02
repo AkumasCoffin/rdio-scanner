@@ -54,11 +54,11 @@
     }
 
     &.error {
-        background: rgba(239, 68, 68, 0.16);
+        background: rgba(var(--state-danger-rgb), 0.16);
     }
 
     &.info {
-        background: rgba(59, 130, 246, 0.16);
+        background: rgba(var(--state-info-rgb), 0.16);
     }
 }
 
@@ -117,16 +117,16 @@
     white-space: nowrap;
 
     &.running {
-        background: rgba(34, 197, 94, 0.22);
+        background: rgba(var(--state-success-rgb), 0.22);
     }
 
     &.pending {
-        background: rgba(59, 130, 246, 0.22);
+        background: rgba(var(--state-info-rgb), 0.22);
     }
 
     &.missing,
     &.warn {
-        background: rgba(239, 68, 68, 0.22);
+        background: rgba(var(--state-danger-rgb), 0.22);
     }
 
     // Permissions are informational: they tell the admin what a plugin is

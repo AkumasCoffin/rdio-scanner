@@ -21,6 +21,7 @@ import { CommonModule } from '@angular/common';
 import { ModuleWithProviders, NgModule } from '@angular/core';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { ExtraOptions, RouterModule, Routes } from '@angular/router';
+import { RdioScannerPluginSlotComponent } from '../components/rdio-scanner/plugins/plugin-slot.component';
 import { AppMaterialModule } from './material/material.module';
 import { AppUpdateModule } from './update/update.module';
 
@@ -30,12 +31,19 @@ export interface AppSharedModuleConfig {
 }
 
 @NgModule({
+    // The slot component is declared here rather than in the scanner module so
+    // the admin module can use it too. Admin is lazy-loaded and imports only
+    // this, so a slot placed in an admin template would otherwise be an unknown
+    // element — which Angular reports as a template error rather than as the
+    // missing declaration it is.
+    declarations: [RdioScannerPluginSlotComponent],
     exports: [
         AppMaterialModule,
         AppUpdateModule,
         CommonModule,
         FormsModule,
         ReactiveFormsModule,
+        RdioScannerPluginSlotComponent,
         RouterModule,
     ],
 })

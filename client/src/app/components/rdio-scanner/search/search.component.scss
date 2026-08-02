@@ -152,11 +152,11 @@
   gap: 6px;
   padding: 6px 8px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+  scrollbar-color: rgba(var(--line-rgb), 0.35) transparent;
 
   &::-webkit-scrollbar { width: 6px; }
   &::-webkit-scrollbar-thumb {
-    background: rgba(148, 163, 184, 0.35);
+    background: rgba(var(--line-rgb), 0.35);
     border-radius: 3px;
   }
   &::-webkit-scrollbar-track { background: transparent; }

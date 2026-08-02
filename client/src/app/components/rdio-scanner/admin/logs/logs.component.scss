@@ -1,13 +1,13 @@
 .error {
-  color: #fca5a5;
+  color: var(--state-danger-text-dim);
 }
 
 .info {
-  color: #bbf7d0;
+  color: var(--state-success-text);
 }
 
 .warn {
-  color: #fdba74;
+  color: var(--accent-text-dim);
 }
 
 .mat-cell,

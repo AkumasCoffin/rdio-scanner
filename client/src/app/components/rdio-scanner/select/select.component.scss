@@ -55,8 +55,8 @@
   overflow: visible !important;
   text-overflow: clip !important;
   color: var(--text-main) !important;
-  background: rgba(15, 23, 42, 0.9) !important;
-  border: 1px solid rgba(148, 163, 184, 0.3) !important;
+  background: rgba(var(--surface-panel-rgb), 0.9) !important;
+  border: 1px solid rgba(var(--line-rgb), 0.3) !important;
   border-radius: 8px !important;
   cursor: pointer !important;
   transition: all 0.2s ease !important;
@@ -73,7 +73,7 @@
   font-family: inherit !important;
 
   &:hover {
-    background: rgba(30, 41, 59, 0.9) !important;
+    background: rgba(var(--surface-raised-rgb), 0.9) !important;
     border-color: var(--accent) !important;
     color: var(--accent) !important;
     transform: translateY(-1px) !important;
@@ -116,14 +116,14 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.6rem 0.8rem;
-  background: rgba(15, 23, 42, 0.5);
+  background: rgba(var(--surface-panel-rgb), 0.5);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   transition: all 0.2s ease;
   min-width: 0; // Allow flex items to shrink if needed, but buttons have flex-shrink: 0
 
   &:hover {
-    background: rgba(30, 41, 59, 0.7);
+    background: rgba(var(--surface-raised-rgb), 0.7);
     border-color: var(--accent);
   }
 }
@@ -186,8 +186,8 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
   backdrop-filter: blur(4px) !important;
   color: var(--text-main) !important;
-  background: rgba(15, 23, 42, 0.9) !important;
-  border: 1px solid rgba(148, 163, 184, 0.3) !important;
+  background: rgba(var(--surface-panel-rgb), 0.9) !important;
+  border: 1px solid rgba(var(--line-rgb), 0.3) !important;
   font-family: inherit !important;
 
   &:hover {
@@ -220,78 +220,78 @@
   }
 
   &.preset-on {
-    background: radial-gradient(circle at 0 0, rgba(34, 197, 94, 0.4), rgba(15, 23, 42, 0.95)) !important;
-    border: 2px solid rgba(34, 197, 94, 0.6) !important;
-    color: #bbf7d0 !important;
+    background: radial-gradient(circle at 0 0, rgba(var(--state-success-rgb), 0.4), rgba(var(--surface-panel-rgb), 0.95)) !important;
+    border: 2px solid rgba(var(--state-success-rgb), 0.6) !important;
+    color: var(--state-success-text) !important;
     font-weight: 700 !important;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
 
     &:hover {
-      background: radial-gradient(circle at 0 0, rgba(34, 197, 94, 0.6), rgba(15, 23, 42, 1)) !important;
-      border-color: rgba(34, 197, 94, 0.8) !important;
-      color: #dcfce7 !important;
-      box-shadow: 0 0 8px rgba(34, 197, 94, 0.4) !important;
+      background: radial-gradient(circle at 0 0, rgba(var(--state-success-rgb), 0.6), rgba(var(--surface-panel-rgb), 1)) !important;
+      border-color: rgba(var(--state-success-rgb), 0.8) !important;
+      color: var(--state-success-text-strong) !important;
+      box-shadow: 0 0 8px rgba(var(--state-success-rgb), 0.4) !important;
     }
 
     mat-icon {
-      color: #bbf7d0 !important;
+      color: var(--state-success-text) !important;
       filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3)) !important;
     }
   }
 
   &.preset-off {
-    background: radial-gradient(circle at 0 0, rgba(239, 68, 68, 0.4), rgba(15, 23, 42, 0.95)) !important;
-    border: 2px solid rgba(239, 68, 68, 0.6) !important;
-    color: #fca5a5 !important;
+    background: radial-gradient(circle at 0 0, rgba(var(--state-danger-rgb), 0.4), rgba(var(--surface-panel-rgb), 0.95)) !important;
+    border: 2px solid rgba(var(--state-danger-rgb), 0.6) !important;
+    color: var(--state-danger-text-dim) !important;
     font-weight: 700 !important;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
 
     &:hover {
-      background: radial-gradient(circle at 0 0, rgba(239, 68, 68, 0.6), rgba(15, 23, 42, 1)) !important;
-      border-color: rgba(239, 68, 68, 0.8) !important;
-      color: #fee2e2 !important;
-      box-shadow: 0 0 8px rgba(239, 68, 68, 0.4) !important;
+      background: radial-gradient(circle at 0 0, rgba(var(--state-danger-rgb), 0.6), rgba(var(--surface-panel-rgb), 1)) !important;
+      border-color: rgba(var(--state-danger-rgb), 0.8) !important;
+      color: var(--state-danger-text) !important;
+      box-shadow: 0 0 8px rgba(var(--state-danger-rgb), 0.4) !important;
     }
 
     mat-icon {
-      color: #fca5a5 !important;
+      color: var(--state-danger-text-dim) !important;
       filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3)) !important;
     }
   }
 
   &.preset-edit {
-    background: rgba(59, 130, 246, 0.3) !important;
-    border: 2px solid rgba(59, 130, 246, 0.5) !important;
-    color: #93c5fd !important;
+    background: rgba(var(--state-info-rgb), 0.3) !important;
+    border: 2px solid rgba(var(--state-info-rgb), 0.5) !important;
+    color: var(--state-info-text-dim) !important;
     font-weight: 600 !important;
 
     &:hover {
-      background: rgba(59, 130, 246, 0.4) !important;
-      border-color: rgba(59, 130, 246, 0.7) !important;
-      color: #dbeafe !important;
-      box-shadow: 0 0 8px rgba(59, 130, 246, 0.3) !important;
+      background: rgba(var(--state-info-rgb), 0.4) !important;
+      border-color: rgba(var(--state-info-rgb), 0.7) !important;
+      color: var(--state-info-text) !important;
+      box-shadow: 0 0 8px rgba(var(--state-info-rgb), 0.3) !important;
     }
 
     mat-icon {
-      color: #93c5fd !important;
+      color: var(--state-info-text-dim) !important;
     }
   }
 
   &.preset-delete {
-    background: rgba(239, 68, 68, 0.3) !important;
-    border: 2px solid rgba(239, 68, 68, 0.5) !important;
-    color: #fca5a5 !important;
+    background: rgba(var(--state-danger-rgb), 0.3) !important;
+    border: 2px solid rgba(var(--state-danger-rgb), 0.5) !important;
+    color: var(--state-danger-text-dim) !important;
     font-weight: 600 !important;
 
     &:hover {
-      background: rgba(239, 68, 68, 0.4) !important;
-      border-color: rgba(239, 68, 68, 0.7) !important;
-      color: #fee2e2 !important;
-      box-shadow: 0 0 8px rgba(239, 68, 68, 0.3) !important;
+      background: rgba(var(--state-danger-rgb), 0.4) !important;
+      border-color: rgba(var(--state-danger-rgb), 0.7) !important;
+      color: var(--state-danger-text) !important;
+      box-shadow: 0 0 8px rgba(var(--state-danger-rgb), 0.3) !important;
     }
 
     mat-icon {
-      color: #fca5a5 !important;
+      color: var(--state-danger-text-dim) !important;
     }
   }
 }
@@ -310,13 +310,13 @@
   }
 
   &.all-off {
-    background: radial-gradient(circle at 0 0, rgba(239, 68, 68, 0.3), rgba(15, 23, 42, 0.9));
-    border-color: rgba(239, 68, 68, 0.5);
+    background: radial-gradient(circle at 0 0, rgba(var(--state-danger-rgb), 0.3), rgba(var(--surface-panel-rgb), 0.9));
+    border-color: rgba(var(--state-danger-rgb), 0.5);
   }
 
   &.all-on {
-    background: radial-gradient(circle at 0 0, rgba(34, 197, 94, 0.3), rgba(15, 23, 42, 0.9));
-    border-color: rgba(34, 197, 94, 0.5);
+    background: radial-gradient(circle at 0 0, rgba(var(--state-success-rgb), 0.3), rgba(var(--surface-panel-rgb), 0.9));
+    border-color: rgba(var(--state-success-rgb), 0.5);
   }
 }
 
@@ -329,7 +329,7 @@
   font-weight: 400;
   line-height: 20px;
   padding: 4px;
-  background: rgba(15, 23, 42, 0.3);
+  background: rgba(var(--surface-panel-rgb), 0.3);
 
   &:not(:last-child) {
     margin-bottom: 12px;

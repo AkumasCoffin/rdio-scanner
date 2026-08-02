@@ -346,6 +346,11 @@ export class RdioScannerService implements OnDestroy {
         // don't each open one of their own.
         this.pluginHost.setWebsocketSender((command, payload) => this.sendtoWebsocket(command as any, payload));
 
+        // Hand the scanner itself over as ctx.app. Pushed from here rather than
+        // injected by the host, which is constructed first — injecting the other
+        // way round would be a dependency cycle.
+        this.pluginHost.setApp(this);
+
         this.loadVolumeSettings();
         this.loadAutoJumpSetting();
         this.bootstrapAudio();

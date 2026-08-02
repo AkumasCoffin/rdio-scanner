@@ -40,7 +40,7 @@
         }
 
         &.warn {
-            background: rgba(239, 68, 68, 0.14);
+            background: rgba(var(--state-danger-rgb), 0.14);
         }
     }
 

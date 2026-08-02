@@ -110,8 +110,20 @@ export class RdioScannerPluginHostService {
 
     private exposedConfig: { [key: string]: unknown } = {};
 
+    /**
+     * The live RdioScannerService. Handed over by the service itself rather than
+     * injected, because the host is constructed first and injecting the other
+     * way round would be a dependency cycle.
+     */
+    private app: unknown;
+
     constructor(private ngZone: NgZone) {
         this.installGlobal();
+    }
+
+    /** Called once by RdioScannerService so plugins can reach it. */
+    setApp(app: unknown): void {
+        this.app = app;
     }
 
     /**
@@ -530,7 +542,89 @@ export class RdioScannerPluginHostService {
                 style.textContent = css;
                 document.head.appendChild(style);
             },
+
+            /**
+             * The running scanner itself: livefeed, playback, avoid, presets,
+             * search, hold, volume — the same object the app's own components
+             * use, not a copy or a subset.
+             *
+             * Exposed whole deliberately. A curated wrapper would be a second
+             * list to keep in step with the first, and the moment it fell behind
+             * a plugin would be blocked on an rdio release for a method that
+             * already existed. Anything a component can ask the scanner to do, a
+             * plugin can too.
+             */
+            get app(): unknown {
+                return host.app;
+            },
+
+            /**
+             * The theme contract — the CSS custom properties declared on :root in
+             * styles.scss.
+             *
+             * set() writes to the document root, which is where the contract is
+             * defined, so a value set here wins over the stylesheet without any
+             * plugin needing to out-specify component styles. That is the whole
+             * reason the contract exists rather than leaving themes to fight
+             * selectors with !important.
+             */
+            theme: {
+                /** The contract version, so a theme can check before applying. */
+                version(): number {
+                    const raw = getComputedStyle(document.documentElement)
+                        .getPropertyValue('--theme-contract')
+                        .trim();
+                    return Number(raw) || 0;
+                },
+
+                get(name: string): string {
+                    return getComputedStyle(document.documentElement)
+                        .getPropertyValue(host.themeProperty(name))
+                        .trim();
+                },
+
+                set(name: string, value: string): void {
+                    document.documentElement.style.setProperty(host.themeProperty(name), value);
+                },
+
+                /** Applies a whole theme at once. */
+                apply(values: { [name: string]: string }): void {
+                    for (const [name, value] of Object.entries(values || {})) {
+                        document.documentElement.style.setProperty(host.themeProperty(name), value);
+                    }
+                },
+
+                /** Drops overrides and falls back to the stylesheet's values. */
+                reset(names?: string[]): void {
+                    const root = document.documentElement;
+
+                    if (names?.length) {
+                        for (const name of names) {
+                            root.style.removeProperty(host.themeProperty(name));
+                        }
+                        return;
+                    }
+
+                    // No names given: clear every property this page has set
+                    // inline, which is exactly the set of theme overrides.
+                    for (const property of Array.from(root.style)) {
+                        if (property.startsWith('--')) {
+                            root.style.removeProperty(property);
+                        }
+                    }
+                },
+            },
         };
+    }
+
+    /**
+     * Accepts both `accent` and `--accent`. The contract is written with the
+     * leading dashes, but a plugin author reading a theme out of JSON will
+     * reasonably leave them off, and silently doing nothing would be a puzzle.
+     */
+    private themeProperty(name: string): string {
+        const trimmed = String(name).trim();
+        return trimmed.startsWith('--') ? trimmed : `--${trimmed}`;
     }
 
     /**

@@ -17,18 +17,111 @@ $theme: mat-dark-theme($primary, $accent);
 
 @include angular-material-theme($theme);
 
-/* --- CSS VARIABLES --- */
+/* --- THEME CONTRACT ---
+ *
+ * These custom properties are the supported surface for restyling Rdio Scanner.
+ * A themes plugin sets them on :root and the whole interface follows; nothing
+ * below this block should hardcode a colour that a theme would want to change.
+ *
+ * Versioned deliberately. The names are a promise, so a theme written today
+ * keeps working after an rdio update — that is the whole point of publishing a
+ * contract rather than letting plugins fight component styles with !important.
+ * Adding names is a minor change; renaming or removing one is not, and bumps
+ * --theme-contract.
+ *
+ * The -rgb triplets exist because several surfaces are built from translucent
+ * gradients. rgba() cannot take a hex custom property, so the channels have to
+ * be available separately for anything that needs its own alpha.
+ */
 :root {
+	--theme-contract: 1;
+
+	/* Surfaces, darkest to lightest. */
+	--surface-deep: #020617;
+	--surface-deep-rgb: 2, 6, 23;
+	--surface-deep-alt: #111827;
+	--surface-panel: #0f172a;
+	--surface-panel-rgb: 15, 23, 42;
+	--surface-raised: #1e293b;
+	--surface-raised-rgb: 30, 41, 59;
 	--bg: #05070b;
 	--bg-elevated: #10131b;
 	--bg-elevated-soft: #151925;
-	--border-subtle: rgba(148, 163, 184, 0.35);
-	--border-accent: #f97316;
+
+	/* The page backdrop, as a whole, so a theme can replace the gradient rather
+	   than only its stops. */
+	--app-background:
+		radial-gradient(circle at top left, var(--surface-deep-alt) 0, var(--surface-deep) 52%),
+		radial-gradient(circle at bottom right, var(--surface-deep) 0, var(--surface-deep) 65%);
+
+	/* Accent. */
 	--accent: #f97316;
-	--accent-soft: rgba(249, 115, 22, 0.18);
+	--accent-rgb: 249, 115, 22;
+	--accent-strong: #ea580c;
+	--accent-soft: rgba(var(--accent-rgb), 0.18);
+	--border-accent: var(--accent);
+
+	/* Lines and overlays. */
+	--line-rgb: 148, 163, 184;
+	--border-subtle: rgba(var(--line-rgb), 0.35);
+	--border-faint: rgba(var(--line-rgb), 0.18);
+	--hover-overlay: rgba(255, 255, 255, 0.08);
+	--hover-overlay-strong: rgba(255, 255, 255, 0.12);
+
+	/* Text, strongest to faintest. */
+	--text-strong: #ffffff;
 	--text-main: #f9fafb;
+	--text-bright: #e5e7eb;
+	--text-pale: #e2e8f0;
+	--text-pale-rgb: 226, 232, 240;
+	--text-slate: #94a3b8;
+	--text-dim: #cbd5e1;
 	--text-muted: #a1a5b6;
 	--text-soft: #6b7280;
+	--text-faint: #9ca3af;
+
+	/* State colours, used by pills, badges and anything reporting a condition. */
+	--state-danger: #ef4444;
+	--state-danger-rgb: 239, 68, 68;
+	--state-danger-text: #fee2e2;
+	--state-danger-text-dim: #fca5a5;
+	--state-info: #3b82f6;
+	--state-info-rgb: 59, 130, 246;
+	--state-info-text: #dbeafe;
+	--state-info-text-dim: #93c5fd;
+	--state-success: #22c55e;
+	--state-success-rgb: 34, 197, 94;
+	--state-success-text: #bbf7d0;
+	--state-success-text-strong: #dcfce7;
+	--state-warn: #eab308;
+	--state-warn-rgb: 234, 179, 8;
+	--state-warn-text: #fef9c3;
+	--state-accent-text: #ffedd5;
+	--accent-text-dim: #fdba74;
+
+	/* Statistics and charts.
+	   A separate palette on purpose: the stats views predate the current design
+	   system and genuinely use different surfaces, so folding them into the names
+	   above would claim a match that is not there. Named here so a theme can still
+	   reach them. */
+	--stats-surface: #1a1a1a;
+	--stats-surface-raised: #2d2d2d;
+	--stats-text: #e0e0e0;
+	--stats-text-muted: #a0a0a0;
+	--stats-text-faint: #888888;
+	--stats-text-dim: #666666;
+	--chart-purple: #9c27b0;
+	--chart-purple-rgb: 156, 39, 176;
+	--chart-orange: #ff9800;
+	--chart-orange-rgb: 255, 152, 0;
+	--chart-cyan: #00bcd4;
+	--chart-cyan-rgb: 0, 188, 212;
+	--chart-sky: #38bdf8;
+	--chart-sky-rgb: 56, 189, 248;
+	--chart-red: #f44336;
+	--chart-red-rgb: 244, 67, 54;
+
+	/* Shape. */
 	--radius-lg: 18px;
 	--radius-md: 12px;
 	--radius-pill: 999px;
@@ -54,10 +147,8 @@ html, body {
 
 body {
 	font-family: $font-family;
-	background-color: #020617;
-	background:
-		radial-gradient(circle at top left, #111827 0, #020617 52%),
-		radial-gradient(circle at bottom right, #020617 0, #020617 65%);
+	background-color: var(--surface-deep);
+	background: var(--app-background);
 	background-attachment: fixed;
 	background-repeat: no-repeat;
 	color: var(--text-main);
@@ -83,9 +174,9 @@ a:hover {
 }
 
 ::-webkit-scrollbar-thumb {
-	background: linear-gradient(to bottom, rgba(148,163,184,0.0), rgba(148,163,184,0.5));
-	border-radius: 999px;
-	border: 2px solid #020617;
+	background: linear-gradient(to bottom, rgba(var(--line-rgb), 0), rgba(var(--line-rgb), 0.5));
+	border-radius: var(--radius-pill);
+	border: 2px solid var(--surface-deep);
 	opacity: 0;
 	transition: opacity 0.25s ease;
 }
@@ -98,7 +189,7 @@ a:hover {
 /* Firefox scrollbar */
 * {
 	scrollbar-width: thin;
-	scrollbar-color: rgba(148,163,184,0.7) transparent;
+	scrollbar-color: rgba(var(--line-rgb), 0.7) transparent;
 }
 
 /* --- MATERIAL ICONS --- */
@@ -118,7 +209,7 @@ a:hover {
 
 /* --- SNACKBAR --- */
 .snackbar-white {
-	background: rgba(15, 23, 42, 0.95);
+	background: rgba(var(--surface-panel-rgb), 0.95);
 	color: var(--text-main);
 	border: 1px solid var(--border-subtle);
 	backdrop-filter: blur(8px);
@@ -145,13 +236,13 @@ a:hover {
 .card-title {
 	font-size: 1rem;
 	font-weight: 600;
-	color: #fff;
+	color: var(--text-strong);
 }
 
 .card-tag {
 	padding: 0.1rem 0.55rem;
 	border-radius: var(--radius-pill);
-	border: 1px solid rgba(148, 163, 184, 0.5);
+	border: 1px solid rgba(var(--line-rgb), 0.5);
 	font-size: 0.7rem;
 	text-transform: uppercase;
 	letter-spacing: 0.1em;
@@ -175,50 +266,50 @@ a:hover {
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.06em;
-	color: #e5e7eb;
-	border: 1px solid #9ca3af;
-	background: radial-gradient(circle at 0 0, rgba(243,244,246,0.35), rgba(15,23,42,0.95));
+	color: var(--text-bright);
+	border: 1px solid var(--text-faint);
+	background: radial-gradient(circle at 0 0, rgba(243,244,246,0.35), rgba(var(--surface-panel-rgb), 0.95));
 }
 
 .pill-red {
-	color: #fee2e2;
-	border-color: #ef4444;
-	background: radial-gradient(circle at 0 0, rgba(239,68,68,0.55), rgba(15,23,42,0.95));
+	color: var(--state-danger-text);
+	border-color: var(--state-danger);
+	background: radial-gradient(circle at 0 0, rgba(var(--state-danger-rgb), 0.55), rgba(var(--surface-panel-rgb), 0.95));
 }
 
 .pill-blue {
-	color: #dbeafe;
-	border-color: #3b82f6;
-	background: radial-gradient(circle at 0 0, rgba(59,130,246,0.5), rgba(15,23,42,0.95));
+	color: var(--state-info-text);
+	border-color: var(--state-info);
+	background: radial-gradient(circle at 0 0, rgba(var(--state-info-rgb), 0.5), rgba(var(--surface-panel-rgb), 0.95));
 }
 
 .pill-green {
-	color: #bbf7d0;
-	border-color: #22c55e;
-	background: radial-gradient(circle at 0 0, rgba(34,197,94,0.55), rgba(15,23,42,0.95));
+	color: var(--state-success-text);
+	border-color: var(--state-success);
+	background: radial-gradient(circle at 0 0, rgba(var(--state-success-rgb), 0.55), rgba(var(--surface-panel-rgb), 0.95));
 }
 
 .pill-yellow {
-	color: #fef9c3;
-	border-color: #eab308;
-	background: radial-gradient(circle at 0 0, rgba(234,179,8,0.55), rgba(15,23,42,0.95));
+	color: var(--state-warn-text);
+	border-color: var(--state-warn);
+	background: radial-gradient(circle at 0 0, rgba(var(--state-warn-rgb), 0.55), rgba(var(--surface-panel-rgb), 0.95));
 }
 
 .pill-orange {
-	color: #ffedd5;
-	border-color: #f97316;
-	background: radial-gradient(circle at 0 0, rgba(249,115,22,0.55), rgba(15,23,42,0.95));
+	color: var(--state-accent-text);
+	border-color: var(--accent);
+	background: radial-gradient(circle at 0 0, rgba(var(--accent-rgb), 0.55), rgba(var(--surface-panel-rgb), 0.95));
 }
 
 .pill-white {
-	color: #e5e7eb;
-	border-color: #9ca3af;
-	background: radial-gradient(circle at 0 0, rgba(255,255,255,0.15), rgba(15,23,42,0.95));
+	color: var(--text-bright);
+	border-color: var(--text-faint);
+	background: radial-gradient(circle at 0 0, rgba(255,255,255,0.15), rgba(var(--surface-panel-rgb), 0.95));
 }
 
 .badge {
 	padding: 0.1rem 0.6rem;
-	border-radius: 999px;
+	border-radius: var(--radius-pill);
 	font-size: 0.7rem;
 	text-transform: uppercase;
 	border: 1px solid rgba(255,255,255,0.2);
@@ -248,29 +339,29 @@ a:hover {
 
 .btn-primary {
 	background: var(--accent);
-	color: #fff;
-	box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
+	color: var(--text-strong);
+	box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.3);
 }
 
 .btn-primary:hover {
-	background: #ea580c;
+	background: var(--accent-strong);
 	transform: translateY(-1px);
 }
 
 .btn-secondary {
-	background: rgba(255,255,255,0.08);
+	background: var(--hover-overlay);
 	color: var(--text-main);
 	border: 1px solid rgba(255,255,255,0.05);
 }
 
 .btn-secondary:hover {
-	background: rgba(255,255,255,0.12);
+	background: var(--hover-overlay-strong);
 }
 
 .btn-toggle {
 	background: transparent;
 	border: none;
-	color: #cbd5e1;
+	color: var(--text-dim);
 	padding: 6px 10px;
 	border-radius: 20px;
 	font-size: 0.75rem;
@@ -285,13 +376,13 @@ a:hover {
 }
 
 .btn-toggle:hover {
-	color: #fff;
+	color: var(--text-strong);
 	background: rgba(255,255,255,0.1);
 }
 
 .btn-toggle.active {
 	background: rgba(255, 255, 255, 0.1);
-	color: #fff;
+	color: var(--text-strong);
 	box-shadow: 0 2px 10px rgba(0,0,0,0.2);
 }
 
@@ -374,7 +465,7 @@ a:hover {
 	}
 
 	&:hover {
-		background: rgba(30, 41, 59, 0.9) !important;
+		background: rgba(var(--surface-raised-rgb), 0.9) !important;
 		border-color: var(--accent) !important;
 		color: var(--accent) !important;
 		transform: translateY(-1px) !important;
@@ -402,78 +493,78 @@ a:hover {
 	gap: 0.4rem !important;
 
 	&.preset-on {
-		background: radial-gradient(circle at 0 0, rgba(34, 197, 94, 0.4), rgba(15, 23, 42, 0.95)) !important;
-		border: 2px solid rgba(34, 197, 94, 0.6) !important;
-		color: #bbf7d0 !important;
+		background: radial-gradient(circle at 0 0, rgba(var(--state-success-rgb), 0.4), rgba(var(--surface-panel-rgb), 0.95)) !important;
+		border: 2px solid rgba(var(--state-success-rgb), 0.6) !important;
+		color: var(--state-success-text) !important;
 		font-weight: 700 !important;
 		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
 
 		&:hover {
-			background: radial-gradient(circle at 0 0, rgba(34, 197, 94, 0.6), rgba(15, 23, 42, 1)) !important;
-			border-color: rgba(34, 197, 94, 0.8) !important;
-			color: #dcfce7 !important;
-			box-shadow: 0 0 8px rgba(34, 197, 94, 0.4) !important;
+			background: radial-gradient(circle at 0 0, rgba(var(--state-success-rgb), 0.6), rgba(var(--surface-panel-rgb), 1)) !important;
+			border-color: rgba(var(--state-success-rgb), 0.8) !important;
+			color: var(--state-success-text-strong) !important;
+			box-shadow: 0 0 8px rgba(var(--state-success-rgb), 0.4) !important;
 		}
 
 		mat-icon {
-			color: #bbf7d0 !important;
+			color: var(--state-success-text) !important;
 			filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3)) !important;
 		}
 	}
 
 	&.preset-off {
-		background: radial-gradient(circle at 0 0, rgba(239, 68, 68, 0.4), rgba(15, 23, 42, 0.95)) !important;
-		border: 2px solid rgba(239, 68, 68, 0.6) !important;
-		color: #fca5a5 !important;
+		background: radial-gradient(circle at 0 0, rgba(var(--state-danger-rgb), 0.4), rgba(var(--surface-panel-rgb), 0.95)) !important;
+		border: 2px solid rgba(var(--state-danger-rgb), 0.6) !important;
+		color: var(--state-danger-text-dim) !important;
 		font-weight: 700 !important;
 		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
 
 		&:hover {
-			background: radial-gradient(circle at 0 0, rgba(239, 68, 68, 0.6), rgba(15, 23, 42, 1)) !important;
-			border-color: rgba(239, 68, 68, 0.8) !important;
-			color: #fee2e2 !important;
-			box-shadow: 0 0 8px rgba(239, 68, 68, 0.4) !important;
+			background: radial-gradient(circle at 0 0, rgba(var(--state-danger-rgb), 0.6), rgba(var(--surface-panel-rgb), 1)) !important;
+			border-color: rgba(var(--state-danger-rgb), 0.8) !important;
+			color: var(--state-danger-text) !important;
+			box-shadow: 0 0 8px rgba(var(--state-danger-rgb), 0.4) !important;
 		}
 
 		mat-icon {
-			color: #fca5a5 !important;
+			color: var(--state-danger-text-dim) !important;
 			filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3)) !important;
 		}
 	}
 
 	&.preset-edit {
-		background: rgba(59, 130, 246, 0.3) !important;
-		border: 2px solid rgba(59, 130, 246, 0.5) !important;
-		color: #93c5fd !important;
+		background: rgba(var(--state-info-rgb), 0.3) !important;
+		border: 2px solid rgba(var(--state-info-rgb), 0.5) !important;
+		color: var(--state-info-text-dim) !important;
 		font-weight: 600 !important;
 
 		&:hover {
-			background: rgba(59, 130, 246, 0.4) !important;
-			border-color: rgba(59, 130, 246, 0.7) !important;
-			color: #dbeafe !important;
-			box-shadow: 0 0 8px rgba(59, 130, 246, 0.3) !important;
+			background: rgba(var(--state-info-rgb), 0.4) !important;
+			border-color: rgba(var(--state-info-rgb), 0.7) !important;
+			color: var(--state-info-text) !important;
+			box-shadow: 0 0 8px rgba(var(--state-info-rgb), 0.3) !important;
 		}
 
 		mat-icon {
-			color: #93c5fd !important;
+			color: var(--state-info-text-dim) !important;
 		}
 	}
 
 	&.preset-delete {
-		background: rgba(239, 68, 68, 0.3) !important;
-		border: 2px solid rgba(239, 68, 68, 0.5) !important;
-		color: #fca5a5 !important;
+		background: rgba(var(--state-danger-rgb), 0.3) !important;
+		border: 2px solid rgba(var(--state-danger-rgb), 0.5) !important;
+		color: var(--state-danger-text-dim) !important;
 		font-weight: 600 !important;
 
 		&:hover {
-			background: rgba(239, 68, 68, 0.4) !important;
-			border-color: rgba(239, 68, 68, 0.7) !important;
-			color: #fee2e2 !important;
-			box-shadow: 0 0 8px rgba(239, 68, 68, 0.3) !important;
+			background: rgba(var(--state-danger-rgb), 0.4) !important;
+			border-color: rgba(var(--state-danger-rgb), 0.7) !important;
+			color: var(--state-danger-text) !important;
+			box-shadow: 0 0 8px rgba(var(--state-danger-rgb), 0.3) !important;
 		}
 
 		mat-icon {
-			color: #fca5a5 !important;
+			color: var(--state-danger-text-dim) !important;
 		}
 	}
 }
@@ -484,7 +575,7 @@ a:hover {
 	border-radius: var(--radius-md);
 	border: 1px solid var(--border-subtle);
 	overflow: hidden;
-	background: #0f172a;
+	background: var(--surface-panel);
 }
 
 .table-scroll {
@@ -500,13 +591,13 @@ a:hover {
 
 .table th, .table td {
 	padding: 0.5rem 0.7rem;
-	border-bottom: 1px solid rgba(148,163,184,0.18);
+	border-bottom: 1px solid var(--border-faint);
 	text-align: left;
 	vertical-align: top;
 }
 
 .table th {
-	background: #020617;
+	background: var(--surface-deep);
 	position: sticky;
 	top: 0;
 	color: var(--text-soft);
@@ -537,7 +628,7 @@ a:hover {
 .form-input, .form-textarea, .form-select {
 	width: 100%;
 	padding: 0.7rem;
-	background: rgba(2, 6, 23, 0.5);
+	background: rgba(var(--surface-deep-rgb), 0.5);
 	border: 1px solid var(--border-subtle);
 	border-radius: 8px;
 	color: var(--text-main);
@@ -580,7 +671,7 @@ a:hover {
 
 .mat-cell {
 	color: var(--text-muted) !important;
-	border-bottom-color: rgba(148, 163, 184, 0.18) !important;
+	border-bottom-color: var(--border-faint) !important;
 }
 
 .mat-toolbar {
@@ -636,7 +727,7 @@ a:hover {
 }
 
 .mat-icon-button:hover {
-	background: rgba(255, 255, 255, 0.08) !important;
+	background: var(--hover-overlay) !important;
 }
 
 .mat-paginator {
@@ -653,7 +744,7 @@ a:hover {
 	background: var(--bg-elevated) !important;
 
 	&:hover {
-		background: rgba(255, 255, 255, 0.08) !important;
+		background: var(--hover-overlay) !important;
 	}
 
 	&.mat-selected {
@@ -671,7 +762,7 @@ a:hover {
 	color: var(--text-main) !important;
 
 	&:hover {
-		background: rgba(255, 255, 255, 0.08) !important;
+		background: var(--hover-overlay) !important;
 	}
 }
 
@@ -682,7 +773,7 @@ a:hover {
 }
 
 .mat-snack-bar-container {
-	background: rgba(15, 23, 42, 0.95) !important;
+	background: rgba(var(--surface-panel-rgb), 0.95) !important;
 	color: var(--text-main) !important;
 	border: 1px solid var(--border-subtle) !important;
 	backdrop-filter: blur(8px) !important;
