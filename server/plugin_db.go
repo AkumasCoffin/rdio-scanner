@@ -35,7 +35,7 @@ const pluginQueryMaxRows = 50000
 
 // pluginTableIdentifier matches a backtick-quoted identifier in plugin SQL.
 // Plugins write their declared table names; the host rewrites them to the real
-// namespaced names and rejects anything that resolves outside the plugin.
+// namespaced names. Nothing is refused — see rewrite for why.
 var pluginTableIdentifier = regexp.MustCompile("`([a-zA-Z_][a-zA-Z0-9_]*)`")
 
 // pluginSqlLeadingKeyword grabs the first word of a statement so exec/query can
@@ -55,9 +55,12 @@ var pluginQueryStatements = map[string]bool{
 }
 
 // PluginDb is the database handle handed to one plugin. Every statement is
-// rewritten so unqualified table names resolve to that plugin's namespace, and
-// anything referencing a table outside it is refused. This is what makes
-// "plugins get their own tables" an enforced boundary rather than a convention.
+// rewritten so the plugin's declared table names resolve to its own namespace.
+//
+// It is a convenience, not a fence: a plugin may read and write any table in
+// the database, core's included. Saying otherwise here — as this comment used
+// to, twice, seventeen lines before the code that contradicts it — made the
+// boundary look stronger than it is to anyone reading the source to find out.
 type PluginDb struct {
 	database *Database
 	prefix   string
@@ -324,7 +327,13 @@ func pluginDefaultLiteral(column *PluginColumn) (string, error) {
 
 // pluginTableSql builds the create-table statement plus any index statements
 // for one declared table.
-func pluginTableSql(db *Database, manifest *PluginManifest, table *PluginTable) ([]string, error) {
+// pluginTableSql renders one table's DDL, keeping the table and its indexes
+// apart.
+//
+// They have to run in separate phases: an index on a column added by a later
+// version cannot be created until that column exists, and columns are only
+// added after every table is known to be there.
+func pluginTableSql(db *Database, manifest *PluginManifest, table *PluginTable) (string, []string, error) {
 	name := manifest.TableName(table.Name)
 
 	primaryKeys := []string{}
@@ -346,7 +355,7 @@ func pluginTableSql(db *Database, manifest *PluginManifest, table *PluginTable) 
 	for i := range table.Columns {
 		columnSql, err := pluginColumnSql(db, &table.Columns[i], inlinePrimaryKey)
 		if err != nil {
-			return nil, fmt.Errorf("table %q: %v", table.Name, err)
+			return "", nil, fmt.Errorf("table %q: %v", table.Name, err)
 		}
 		parts = append(parts, columnSql)
 	}
@@ -362,9 +371,9 @@ func pluginTableSql(db *Database, manifest *PluginManifest, table *PluginTable) 
 		parts = append(parts, fmt.Sprintf("primary key (%s)", strings.Join(quoted, ", ")))
 	}
 
-	queries := []string{
-		fmt.Sprintf("create table if not exists `%s` (%s)", name, strings.Join(parts, ", ")),
-	}
+	create := fmt.Sprintf("create table if not exists `%s` (%s)", name, strings.Join(parts, ", "))
+
+	indexes := []string{}
 
 	for i := range table.Columns {
 		column := &table.Columns[i]
@@ -374,13 +383,13 @@ func pluginTableSql(db *Database, manifest *PluginManifest, table *PluginTable) 
 		// Index names share the table's namespace so two plugins can declare
 		// the same column name without colliding on Postgres, where index
 		// names are database-wide rather than per-table.
-		queries = append(queries, fmt.Sprintf(
+		indexes = append(indexes, fmt.Sprintf(
 			"create index if not exists `%s_%s_idx` on `%s` (`%s`)",
 			name, column.Name, name, column.Name,
 		))
 	}
 
-	return queries, nil
+	return create, indexes, nil
 }
 
 // pluginConfigTableSql is the host-owned settings table. Identical for every
@@ -392,27 +401,102 @@ func pluginConfigTableSql(db *Database, manifest *PluginManifest) string {
 	)
 }
 
-// CreatePluginSchema creates the config table and every manifest-declared table.
+// CreatePluginSchema creates the config table and every manifest-declared table,
+// and brings existing tables up to what the manifest now declares.
 //
-// This is recorded in rdioScannerMeta keyed by plugin id *and* version, so a
-// plugin that adds a table in a later version gets it created on upgrade while
-// already-created tables are left alone. Statements are all "if not exists", so
-// a partially-applied run is safe to repeat — which matters because MySQL
-// auto-commits DDL and cannot roll the batch back.
+// Every statement is idempotent, so this runs on install and on every start
+// without needing a ledger to say what has been applied. That matters because
+// MySQL auto-commits DDL and cannot roll a batch back: the only safe design is
+// one where repeating the whole thing is a no-op.
+//
+// New columns are the part that was missing. `create table if not exists` is a
+// no-op against a table that already exists, so a plugin that added a column in
+// a later version got it on fresh installs and never on existing ones — and
+// every insert naming it failed at runtime, with the only recovery being a
+// purge that destroys the data. Indexes on existing tables were being created
+// all along, so half the schema evolved and half did not.
 func CreatePluginSchema(db *Database, manifest *PluginManifest) error {
+	// Three phases, in this order, because each depends on the one before:
+	// a column cannot be added to a table that does not exist, and an index
+	// cannot be created on a column that does not exist.
 	queries := []string{pluginConfigTableSql(db, manifest)}
+	indexes := []string{}
 
 	for i := range manifest.Tables {
-		tableQueries, err := pluginTableSql(db, manifest, &manifest.Tables[i])
+		create, tableIndexes, err := pluginTableSql(db, manifest, &manifest.Tables[i])
 		if err != nil {
 			return err
 		}
-		queries = append(queries, tableQueries...)
+		queries = append(queries, create)
+		indexes = append(indexes, tableIndexes...)
 	}
 
 	for _, query := range queries {
 		if _, err := db.Exec(query); err != nil {
 			return fmt.Errorf("%v while doing %s", err, query)
+		}
+	}
+
+	for i := range manifest.Tables {
+		if err := addMissingPluginColumns(db, manifest, &manifest.Tables[i]); err != nil {
+			return err
+		}
+	}
+
+	for _, query := range indexes {
+		if _, err := db.Exec(query); err != nil {
+			return fmt.Errorf("%v while doing %s", err, query)
+		}
+	}
+
+	return nil
+}
+
+// addMissingPluginColumns adds manifest columns that the live table does not
+// have yet.
+//
+// Only additions. A column that changed type, or one the manifest dropped, is
+// left exactly as it is: rewriting a column loses data on some backends and
+// silently truncates on others, and there is no version of "guess what the
+// author meant" that is safe to do unattended. A plugin needing that can do it
+// from its own startup handler, where it can decide.
+func addMissingPluginColumns(db *Database, manifest *PluginManifest, table *PluginTable) error {
+	name := manifest.TableName(table.Name)
+
+	for i := range table.Columns {
+		column := &table.Columns[i]
+
+		present, err := db.columnPresent(name, column.Name)
+		if err != nil {
+			return fmt.Errorf("table %q: cannot tell whether column %q exists: %v", table.Name, column.Name, err)
+		}
+		if present {
+			continue
+		}
+
+		// A key cannot be introduced after the fact on any backend we support,
+		// and pretending otherwise would leave the table subtly wrong. Say so
+		// instead: the plugin card shows this, which is the only way an admin
+		// would ever find out.
+		if column.PrimaryKey {
+			return fmt.Errorf(
+				"table %q declares %q as a primary key, but the table already exists without it; a key cannot be added to a table that has rows — purge this plugin's data to recreate it",
+				table.Name, column.Name,
+			)
+		}
+
+		columnSql, err := pluginColumnSql(db, column, false)
+		if err != nil {
+			return fmt.Errorf("table %q: %v", table.Name, err)
+		}
+
+		query := fmt.Sprintf("alter table `%s` add column %s", name, columnSql)
+
+		if _, err := db.Exec(query); err != nil {
+			return fmt.Errorf(
+				"table %q: cannot add column %q: %v. A column that is not nullable needs a default before it can be added to a table that already has rows.",
+				table.Name, column.Name, err,
+			)
 		}
 	}
 
