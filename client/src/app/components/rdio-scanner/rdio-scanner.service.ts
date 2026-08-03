@@ -370,6 +370,14 @@ export class RdioScannerService implements OnDestroy {
         // way round would be a dependency cycle.
         this.pluginHost.setApp(this);
 
+        // Mirror state onto <body> for plugin CSS.
+        //
+        // Hooked to the event stream rather than to each place that changes a
+        // field: every one of these already travels through here to reach the
+        // components, so one subscription cannot fall out of step the way
+        // twenty scattered calls would.
+        this.event.subscribe((event) => this.mirrorState(event));
+
         this.loadVolumeSettings();
         this.loadAutoJumpSetting();
         this.bootstrapAudio();
@@ -1346,6 +1354,41 @@ export class RdioScannerService implements OnDestroy {
     // the same instant the next call's remaining time takes its place.
     private computeDelay(): number {
         return this.computeQueueTime() + this.remainingCurrentCallSec();
+    }
+
+    // mirrorState publishes scanner state as attributes on <body>, so plugin
+    // CSS can key on it without any plugin JavaScript running.
+    //
+    // Each field is mirrored only when the event actually carries it: these
+    // events are partial by design — a queue tick sends `queue` and nothing
+    // else — so reading absent fields as their falsy value would report the
+    // livefeed offline every time a call's duration was decoded.
+    private mirrorState(event: RdioScannerEvent): void {
+        if (event.livefeedMode !== undefined) {
+            this.pluginHost.setState(
+                'livefeed',
+                event.livefeedMode === RdioScannerLivefeedMode.Offline ? 'off' : 'on',
+            );
+        }
+
+        // Pause is its own attribute rather than a third livefeed value: a
+        // paused feed is still online, and collapsing the two would leave a
+        // rule for "online" not matching while paused.
+        if (event.pause !== undefined) {
+            this.pluginHost.setState('paused', event.pause);
+        }
+
+        if (event.linked !== undefined) {
+            this.pluginHost.setState('linked', event.linked);
+        }
+
+        if (event.holdSys !== undefined || event.holdTg !== undefined) {
+            this.pluginHost.setState('hold', event.holdSys ? 'sys' : event.holdTg ? 'tg' : 'none');
+        }
+
+        if ('call' in event) {
+            this.pluginHost.setState('call', !!event.call);
+        }
     }
 
     // ensureCallDuration decodes a queued call's audio once to learn its length

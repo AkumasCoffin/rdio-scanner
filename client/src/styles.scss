@@ -34,7 +34,8 @@ $theme: mat-dark-theme($primary, $accent);
  * be available separately for anything that needs its own alpha.
  */
 :root {
-	--theme-contract: 1;
+	/* 2 added type, spacing and stacking. Nothing from 1 was renamed. */
+	--theme-contract: 2;
 
 	/* Surfaces, darkest to lightest. */
 	--surface-deep: #020617;
@@ -127,6 +128,39 @@ $theme: mat-dark-theme($primary, $accent);
 	--radius-pill: 999px;
 	--shadow-soft: 0 18px 40px rgba(0, 0, 0, 0.65);
 	--sidebar-width: 260px;
+
+	/*
+	 * Type. Published because a plugin adding a panel has to match the
+	 * interface it sits in, and until these existed the only way to do that
+	 * was to read the font off a component's stylesheet and hardcode it —
+	 * which is exactly the coupling the contract exists to avoid.
+	 */
+	--font-sans: 'Roboto', 'Helvetica Neue', sans-serif;
+	--font-mono: 'Roboto Mono', ui-monospace, monospace;
+	--font-size-xs: 11px;
+	--font-size-sm: 12px;
+	--font-size-md: 13px;
+	--font-size-lg: 15px;
+	--font-size-xl: 18px;
+	--font-weight-normal: 400;
+	--font-weight-medium: 500;
+	--font-weight-bold: 700;
+
+	/* Spacing, so a plugin's gaps line up with everything around them. */
+	--space-xs: 4px;
+	--space-sm: 8px;
+	--space-md: 16px;
+	--space-lg: 24px;
+	--space-xl: 32px;
+
+	/*
+	 * Stacking. A plugin adding an overlay was previously guessing at a
+	 * z-index and finding out whether it had guessed high enough only once
+	 * a panel opened over it.
+	 */
+	--z-panel: 100;
+	--z-overlay: 500;
+	--z-fab: 900;
 }
 
 /* --- RESET & BASE --- */

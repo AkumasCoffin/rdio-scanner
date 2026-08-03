@@ -17,6 +17,7 @@
 
 import { Injectable, NgZone } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
+import { anchorSelector, boostSelector, cssDeclarations } from './plugin-css';
 
 /**
  * The webapp is AOT-compiled and embedded in the server binary, so a plugin
@@ -124,6 +125,16 @@ interface PageRegistration {
 }
 
 /**
+ * Where a plugin's content goes relative to the element it matched.
+ *
+ * `append` was the only behaviour there used to be, which made whole categories
+ * of request inexpressible: a button *beside* AVOID rather than inside it, a
+ * banner above the history table, a replacement for a control rather than an
+ * addition to it.
+ */
+export type DomPosition = 'append' | 'prepend' | 'before' | 'after' | 'replace';
+
+/**
  * A plugin attaching to arbitrary page elements rather than a named slot.
  *
  * Slots are convenience anchors, not a boundary — plugin code runs with full
@@ -139,6 +150,29 @@ interface DomAttachment {
     /** Elements already mounted, with their teardown. */
     mounted: Map<Element, (() => void) | undefined>;
     once: boolean;
+    position: DomPosition;
+    /**
+     * Elements hidden by a `replace`, so teardown can bring them back. The
+     * original is hidden rather than removed: removing a node Angular is still
+     * rendering into means the next change detection writes into a detached
+     * tree, and the element never comes back when the plugin is disabled.
+     */
+    replaced?: Map<Element, string>;
+}
+
+/**
+ * A plugin changing an element that is already on the page, rather than adding
+ * one to it.
+ *
+ * Kept separate from DomAttachment because the lifecycle is the opposite way
+ * round: an attachment owns a node it created and removes it, while this one
+ * borrows a node the application owns and must put it back as it found it.
+ */
+interface DomDecoration {
+    pluginId: string;
+    selector: string;
+    decorate: (element: Element) => (() => void) | void;
+    applied: Map<Element, (() => void) | undefined>;
 }
 
 /**
@@ -176,7 +210,17 @@ export class RdioScannerPluginHostService {
     private wsSender?: (command: string, payload: unknown) => void;
 
     private attachments: DomAttachment[] = [];
+    private decorations: DomDecoration[] = [];
     private observer?: MutationObserver;
+
+    /** One stylesheet per plugin, and the rules in it, keyed by selector. */
+    private styleSheets = new Map<string, HTMLStyleElement>();
+    private styleRules = new Map<string, Map<string, string>>();
+    /** Bulk CSS from injectCss, kept apart so setting a rule cannot erase it. */
+    private styleBulk = new Map<string, string[]>();
+    /** Everything that has to stay at the end of <head>, links included. */
+    private keepLast = new Set<HTMLElement>();
+    private headObserver?: MutationObserver;
 
     /** Last value of each event, replayed to handlers that register late. */
     private lastEvent = new Map<string, unknown>();
@@ -197,6 +241,47 @@ export class RdioScannerPluginHostService {
     /** Called once by RdioScannerService so plugins can reach it. */
     setApp(app: unknown): void {
         this.app = app;
+    }
+
+    /**
+     * Mirrors a piece of scanner state onto <body> as a data attribute, so a
+     * plugin can respond to it in CSS alone.
+     *
+     * Livefeed on or off, holding, which panel is open, whether a call is
+     * playing — all of it lives in Angular component fields, so a plugin that
+     * wanted a style to follow it had to subscribe in JavaScript and toggle
+     * classes by hand, for something the cascade does natively:
+     *
+     *     body[data-rdio-livefeed="on"] [data-rdio="led"] { … }
+     *
+     * Written outside the Angular zone. This runs on every call and every
+     * livefeed change, and scheduling change detection for an attribute
+     * nothing in the application reads would be pure cost.
+     */
+    setState(name: string, value: string | number | boolean | null | undefined): void {
+        const attribute = `data-rdio-${name}`;
+
+        this.ngZone.runOutsideAngular(() => {
+            const body = document.body;
+
+            if (!body) {
+                return;
+            }
+
+            if (value === null || value === undefined || value === '') {
+                body.removeAttribute(attribute);
+                return;
+            }
+
+            const text = typeof value === 'boolean' ? (value ? '1' : '0') : String(value);
+
+            // Only on a real change: MutationObservers watch this document, and
+            // rewriting an identical value would wake every one of them for
+            // nothing on each call.
+            if (body.getAttribute(attribute) !== text) {
+                body.setAttribute(attribute, text);
+            }
+        });
     }
 
     /**
@@ -368,6 +453,12 @@ export class RdioScannerPluginHostService {
         this.applyAttachment(attachment);
     }
 
+    private decorateWith(decoration: DomDecoration): void {
+        this.decorations.push(decoration);
+        this.ensureObserver();
+        this.applyDecoration(decoration);
+    }
+
     private applyAttachment(attachment: DomAttachment): void {
         let targets: Element[];
 
@@ -391,7 +482,10 @@ export class RdioScannerPluginHostService {
 
             const child = document.createElement('div');
             child.dataset['rdioPlugin'] = attachment.pluginId;
-            target.appendChild(child);
+
+            if (!this.place(attachment, target, child)) {
+                continue;
+            }
 
             let teardown: (() => void) | undefined;
 
@@ -417,15 +511,145 @@ export class RdioScannerPluginHostService {
         }
     }
 
+    /**
+     * Puts the plugin's node where the attachment asked for it.
+     *
+     * Reports whether it landed. `before`, `after` and `replace` all need the
+     * match to have a parent — `before` on `<html>` has nowhere to go — and
+     * silently appending inside instead would be worse than not mounting, since
+     * the plugin would see content on the page in the wrong place and no error.
+     */
+    private place(attachment: DomAttachment, target: Element, child: HTMLElement): boolean {
+        const parent = target.parentNode;
+
+        switch (attachment.position) {
+            case 'prepend':
+                target.insertBefore(child, target.firstChild);
+                return true;
+
+            case 'before':
+                if (!parent) {
+                    break;
+                }
+                parent.insertBefore(child, target);
+                return true;
+
+            case 'after':
+                if (!parent) {
+                    break;
+                }
+                parent.insertBefore(child, target.nextSibling);
+                return true;
+
+            case 'replace':
+                if (!parent) {
+                    break;
+                }
+                parent.insertBefore(child, target.nextSibling);
+
+                // Hidden, not removed. Angular still owns this node and keeps
+                // rendering into it; detaching it means the next change
+                // detection writes into a tree nothing is showing, and the
+                // element cannot be brought back when the plugin is disabled.
+                attachment.replaced = attachment.replaced || new Map();
+                if (!attachment.replaced.has(target)) {
+                    attachment.replaced.set(target, (target as HTMLElement).style.display);
+                }
+                (target as HTMLElement).style.display = 'none';
+                return true;
+
+            default:
+                target.appendChild(child);
+                return true;
+        }
+
+        console.error(
+            `[rdio-scanner] plugin ${attachment.pluginId} cannot place content ${attachment.position} ` +
+                `${attachment.selector}: it has no parent`,
+        );
+
+        return false;
+    }
+
     private detach(attachment: DomAttachment): void {
         for (const [, teardown] of Array.from(attachment.mounted.entries())) {
             this.safely(() => teardown?.());
         }
         attachment.mounted.clear();
 
+        // Anything a `replace` hid comes back, and comes back to the value it
+        // had rather than to empty — the element may have had a display of its
+        // own before the plugin ever touched it.
+        for (const [element, display] of Array.from(attachment.replaced || [])) {
+            (element as HTMLElement).style.display = display;
+        }
+        attachment.replaced?.clear();
+
         for (const node of Array.from(document.querySelectorAll(`div[data-rdio-plugin="${attachment.pluginId}"]`))) {
             node.remove();
         }
+    }
+
+    /**
+     * Runs a plugin's decoration over every match, now and as matches appear.
+     *
+     * The teardown a decoration returns is the plugin's own undo. Nothing here
+     * can infer it: the host cannot know that setting a class means removing
+     * that class, or that rewriting text means restoring the old text, so the
+     * contract is that a decoration returns the function that puts things back.
+     */
+    private applyDecoration(decoration: DomDecoration): void {
+        let targets: Element[];
+
+        try {
+            targets = Array.from(document.querySelectorAll(decoration.selector));
+        } catch {
+            console.error(
+                `[rdio-scanner] plugin ${decoration.pluginId} used an invalid selector: ${decoration.selector}`,
+            );
+            return;
+        }
+
+        for (const target of targets) {
+            if (decoration.applied.has(target)) {
+                continue;
+            }
+
+            let undo: (() => void) | undefined;
+
+            try {
+                const result = decoration.decorate(target);
+                if (typeof result === 'function') {
+                    undo = result;
+                }
+            } catch (err) {
+                console.error(
+                    `[rdio-scanner] plugin ${decoration.pluginId} failed to decorate ${decoration.selector}`,
+                    err,
+                );
+            }
+
+            decoration.applied.set(target, undo);
+        }
+
+        // An element that has left the document is already gone as far as the
+        // page is concerned, so its undo would be writing to a detached node —
+        // dropped rather than run, so the map does not grow without bound as
+        // history rows scroll through.
+        for (const element of Array.from(decoration.applied.keys())) {
+            if (!element.isConnected) {
+                decoration.applied.delete(element);
+            }
+        }
+    }
+
+    private undecorate(decoration: DomDecoration): void {
+        for (const [element, undo] of Array.from(decoration.applied.entries())) {
+            if (element.isConnected) {
+                this.safely(() => undo?.());
+            }
+        }
+        decoration.applied.clear();
     }
 
     /**
@@ -450,12 +674,145 @@ export class RdioScannerPluginHostService {
                 for (const attachment of this.attachments) {
                     this.applyAttachment(attachment);
                 }
+                for (const decoration of this.decorations) {
+                    this.applyDecoration(decoration);
+                }
             });
         });
 
         this.ngZone.runOutsideAngular(() => {
             this.observer?.observe(document.body, { childList: true, subtree: true });
         });
+    }
+
+    /**
+     * A plugin's stylesheet, created on first use and kept at the end of
+     * <head>.
+     *
+     * Position is the whole point. Angular's emulated encapsulation gives a
+     * component rule an extra `[_ngcontent-*]` attribute, so a plugin's plain
+     * `.rdio-button` is out-specified before order is even consulted. Matching
+     * that specificity only produces a tie — and a tie is settled by source
+     * order, which a plugin cannot control: plugin code loads once the server's
+     * config arrives, but the admin module is lazy-loaded and injects its styles
+     * later, winning every tie on the one screen a plugin is most likely to be
+     * styling.
+     */
+    private pluginStyleSheet(pluginId: string): HTMLStyleElement {
+        let sheet = this.styleSheets.get(pluginId);
+
+        if (!sheet) {
+            sheet = document.createElement('style');
+            sheet.dataset['rdioPluginStyles'] = pluginId;
+            this.styleSheets.set(pluginId, sheet);
+            this.trackLast(sheet);
+        }
+
+        return sheet;
+    }
+
+    /** Appends an element to <head> and keeps it there, at the end. */
+    trackLast(element: HTMLElement): void {
+        document.head.appendChild(element);
+        this.keepLast.add(element);
+        this.ensureHeadObserver();
+    }
+
+    /**
+     * Moves plugin stylesheets back to the end of <head> whenever anything else
+     * is added after them, so "last" stays true for the life of the page rather
+     * than only at the moment the plugin loaded.
+     */
+    private ensureHeadObserver(): void {
+        if (this.headObserver) {
+            return;
+        }
+
+        let scheduled = false;
+
+        this.headObserver = new MutationObserver(() => {
+            if (scheduled) {
+                return;
+            }
+            scheduled = true;
+            requestAnimationFrame(() => {
+                scheduled = false;
+                this.keepStylesLast();
+            });
+        });
+
+        this.ngZone.runOutsideAngular(() => {
+            this.headObserver?.observe(document.head, { childList: true });
+        });
+    }
+
+    private keepStylesLast(): void {
+        for (const element of this.keepLast) {
+            // Only when something actually follows it. Re-appending
+            // unconditionally would retrigger the observer forever.
+            if (element.parentNode === document.head && element.nextSibling) {
+                document.head.appendChild(element);
+            }
+        }
+    }
+
+    setStyleRule(
+        pluginId: string,
+        selector: string,
+        properties: { [name: string]: string | number } | null,
+        important = false,
+    ): void {
+        const rules = this.styleRules.get(pluginId) || new Map<string, string>();
+        this.styleRules.set(pluginId, rules);
+
+        const boosted = boostSelector(selector);
+
+        if (!boosted) {
+            console.error(`[rdio-scanner] plugin ${pluginId} styles.set() needs a selector`);
+            return;
+        }
+
+        // Null clears just this rule, so a plugin can undo one thing without
+        // dropping everything else it has set.
+        if (!properties) {
+            rules.delete(boosted);
+        } else {
+            rules.set(boosted, cssDeclarations(properties, important));
+        }
+
+        this.renderStyles(pluginId);
+    }
+
+    clearStyles(pluginId: string): void {
+        this.styleRules.delete(pluginId);
+        this.styleBulk.delete(pluginId);
+        this.renderStyles(pluginId);
+    }
+
+    private renderStyles(pluginId: string): void {
+        const sheet = this.pluginStyleSheet(pluginId);
+
+        // Bulk first, rules after, so a rule set through styles.set() overrides
+        // the plugin's own bulk CSS at equal specificity rather than the order
+        // depending on which call happened to come last.
+        const parts = [...(this.styleBulk.get(pluginId) || [])];
+
+        for (const [selector, body] of this.styleRules.get(pluginId) || []) {
+            parts.push(`${selector} { ${body} }`);
+        }
+
+        sheet.textContent = parts.join('\n');
+
+        this.keepStylesLast();
+    }
+
+    /** Bulk CSS goes into the same kept-last sheet, so it inherits the same win. */
+    appendCss(pluginId: string, css: string): void {
+        const bulk = this.styleBulk.get(pluginId) || [];
+        bulk.push(css);
+        this.styleBulk.set(pluginId, bulk);
+
+        this.renderStyles(pluginId);
     }
 
     private notifySlot(name: string): void {
@@ -528,6 +885,13 @@ export class RdioScannerPluginHostService {
         }
         this.attachments = this.attachments.filter((a) => a.pluginId !== pluginId);
 
+        // Decorations before styles, so an element handed back to the
+        // application is not left wearing a rule the plugin set on it.
+        for (const decoration of this.decorations.filter((d) => d.pluginId === pluginId)) {
+            this.undecorate(decoration);
+        }
+        this.decorations = this.decorations.filter((d) => d.pluginId !== pluginId);
+
         const views = this.views.value.filter((view) => view.pluginId !== pluginId);
         if (views.length !== this.views.value.length) {
             this.views.next(views);
@@ -539,6 +903,20 @@ export class RdioScannerPluginHostService {
         for (const node of Array.from(document.querySelectorAll(`style[data-rdio-plugin="${pluginId}"]`))) {
             node.remove();
         }
+
+        // The style layer, and anything loadStyle put in head. Dropped from the
+        // keep-last set as well as the document, or the observer would keep
+        // trying to reposition nodes that are no longer anywhere.
+        for (const selector of [`style[data-rdio-plugin-styles="${pluginId}"]`, `link[data-rdio-plugin="${pluginId}"]`]) {
+            for (const node of Array.from(document.querySelectorAll(selector))) {
+                this.keepLast.delete(node as HTMLElement);
+                node.remove();
+            }
+        }
+
+        this.styleSheets.delete(pluginId);
+        this.styleRules.delete(pluginId);
+        this.styleBulk.delete(pluginId);
     }
 
     /**
@@ -672,12 +1050,39 @@ export class RdioScannerPluginHostService {
              * plugin is disabled.
              */
             dom: {
-                attach(selector: string, factory: SlotFactory): void {
-                    host.attach({ pluginId, selector, factory, mounted: new Map(), once: false });
+                attach(selector: string, factory: SlotFactory, options?: { position?: DomPosition }): void {
+                    host.attach({
+                        pluginId,
+                        selector,
+                        factory,
+                        mounted: new Map(),
+                        once: false,
+                        position: options?.position || 'append',
+                    });
                 },
                 /** Mounts into the first match only, e.g. a single overlay. */
-                attachOnce(selector: string, factory: SlotFactory): void {
-                    host.attach({ pluginId, selector, factory, mounted: new Map(), once: true });
+                attachOnce(selector: string, factory: SlotFactory, options?: { position?: DomPosition }): void {
+                    host.attach({
+                        pluginId,
+                        selector,
+                        factory,
+                        mounted: new Map(),
+                        once: true,
+                        position: options?.position || 'append',
+                    });
+                },
+                /**
+                 * Changes an element that is already there, rather than adding
+                 * one — a class, an attribute, the text of a button.
+                 *
+                 * The function is handed the matched element itself, not a
+                 * container inside it, which is the thing `attach` structurally
+                 * cannot do. Return a function that puts the element back as it
+                 * was: the host cannot infer that setting a class means removing
+                 * it, so restoring on teardown is the plugin's to declare.
+                 */
+                decorate(selector: string, fn: (element: Element) => (() => void) | void): void {
+                    host.decorateWith({ pluginId, selector, decorate: fn, applied: new Map() });
                 },
                 /** Escape hatch: the raw document, for anything the above cannot express. */
                 document(): Document {
@@ -739,16 +1144,89 @@ export class RdioScannerPluginHostService {
                         el.dataset['rdioPlugin'] = pluginId;
                         el.onload = () => resolve();
                         el.onerror = () => reject(new Error(`cannot load ${path}`));
-                        document.head.appendChild(el);
+                        // Tracked, so a plugin's own stylesheet gets the same
+                        // guarantee its inline rules do: still last in <head>
+                        // after the admin module lazy-loads its styles.
+                        host.trackLast(el);
                     });
                 },
             },
 
             injectCss(css: string): void {
-                const style = document.createElement('style');
-                style.dataset['rdioPlugin'] = pluginId;
-                style.textContent = css;
-                document.head.appendChild(style);
+                host.appendCss(pluginId, String(css || ''));
+            },
+
+            /**
+             * Individual rules, in a stylesheet the host keeps at the end of
+             * <head> and boosts to match an encapsulated component's
+             * specificity — so a rule set here takes effect, which plain CSS
+             * injected into the page does not reliably do.
+             *
+             * `important` stays opt-in. Making it the default would put plugin
+             * styling beyond the reach of the user's own theme and leave two
+             * plugins with no way to resolve a disagreement; the placement and
+             * specificity above win without either cost.
+             */
+            styles: {
+                set(
+                    selector: string,
+                    properties: { [name: string]: string | number } | null,
+                    options?: { important?: boolean },
+                ): void {
+                    host.setStyleRule(pluginId, selector, properties, !!options?.important);
+                },
+                /** Drops one rule, or every rule this plugin has set. */
+                clear(selector?: string): void {
+                    if (selector) {
+                        host.setStyleRule(pluginId, selector, null);
+                        return;
+                    }
+                    host.clearStyles(pluginId);
+                },
+            },
+
+            /**
+             * The two things nearly every plugin doing UI work wants, by anchor
+             * name rather than by selector.
+             *
+             * Both are a line of CSS or a decoration underneath, but neither
+             * should require knowing that an anchor is spelled
+             * `[data-rdio="…"]`, nor which of the two mechanisms is the right
+             * one for the job.
+             */
+            ui: {
+                /** Hides a built-in element. Reversible with show(). */
+                hide(anchor: string): void {
+                    host.setStyleRule(pluginId, anchorSelector(anchor), { display: 'none' });
+                },
+                show(anchor: string): void {
+                    host.setStyleRule(pluginId, anchorSelector(anchor), null);
+                },
+                /**
+                 * Rewrites an element's text, restoring the original when the
+                 * plugin is disabled.
+                 *
+                 * Text rather than markup, deliberately: a plugin should not be
+                 * injecting HTML into the application's own controls. The cost
+                 * is that it replaces everything inside, so a two-line label
+                 * built with a <br> — LIVE FEED, HOLD SYS — comes back as one
+                 * line. Anything needing more structure than that wants
+                 * `dom.decorate`, or `attach` with `position: 'replace'`.
+                 */
+                setLabel(anchor: string, label: string): void {
+                    host.decorateWith({
+                        pluginId,
+                        selector: anchorSelector(anchor),
+                        applied: new Map(),
+                        decorate(element: Element) {
+                            const original = element.textContent;
+                            element.textContent = String(label);
+                            return () => {
+                                element.textContent = original;
+                            };
+                        },
+                    });
+                },
             },
 
             /**

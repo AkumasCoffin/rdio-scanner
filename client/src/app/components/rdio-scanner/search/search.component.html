@@ -1,6 +1,6 @@
-<div class="rdio-search">
+<div class="rdio-search" data-rdio="search">
     <!-- Slim, sticky filter bar on top -->
-    <section class="filter-bar" [formGroup]="form">
+    <section class="filter-bar" data-rdio="search-filters" [formGroup]="form">
         <div class="filter-row">
             <mat-form-field appearance="fill" class="f f-q">
                 <mat-label>Search transcripts</mat-label>
@@ -64,7 +64,7 @@
                 </mat-select>
             </mat-form-field>
 
-            <div class="filter-actions">
+            <div class="filter-actions" data-rdio="search-actions">
                 <mat-slide-toggle [checked]="downloadMode" (change)="toggleDownloadMode()"
                     color="primary" labelPosition="before" title="Bulk download mode">
                     <mat-icon>save_alt</mat-icon>
@@ -86,7 +86,7 @@
     </section>
 
     <!-- Results list — takes the remaining viewport -->
-    <section class="results">
+    <section class="results" data-rdio="search-results">
         <div class="select-all-bar" *ngIf="downloadMode">
             <mat-checkbox [checked]="areAllVisibleSelected()" [indeterminate]="areSomeVisibleSelected()"
                 (change)="toggleSelectAll()" color="primary">
@@ -95,7 +95,7 @@
             <span class="selected-count">{{ getSelectedCount() }} selected</span>
         </div>
 
-        <div class="call-row"
+        <div class="call-row" data-rdio="search-row"
             *ngFor="let row of (results | async); trackBy: trackCall; let i = index"
             [class.highlighted]="isHighlighted(row?.id)"
             [class.replaying]="row && call && row.id === call.id"

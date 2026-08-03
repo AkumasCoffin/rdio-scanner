@@ -5,11 +5,11 @@
     targeting .history tr never could.
 -->
 <div class="rdio-status" data-rdio="status">
-    <div class="branding">{{ branding }}</div>
+    <div class="branding" data-rdio="branding">{{ branding }}</div>
     <div class="stream-controlling" *ngIf="controllingStream">
         <span class="dot"></span>CONTROLLING STREAM DISPLAY
     </div>
-    <div class="led" [ngClass]="ledStyle"></div>
+    <div class="led" data-rdio="led" [ngClass]="ledStyle"></div>
 </div>
 <div class="rdio-display" data-rdio="lcd" [ngClass]="{ idle: !dimmer }" (dblclick)="toggleFullscreen.emit()">
     <div class="row">
@@ -77,7 +77,7 @@
             <span class="flag" [ngClass]="{ flaged: patched }">PATCH</span>
         </div>
     </div>
-    <div *ngIf="transcriptionEnabled" class="live-transcript" [class.empty]="!displayCall?.transcript"
+    <div *ngIf="transcriptionEnabled" class="live-transcript" data-rdio="lcd-transcript" [class.empty]="!displayCall?.transcript"
         [ngClass]="liveTranscriptColor">
         <div class="live-transcript-label">
             <mat-icon class="live-icon">graphic_eq</mat-icon>
@@ -153,65 +153,65 @@
         </table>
     </div>
 </div>
-<div class="rdio-control">
+<div class="rdio-control" data-rdio="controls">
     <div class="row">
-        <button class="rdio-button" (click)="livefeed()" [disabled]="controllingStream"
+        <button class="rdio-button" data-rdio="control-livefeed" (click)="livefeed()" [disabled]="controllingStream"
             [ngClass]="{ off: livefeedOffline && !playbackMode, on: livefeedOnline, partial: playbackMode }">
             LIVE<br>FEED
         </button>
         <div class="spacer"></div>
-        <button class="rdio-button" (click)="holdSystem()" [ngClass]="{ off: !holdSys, on: holdSys }">
+        <button class="rdio-button" data-rdio="control-hold-sys" (click)="holdSystem()" [ngClass]="{ off: !holdSys, on: holdSys }">
             HOLD<br>SYS
         </button>
         <div class="spacer"></div>
-        <button class="rdio-button" (click)="holdTalkgroup()" [ngClass]="{ off: !holdTg, on: holdTg }">
+        <button class="rdio-button" data-rdio="control-hold-tg" (click)="holdTalkgroup()" [ngClass]="{ off: !holdTg, on: holdTg }">
             HOLD<br>TG
         </button>
     </div>
     <div class="row">
-        <button class="rdio-button" (click)="replay()">
+        <button class="rdio-button" data-rdio="control-replay" (click)="replay()">
             REPLAY<br>LAST
         </button>
         <div class="spacer"></div>
-        <button class="rdio-button" (click)="skip()">
+        <button class="rdio-button" data-rdio="control-skip" (click)="skip()">
             SKIP<br>NEXT
         </button>
         <div class="spacer"></div>
-        <button class="rdio-button" (click)="avoid()">
+        <button class="rdio-button" data-rdio="control-avoid" (click)="avoid()">
             AVOID
         </button>
     </div>
     <div class="row">
-        <button class="rdio-button" (click)="showSearchPanel()">
+        <button class="rdio-button" data-rdio="control-search" (click)="showSearchPanel()">
             SEARCH<br>CALL
         </button>
         <div class="spacer"></div>
-        <button class="rdio-button" (click)="pause()" [ngClass]="{ off: !livefeedPaused, on: livefeedPaused }">
+        <button class="rdio-button" data-rdio="control-pause" (click)="pause()" [ngClass]="{ off: !livefeedPaused, on: livefeedPaused }">
             PAUSE
         </button>
         <div class="spacer"></div>
-        <button class="rdio-button" (click)="showSelectPanel()">
+        <button class="rdio-button" data-rdio="control-select" (click)="showSelectPanel()">
             SELECT<br>TG
         </button>
     </div>
     <div class="row">
-        <button class="rdio-button" (click)="showStatsPanel()">
+        <button class="rdio-button" data-rdio="control-stats" (click)="showStatsPanel()">
             STATS
         </button>
         <div class="spacer"></div>
-        <button class="rdio-button" (click)="toggleAutoJump()"
+        <button class="rdio-button" data-rdio="control-autojump" (click)="toggleAutoJump()"
             [ngClass]="{ off: !autoJump, on: autoJump && !autoJumpSuspended, partial: autoJumpSuspended }">
             AUTO<br>JUMP
         </button>
     </div>
-    <div class="rdio-autojump-controls" [ngClass]="{ disabled: !autoJump }">
+    <div class="rdio-autojump-controls" data-rdio="autojump" [ngClass]="{ disabled: !autoJump }">
         <span class="autojump-label">JUMP AT</span>
         <input type="range" class="autojump-slider" min="1" max="10" step="1"
             [value]="autoJumpThreshold" (input)="onAutoJumpThresholdChange($event)"
             (change)="onAutoJumpThresholdChange($event)">
         <span class="autojump-value">{{ autoJumpThreshold }} min</span>
     </div>
-    <div class="rdio-volume-controls">
+    <div class="rdio-volume-controls" data-rdio="volume">
         <button class="rdio-button-mini mute-button" (click)="toggleMute()" [ngClass]="{ muted: isMuted }">
             <mat-icon>{{ isMuted ? 'volume_off' : 'volume_up' }}</mat-icon>
         </button>
@@ -222,7 +222,7 @@
         </div>
     </div>
 </div>
-<div class="rdio-help" *ngIf="email">
+<div class="rdio-help" data-rdio="help" *ngIf="email">
     <button mat-icon-button (click)="showHelp()">
         <mat-icon>help_center</mat-icon>
     </button>

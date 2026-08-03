@@ -1,5 +1,5 @@
-<mat-sidenav-container [hasBackdrop]="false">
-    <mat-sidenav #searchPanel [autoFocus]="false" [disableClose]="true" position="start">
+<mat-sidenav-container data-rdio="app" [hasBackdrop]="false">
+    <mat-sidenav #searchPanel data-rdio="panel-search" (openedChange)="onPanelToggled('search', $event)" [autoFocus]="false" [disableClose]="true" position="start">
         <div class="panel search">
             <mat-toolbar>
                 <div>
@@ -15,7 +15,7 @@
             </div>
         </div>
     </mat-sidenav>
-    <mat-sidenav #statsPanel [autoFocus]="false" [disableClose]="true" position="start" class="stats-sidenav">
+    <mat-sidenav #statsPanel data-rdio="panel-stats" (openedChange)="onPanelToggled('stats', $event)" [autoFocus]="false" [disableClose]="true" position="start" class="stats-sidenav">
         <div class="panel stats">
             <mat-toolbar>
                 <div>
@@ -38,7 +38,7 @@
         The panel and its launcher only exist when a plugin has registered a
         view, so an install with no plugins is unchanged.
     -->
-    <mat-sidenav #pluginPanel [autoFocus]="false" [disableClose]="true" position="start" class="plugin-sidenav">
+    <mat-sidenav #pluginPanel data-rdio="panel-plugin" (openedChange)="onPanelToggled('plugin', $event)" [autoFocus]="false" [disableClose]="true" position="start" class="plugin-sidenav">
         <div class="panel plugin">
             <mat-toolbar>
                 <div>
@@ -59,7 +59,7 @@
             <rdio-plugin-view [view]="activePluginView"></rdio-plugin-view>
         </div>
     </mat-sidenav>
-    <mat-sidenav #selectPanel [autoFocus]="false" [disableClose]="true" position="end">
+    <mat-sidenav #selectPanel data-rdio="panel-select" (openedChange)="onPanelToggled('select', $event)" [autoFocus]="false" [disableClose]="true" position="end">
         <div class="panel select">
             <mat-toolbar>
                 <div>
@@ -76,12 +76,12 @@
         </div>
     </mat-sidenav>
     <mat-sidenav-content>
-        <button *ngIf="pluginViews.length" class="plugin-views-fab" mat-icon-button
+        <button *ngIf="pluginViews.length" class="plugin-views-fab" data-rdio="fab-plugin-views" mat-icon-button
             [matTooltip]="pluginViews.length === 1 ? pluginViews[0].label : 'Plugin views'"
             aria-label="Open plugin views" (click)="openPluginPanel(pluginPanel)">
             <mat-icon>{{ pluginViews.length === 1 && pluginViews[0].icon ? pluginViews[0].icon : 'extension' }}</mat-icon>
         </button>
-        <button *ngIf="streamOpen" class="stream-settings-fab" mat-icon-button
+        <button *ngIf="streamOpen" class="stream-settings-fab" data-rdio="fab-stream-edit" mat-icon-button
             [class.active]="streamEditMode"
             [matTooltip]="streamEditMode ? 'Stream edit mode: ON' : 'Edit stream overlay'"
             aria-label="Toggle stream edit mode" (click)="toggleStreamEdit()">

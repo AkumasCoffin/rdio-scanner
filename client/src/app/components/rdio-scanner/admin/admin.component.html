@@ -1,10 +1,10 @@
 <ng-container *ngIf="!authenticated">
-    <rdio-scanner-admin-login></rdio-scanner-admin-login>
+    <rdio-scanner-admin-login data-rdio="admin-login"></rdio-scanner-admin-login>
 </ng-container>
 <ng-container *ngIf="authenticated">
     <rdio-scanner-admin-todos></rdio-scanner-admin-todos>
     <mat-accordion displayMode="flat" data-rdio="admin">
-        <mat-expansion-panel (afterExpand)="statsComponent.refresh()">
+        <mat-expansion-panel data-rdio="admin-stats" (afterExpand)="statsComponent.refresh()">
             <mat-expansion-panel-header>
                 <mat-panel-title>
                     <mat-icon>analytics</mat-icon>
@@ -13,7 +13,7 @@
             </mat-expansion-panel-header>
             <rdio-scanner-admin-stats #statsComponent></rdio-scanner-admin-stats>
         </mat-expansion-panel>
-        <mat-expansion-panel #configPanel (afterCollapse)="configComponent?.closeAll()">
+        <mat-expansion-panel #configPanel data-rdio="admin-config" (afterCollapse)="configComponent?.closeAll()">
             <mat-expansion-panel-header>
                 <mat-panel-title>
                     <mat-icon>settings</mat-icon>
@@ -22,7 +22,7 @@
             </mat-expansion-panel-header>
             <rdio-scanner-admin-config #configComponent></rdio-scanner-admin-config>
         </mat-expansion-panel>
-        <mat-expansion-panel (afterExpand)="pluginsComponent.load()">
+        <mat-expansion-panel data-rdio="admin-plugins" (afterExpand)="pluginsComponent.load()">
             <mat-expansion-panel-header>
                 <mat-panel-title>
                     <mat-icon>extension</mat-icon>
@@ -31,7 +31,7 @@
             </mat-expansion-panel-header>
             <rdio-scanner-admin-plugins #pluginsComponent></rdio-scanner-admin-plugins>
         </mat-expansion-panel>
-        <mat-expansion-panel (afterExpand)="logsComponent.reload()">
+        <mat-expansion-panel data-rdio="admin-logs" (afterExpand)="logsComponent.reload()">
             <mat-expansion-panel-header>
                 <mat-panel-title>
                     <mat-icon>article</mat-icon>
@@ -40,7 +40,7 @@
             </mat-expansion-panel-header>
             <rdio-scanner-admin-logs #logsComponent></rdio-scanner-admin-logs>
         </mat-expansion-panel>
-        <mat-expansion-panel (afterCollapse)="toolsComponent?.closeAll()">
+        <mat-expansion-panel data-rdio="admin-tools" (afterCollapse)="toolsComponent?.closeAll()">
             <mat-expansion-panel-header>
                 <mat-panel-title>
                     <mat-icon>build</mat-icon>
@@ -53,7 +53,7 @@
              plugin panel never appears below it, which would read as being part
              of logging out. -->
         <rdio-plugin-slot name="admin-panel"></rdio-plugin-slot>
-        <mat-expansion-panel hideToggle (click)="logout()">
+        <mat-expansion-panel data-rdio="admin-logout" hideToggle (click)="logout()">
             <mat-expansion-panel-header>
                 <mat-panel-title>
                     <mat-icon>logout</mat-icon>

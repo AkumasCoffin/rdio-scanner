@@ -1,4 +1,4 @@
-<div class="presets-section">
+<div class="presets-section" data-rdio="select-presets">
     <div class="presets-header">
         <h3>Presets</h3>
         <div class="presets-actions">
@@ -14,7 +14,7 @@
         </div>
     </div>
     <div class="presets-list" *ngIf="presets.length > 0">
-        <div *ngFor="let preset of presets" class="preset-item">
+        <div *ngFor="let preset of presets" class="preset-item" data-rdio="select-preset">
             <div class="preset-info">
                 <span class="preset-name">{{ preset.name }}</span>
                 <span class="preset-count">{{ preset.talkgroups.length }} talkgroup(s)</span>
@@ -40,9 +40,9 @@
     </div>
 </div>
 
-<fieldset *ngIf="categories?.length && (categories?.length || 0) >= 2" class="fieldset">
+<fieldset *ngIf="categories?.length && (categories?.length || 0) >= 2" class="fieldset" data-rdio="select-group">
     <div>
-        <button *ngFor="let category of categories" class="rdio-button" [ngClass]="category.status"
+        <button *ngFor="let category of categories" class="rdio-button" data-rdio="select-category" [ngClass]="category.status"
             (click)="toggle(category)">
             {{ category.label }}
         </button>
@@ -57,13 +57,13 @@
 <!-- Original system-based layout -->
 <ng-container *ngIf="!sortByGroups && !sortByTags">
     <ng-container *ngFor="let system of systems">
-        <fieldset *ngIf="system.talkgroups.length" class="fieldset">
+        <fieldset *ngIf="system.talkgroups.length" class="fieldset" data-rdio="select-group">
             <legend>
                 {{ system.label }}
             </legend>
             <div>
                 <button *ngFor="let talkgroup of system.talkgroups"
-                    class="rdio-button"
+                    class="rdio-button" data-rdio="select-talkgroup"
                     [ngClass]="{
                         off: !(map[system.id] &&
                             map[system.id][talkgroup.id] &&
@@ -106,13 +106,13 @@
 <!-- Optional group-based layout -->
 <ng-container *ngIf="sortByGroups && !sortByTags">
     <ng-container *ngFor="let section of groupSections">
-        <fieldset *ngIf="section.talkgroups.length" class="fieldset">
+        <fieldset *ngIf="section.talkgroups.length" class="fieldset" data-rdio="select-group">
             <legend>
                 {{ section.label }}
             </legend>
             <div>
                 <button *ngFor="let item of section.talkgroups"
-                    class="rdio-button"
+                    class="rdio-button" data-rdio="select-talkgroup"
                     [ngClass]="{
                         off: !(map[item.system.id] &&
                             map[item.system.id][item.talkgroup.id] &&
@@ -149,13 +149,13 @@
 <!-- Optional tag-based layout -->
 <ng-container *ngIf="sortByTags">
     <ng-container *ngFor="let section of tagSections">
-        <fieldset *ngIf="section.talkgroups.length" class="fieldset">
+        <fieldset *ngIf="section.talkgroups.length" class="fieldset" data-rdio="select-group">
             <legend>
                 {{ section.label }}
             </legend>
             <div>
                 <button *ngFor="let item of section.talkgroups"
-                    class="rdio-button"
+                    class="rdio-button" data-rdio="select-talkgroup"
                     [ngClass]="{
                         off: !(map[item.system.id] &&
                             map[item.system.id][item.talkgroup.id] &&

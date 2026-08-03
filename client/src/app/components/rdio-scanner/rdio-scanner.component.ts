@@ -96,6 +96,28 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
         this.activePluginView = view;
     }
 
+    /**
+     * Publishes which panel is open as an attribute on <body>, so plugin CSS
+     * can respond to it — dimming the scanner behind an open search, say —
+     * without a plugin having to watch the sidenavs itself.
+     *
+     * The closing panel is ignored when another has already opened: sidenavs
+     * overlap while animating, so a close firing after the next open would
+     * report "none" and leave the attribute wrong for as long as the new panel
+     * stayed up.
+     */
+    onPanelToggled(name: string, opened: boolean): void {
+        if (opened) {
+            this.openPanel = name;
+        } else if (this.openPanel === name) {
+            this.openPanel = 'none';
+        }
+
+        this.pluginHost.setState('panel', this.openPanel);
+    }
+
+    private openPanel = 'none';
+
     // Toggle the /stream page's edit mode (drag/resize/right-click editing).
     toggleStreamEdit(): void {
         this.streamLayoutService.update({ moveMode: !this.streamEditMode });
