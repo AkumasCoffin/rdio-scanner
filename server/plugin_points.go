@@ -47,7 +47,17 @@ const (
 	PointClientDisconnect = "client.disconnect"
 
 	// Ingest, in the order a call meets them.
-	PointCallReceive   = "call.receive"
+	PointCallReceive = "call.receive"
+	// PointCallSystem and PointCallTalkgroup sit where a call's system and
+	// talkgroup are resolved.
+	//
+	// They exist for the plugin that is itself an ingest source. Such a plugin
+	// knows what it is feeding in — it read the name off a control channel or a
+	// CAD feed — but had no way to say so: it could create the call and then
+	// only watch rdio label it "System 3" and "Talkgroup 10329". Provide
+	// supplies a definition rdio does not have; filter amends one it does.
+	PointCallSystem    = "call.system"
+	PointCallTalkgroup = "call.talkgroup"
 	PointCallAccept    = "call.accept"
 	PointCallDuplicate = "call.duplicate"
 	PointCallConvert   = "call.convert"
@@ -118,6 +128,10 @@ var pluginPointDefs = []pluginPointDef{
 
 	// Ingest.
 	{PointCallReceive, verbsObserveFilter, "Ingest"},
+	// Same shape as the access points, and for the same reason: provide fills
+	// a gap rdio cannot fill itself, filter narrows what it already decided.
+	{PointCallSystem, verbsAuth, "Ingest"},
+	{PointCallTalkgroup, verbsAuth, "Ingest"},
 	{PointCallAccept, verbsObserveFilter, "Ingest"},
 	{PointCallDuplicate, verbsObserveFilter, "Ingest"},
 	// Replacing conversion is all-or-nothing, so there is nothing to observe

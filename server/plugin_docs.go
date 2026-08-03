@@ -269,6 +269,8 @@ var pointNotes = map[string]string{
 	PointClientDisconnect: "A listener disconnected.",
 
 	PointCallReceive:   "A call arrived, before its system or talkgroup has been resolved. Carries audio. Rewrite `system` or `talkgroup` to reroute it, or return `{drop: true}` to discard it before any work is spent.",
+	PointCallSystem: "The call's system is being resolved. `provide` when rdio does not know this system id and you do — return `{label}` and it is created; `filter` to rename one it already has, for this call. Meant for a plugin that is itself an ingest source: it knows what it is feeding in, and without this it could only watch rdio call it \"System 3\".",
+	PointCallTalkgroup: "The same for the talkgroup. Return any of `{label, name, group, tag}`; the group and tag are created if they do not exist, exactly as auto-populate does. `provide` fires only when the talkgroup is unknown, so an ingest plugin names what it creates rather than correcting it afterwards.",
 	PointCallAccept:    "The call is fully resolved and passed the blacklists. Return `{drop: true}` to discard it. Metadata only, no audio.",
 	PointCallDuplicate: "Fires only once rdio has already decided the call is a duplicate. Reads inverted from the others: returning nothing leaves the rejection standing, and only `{keep: true}` overrules it — so observing this point cannot accidentally disable duplicate detection.",
 	PointCallConvert:   "Audio conversion. Override to replace ffmpeg entirely; return the new `audio`, and `audioType` if it changed. The only point with no fallback, so a failure here stores the call unconverted.",

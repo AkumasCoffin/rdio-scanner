@@ -203,6 +203,8 @@ var pointConstants = map[string]string{
 	"PointClientConnect":    PointClientConnect,
 	"PointClientDisconnect": PointClientDisconnect,
 	"PointCallReceive":      PointCallReceive,
+	"PointCallSystem":       PointCallSystem,
+	"PointCallTalkgroup":    PointCallTalkgroup,
 	"PointCallAccept":       PointCallAccept,
 	"PointCallDuplicate":    PointCallDuplicate,
 	"PointCallConvert":      PointCallConvert,

@@ -338,37 +338,81 @@ func (controller *Controller) IngestCall(call *Call) {
 		talkgroup, _ = system.Talkgroups.GetTalkgroup(call.Talkgroup)
 	}
 
-	if controller.Options.AutoPopulate && system == nil {
+	// What the upload said this system is called, before plugins see it.
+	systemLabel := ""
+	if v, ok := call.systemLabel.(string); ok {
+		systemLabel = v
+	}
+
+	// A plugin that is itself an ingest source knows what it is feeding in and
+	// gets to say so. It can also ask for the system to be created even when
+	// auto-populate is off, because requiring an operator to pre-create every
+	// system by hand would make such a plugin useless as a source.
+	systemLabel, createSystem := controller.PluginDispatch.ResolveSystem(call, system != nil, systemLabel)
+
+	if system == nil && (controller.Options.AutoPopulate || createSystem) {
 		populated = true
 
 		system = NewSystem()
 		system.Id = call.System
 
-		switch v := call.systemLabel.(type) {
-		case string:
-			system.Label = v
-		default:
+		if systemLabel != "" {
+			system.Label = systemLabel
+		} else {
 			system.Label = fmt.Sprintf("System %v", call.System)
 		}
 
 		controller.Systems.List = append(controller.Systems.List, system)
+
+	} else if system != nil && systemLabel != "" && systemLabel != system.Label {
+		// A filter renaming a system rdio already has applies to this call's
+		// payload, not to the stored configuration — a plugin does not get to
+		// rewrite what an operator configured.
+		call.systemLabel = systemLabel
 	}
 
-	if controller.Options.AutoPopulate || (system != nil && system.AutoPopulate) {
+	// The same for the talkgroup, and this is the one that matters most: a
+	// talkgroup with no group and no tag is filed under "Unknown" and
+	// "Untagged", which is exactly the naming an ingest plugin exists to
+	// supply.
+	naming := pluginTalkgroupNaming{}
+	if v, ok := call.talkgroupLabel.(string); ok {
+		naming.Label = v
+	}
+	if v, ok := call.talkgroupName.(string); ok {
+		naming.Name = v
+	}
+	if v, ok := call.talkgroupGroup.(string); ok {
+		naming.Group = v
+	}
+	if v, ok := call.talkgroupTag.(string); ok {
+		naming.Tag = v
+	}
+
+	naming = controller.PluginDispatch.ResolveTalkgroup(call, talkgroup != nil, naming)
+
+	if naming.Label != "" {
+		call.talkgroupLabel = naming.Label
+	}
+	if naming.Name != "" {
+		call.talkgroupName = naming.Name
+	}
+	if naming.Group != "" {
+		call.talkgroupGroup = naming.Group
+	}
+	if naming.Tag != "" {
+		call.talkgroupTag = naming.Tag
+	}
+
+	if controller.Options.AutoPopulate || naming.Create || (system != nil && system.AutoPopulate) {
 		if system != nil && talkgroup == nil {
 			populated = true
 
-			switch v := call.talkgroupGroup.(type) {
-			case string:
-				groupLabel = v
-			default:
+			if groupLabel = naming.Group; groupLabel == "" {
 				groupLabel = "Unknown"
 			}
 
-			switch v := call.talkgroupTag.(type) {
-			case string:
-				tagLabel = v
-			default:
+			if tagLabel = naming.Tag; tagLabel == "" {
 				tagLabel = "Untagged"
 			}
 

@@ -278,3 +278,136 @@ func (dispatch *PluginDispatch) ConvertCall(call *Call) (bool, error) {
 
 	return true, nil
 }
+
+// ResolveSystem asks plugins to name a system.
+//
+// `known` is whether rdio already has this system. Provide runs only when it
+// does not, so a plugin cannot rename a system an operator configured — it can
+// only supply one rdio was going to invent a name for. Filter always runs, so a
+// plugin may still adjust the label for this call.
+//
+// Returns the label to use, and whether a plugin asked for the system to be
+// created even though auto-populate is off. That second answer is the point of
+// the whole thing for an ingest plugin: it is feeding in calls for systems only
+// it knows about, and requiring the operator to pre-create each one by hand
+// would make the plugin useless as a source.
+func (dispatch *PluginDispatch) ResolveSystem(call *Call, known bool, label string) (string, bool) {
+	if !dispatch.Active(PointCallSystem) {
+		return label, false
+	}
+
+	value := map[string]any{
+		"system": call.System,
+		"label":  label,
+		"known":  known,
+	}
+
+	create := false
+
+	if !known {
+		if result, ok := dispatch.Provide(PointCallSystem, value, pointTimeout(PointCallSystem)); ok {
+			if fields, isMap := result.(map[string]any); isMap {
+				if text, ok := fields["label"].(string); ok && text != "" {
+					label = text
+					create = true
+				}
+				if want, ok := fields["create"].(bool); ok {
+					create = want
+				}
+			}
+		}
+	}
+
+	value["label"] = label
+
+	dispatch.Notify(PointCallSystem, value)
+
+	filtered, keep := dispatch.FilterWithin(call.pluginBudget, PointCallSystem, value, pointTimeout(PointCallSystem))
+	if keep {
+		if fields, isMap := filtered.(map[string]any); isMap {
+			if text, ok := fields["label"].(string); ok && text != "" {
+				label = text
+			}
+			if want, ok := fields["create"].(bool); ok && want {
+				create = true
+			}
+		}
+	}
+
+	return label, create
+}
+
+// pluginTalkgroupNaming is what plugins may say about a talkgroup. Empty fields
+// mean "no opinion" rather than "clear it", the same rule every filter follows.
+type pluginTalkgroupNaming struct {
+	Label  string
+	Name   string
+	Group  string
+	Tag    string
+	Create bool
+}
+
+// ResolveTalkgroup is the same for a talkgroup, and carries the group and tag
+// because a talkgroup without them is not usable in the interface — rdio would
+// file it under "Unknown" and "Untagged", which is exactly the naming an ingest
+// plugin exists to avoid.
+func (dispatch *PluginDispatch) ResolveTalkgroup(call *Call, known bool, naming pluginTalkgroupNaming) pluginTalkgroupNaming {
+	if !dispatch.Active(PointCallTalkgroup) {
+		return naming
+	}
+
+	value := map[string]any{
+		"system":    call.System,
+		"talkgroup": call.Talkgroup,
+		"label":     naming.Label,
+		"name":      naming.Name,
+		"group":     naming.Group,
+		"tag":       naming.Tag,
+		"known":     known,
+	}
+
+	apply := func(fields map[string]any, creating bool) {
+		if text, ok := fields["label"].(string); ok && text != "" {
+			naming.Label = text
+			if creating {
+				naming.Create = true
+			}
+		}
+		if text, ok := fields["name"].(string); ok && text != "" {
+			naming.Name = text
+		}
+		if text, ok := fields["group"].(string); ok && text != "" {
+			naming.Group = text
+		}
+		if text, ok := fields["tag"].(string); ok && text != "" {
+			naming.Tag = text
+		}
+		if want, ok := fields["create"].(bool); ok {
+			naming.Create = want
+		}
+	}
+
+	if !known {
+		if result, ok := dispatch.Provide(PointCallTalkgroup, value, pointTimeout(PointCallTalkgroup)); ok {
+			if fields, isMap := result.(map[string]any); isMap {
+				apply(fields, true)
+			}
+		}
+	}
+
+	value["label"] = naming.Label
+	value["name"] = naming.Name
+	value["group"] = naming.Group
+	value["tag"] = naming.Tag
+
+	dispatch.Notify(PointCallTalkgroup, value)
+
+	filtered, keep := dispatch.FilterWithin(call.pluginBudget, PointCallTalkgroup, value, pointTimeout(PointCallTalkgroup))
+	if keep {
+		if fields, isMap := filtered.(map[string]any); isMap {
+			apply(fields, false)
+		}
+	}
+
+	return naming
+}
