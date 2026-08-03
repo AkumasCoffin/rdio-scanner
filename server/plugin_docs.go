@@ -95,7 +95,7 @@ var pluginCapabilities = []struct {
 		"get(id, {audio})", "search(options)", "findId(system, talkgroup, dateTime)",
 		"update(id, {audio, audioName, audioType}) — the write path for a call you reprocessed; nothing else about a call is changeable, use extendField to add to one",
 		"extendField(spec)",
-		"create({system, talkgroup, audio, dateTime, audioName, audioType, meta}) — goes in the same door an upload does, so blacklists, duplicate detection, conversion and every extension point apply",
+		"create({system, talkgroup, audio, dateTime, audioName, audioType, meta}) — goes in the same door an upload does, so blacklists, duplicate detection, conversion and every extension point apply. Returns nothing: the call has only been queued, so it has no id yet. Throws if the queue is full, which is your signal to slow down. Use findId once it exists.",
 	}},
 	{"plugins", "Call and be called by other plugins, and broadcast events between them.", []string{
 		"list()", "has(id)",

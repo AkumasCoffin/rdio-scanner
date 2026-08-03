@@ -17,6 +17,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -418,12 +419,19 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 			throw("calls.create requires an object")
 		}
 
-		id, err := rt.createCall(m)
-		if err != nil {
+		// createCall reports whether the call was accepted onto the ingest
+		// queue, not an id — an id cannot exist yet, because ingest has not run.
+		// The variable used to be named `id` and the value handed straight back,
+		// so `const id = rdio.calls.create(...)` produced `true`, and
+		// `rdio.calls.get(id)` then coerced that to call number 1.
+		//
+		// Nothing is returned now. A plugin that needs the id waits for the call
+		// to exist and asks for it by what it knows.
+		if _, err := rt.createCall(m); err != nil {
 			throw("calls.create: %v", err)
 		}
 
-		return vm.ToValue(id)
+		return goja.Undefined()
 	})
 
 	rdio.Set("calls", calls)
@@ -1259,6 +1267,62 @@ func pluginBytes(v any) ([]byte, error) {
 			}
 		}
 		return out, nil
+
+	// Typed arrays, as their underlying bytes.
+	//
+	// goja exports each as its Go slice equivalent, and only Uint8Array
+	// happened to land on []byte — so the one array type an audio plugin
+	// actually holds, Int16Array, was refused with "value cannot be used as
+	// binary data". The documented flow said to build one from decoded samples
+	// and hand it back to encode, and doing exactly that threw.
+	//
+	// Little-endian throughout, matching what the JavaScript buffer holds and
+	// what the audio pipeline reads and writes.
+	case []int8:
+		out := make([]byte, len(t))
+		for i, n := range t {
+			out[i] = byte(n)
+		}
+		return out, nil
+
+	case []int16:
+		out := make([]byte, len(t)*2)
+		for i, n := range t {
+			binary.LittleEndian.PutUint16(out[i*2:], uint16(n))
+		}
+		return out, nil
+
+	case []uint16:
+		out := make([]byte, len(t)*2)
+		for i, n := range t {
+			binary.LittleEndian.PutUint16(out[i*2:], n)
+		}
+		return out, nil
+
+	case []int32:
+		out := make([]byte, len(t)*4)
+		for i, n := range t {
+			binary.LittleEndian.PutUint32(out[i*4:], uint32(n))
+		}
+		return out, nil
+
+	case []uint32:
+		out := make([]byte, len(t)*4)
+		for i, n := range t {
+			binary.LittleEndian.PutUint32(out[i*4:], n)
+		}
+		return out, nil
+
+	// Float arrays are refused rather than reinterpreted. Their bytes are
+	// perfectly well defined, but every consumer of this function that cares
+	// about sample data reads 16-bit PCM — so accepting one would not fail, it
+	// would produce noise, which is far worse than an error naming the problem.
+	case []float32:
+		return nil, fmt.Errorf("a Float32Array is not sample data here; audio is 16-bit, so convert to an Int16Array first")
+
+	case []float64:
+		return nil, fmt.Errorf("a Float64Array is not sample data here; audio is 16-bit, so convert to an Int16Array first")
+
 	default:
 		return nil, fmt.Errorf("value cannot be used as binary data")
 	}

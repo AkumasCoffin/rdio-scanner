@@ -16,8 +16,12 @@
 package main
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/dop251/goja"
 )
 
 // Everything handed to a plugin has to be a copy. goja gives JavaScript the Go
@@ -125,5 +129,104 @@ func TestClonePluginValueIsDeepThroughSlices(t *testing.T) {
 
 	if source[0]["meta"].(map[string]any)["unit"] != "alpha" {
 		t.Fatal("a nested map inside a slice element was shared rather than copied")
+	}
+}
+
+// goja exports each typed array as its Go slice equivalent, and only
+// Uint8Array happened to land on []byte — so Int16Array, the one an audio
+// plugin actually holds, was refused with "value cannot be used as binary
+// data". The documented flow says to build one from decoded samples and hand it
+// back to encode, and doing exactly that threw.
+func TestTypedArraysCanBeUsedAsBinaryData(t *testing.T) {
+	vm := goja.New()
+
+	// What an author writes after decoding: a view over the returned samples.
+	value, err := vm.RunString(`new Int16Array([0, 1, -1, 32767, -32768])`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := pluginBytes(value.Export())
+	if err != nil {
+		t.Fatalf("an Int16Array was refused: %v", err)
+	}
+
+	// Little-endian 16-bit, which is what the audio pipeline reads and writes.
+	want := []byte{
+		0x00, 0x00,
+		0x01, 0x00,
+		0xff, 0xff,
+		0xff, 0x7f,
+		0x00, 0x80,
+	}
+
+	if !bytes.Equal(body, want) {
+		t.Fatalf("samples encoded as % x, expected % x", body, want)
+	}
+
+	// Round trip: the bytes read back as the same samples.
+	if err := vm.Set("raw", vm.NewArrayBuffer(body)); err != nil {
+		t.Fatal(err)
+	}
+
+	back, err := vm.RunString(`Array.from(new Int16Array(raw)).join(',')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.String() != "0,1,-1,32767,-32768" {
+		t.Fatalf("the samples came back as %s", back.String())
+	}
+}
+
+// Uint8Array kept working, and the other integer views work too.
+func TestOtherTypedArraysAreAcceptedToo(t *testing.T) {
+	vm := goja.New()
+
+	for _, c := range []struct {
+		src  string
+		want []byte
+	}{
+		{`new Uint8Array([1, 2, 255])`, []byte{1, 2, 255}},
+		{`new Int8Array([1, -1])`, []byte{0x01, 0xff}},
+		{`new Uint16Array([1, 65535])`, []byte{0x01, 0x00, 0xff, 0xff}},
+		{`new Int32Array([1])`, []byte{0x01, 0x00, 0x00, 0x00}},
+	} {
+		value, err := vm.RunString(c.src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		body, err := pluginBytes(value.Export())
+		if err != nil {
+			t.Errorf("%s was refused: %v", c.src, err)
+			continue
+		}
+		if !bytes.Equal(body, c.want) {
+			t.Errorf("%s encoded as % x, expected % x", c.src, body, c.want)
+		}
+	}
+}
+
+// A float array is refused rather than reinterpreted. Its bytes are perfectly
+// well defined, but every consumer here that cares about samples reads 16-bit
+// PCM — so accepting one would not fail, it would produce noise, and an error
+// naming the problem is worth far more than that.
+func TestFloatArraysAreRefusedWithAnExplanation(t *testing.T) {
+	vm := goja.New()
+
+	for _, src := range []string{`new Float32Array([0.5])`, `new Float64Array([0.5])`} {
+		value, err := vm.RunString(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = pluginBytes(value.Export())
+		if err == nil {
+			t.Errorf("%s was accepted and would have been read as 16-bit samples", src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "Int16Array") {
+			t.Errorf("%s was refused without saying what to do instead: %v", src, err)
+		}
 	}
 }
