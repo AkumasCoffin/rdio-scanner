@@ -349,6 +349,14 @@ func (dispatch *PluginDispatch) CheckApikey(key string, call *Call, found *Apike
 		case []any:
 			apikey.Systems = normalizeJsonNumbers(v)
 		}
+		// The payload has always carried `disabled` and nothing read it back,
+		// so a plugin returning {disabled: true} had no effect at all — while
+		// the caller gates uploads on exactly that field. Honoured now, in the
+		// one direction that is safe: a plugin may turn a key off, never on.
+		// Re-enabling a key an operator disabled is not a plugin's decision.
+		if disabled, ok := fields["disabled"].(bool); ok && disabled {
+			apikey.Disabled = true
+		}
 	}
 
 	return apikey, true

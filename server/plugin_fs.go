@@ -56,7 +56,7 @@ const (
 	// pluginExecTimeout is how long a program may run before it is killed, and
 	// pluginExecTimeoutMax is as far as a plugin may raise it. A process meant
 	// to outlive a single call belongs behind a scheduled job or its own
-	// service, not in a call the server is waiting on.
+	// service, reached over HTTP — not in a call the server is waiting on.
 	pluginExecTimeout    = 5 * time.Minute
 	pluginExecTimeoutMax = 30 * time.Minute
 

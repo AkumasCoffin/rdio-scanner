@@ -47,13 +47,17 @@ func (controller *Controller) PluginApiHandler(w http.ResponseWriter, r *http.Re
 		routePath = strings.Trim(parts[1], "/")
 	}
 
-	plugin, ok := controller.Plugins.Get(pluginId)
-	if !ok || !plugin.Enabled || !plugin.Running || plugin.runtime == nil {
+	// Read under the registry lock. These fields are written wherever a plugin
+	// is started or stopped, and reading them here unsynchronised meant a
+	// request arriving during a start or an uninstall could see a runtime that
+	// was being torn down.
+	plugin, runtime, ok := controller.Plugins.RunningRuntime(pluginId)
+	if !ok {
 		http.Error(w, "plugin not available", http.StatusNotFound)
 		return
 	}
 
-	for _, route := range plugin.runtime.Routes() {
+	for _, route := range runtime.Routes() {
 		if route.absolute {
 			continue
 		}
@@ -64,7 +68,7 @@ func (controller *Controller) PluginApiHandler(w http.ResponseWriter, r *http.Re
 			continue
 		}
 
-		controller.servePluginRoute(w, r, plugin, route)
+		controller.servePluginRoute(w, r, plugin, runtime, route)
 		return
 	}
 
@@ -118,11 +122,12 @@ var coreHttpPatterns = map[string]bool{
 // so the attempt is visible in the log rather than silently ineffective.
 func (controller *Controller) ServePluginAbsoluteRoute(w http.ResponseWriter, r *http.Request) bool {
 	for _, plugin := range controller.Plugins.Enabled() {
-		if plugin.runtime == nil {
+		_, runtime, ok := controller.Plugins.RunningRuntime(plugin.PluginId)
+		if !ok {
 			continue
 		}
 
-		for _, route := range plugin.runtime.Routes() {
+		for _, route := range runtime.Routes() {
 			if !route.absolute || route.path != r.URL.Path {
 				continue
 			}
@@ -135,7 +140,7 @@ func (controller *Controller) ServePluginAbsoluteRoute(w http.ResponseWriter, r 
 				continue
 			}
 
-			controller.servePluginRoute(w, r, plugin, route)
+			controller.servePluginRoute(w, r, plugin, runtime, route)
 			return true
 		}
 	}
@@ -145,7 +150,7 @@ func (controller *Controller) ServePluginAbsoluteRoute(w http.ResponseWriter, r 
 
 // servePluginRoute marshals the request into the shape plugins see, invokes the
 // handler, and writes back whatever it returned.
-func (controller *Controller) servePluginRoute(w http.ResponseWriter, r *http.Request, plugin *Plugin, route *pluginRoute) {
+func (controller *Controller) servePluginRoute(w http.ResponseWriter, r *http.Request, plugin *Plugin, runtime *PluginRuntime, route *pluginRoute) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, pluginRequestMaxBody))
 	if err != nil {
 		http.Error(w, "cannot read request body", http.StatusBadRequest)
@@ -182,7 +187,7 @@ func (controller *Controller) servePluginRoute(w http.ResponseWriter, r *http.Re
 		"bodyBytes": body,
 	}
 
-	result, err := plugin.runtime.DispatchRoute(route, request)
+	result, err := runtime.DispatchRoute(route, request)
 	if err != nil {
 		controller.Logs.LogEvent(
 			LogLevelError,
@@ -301,10 +306,11 @@ func (controller *Controller) PluginAssetHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	plugin, ok := controller.Plugins.Get(pluginId)
 	// Assets of a disabled plugin are not served, so turning a plugin off
-	// really does stop its frontend code from loading.
-	if !ok || !plugin.Enabled || !plugin.Running || plugin.dir == "" {
+	// really does stop its frontend code from loading. Read under the registry
+	// lock: this is written wherever a plugin starts or stops.
+	pluginDir, ok := controller.Plugins.ServableDir(pluginId)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
@@ -312,9 +318,9 @@ func (controller *Controller) PluginAssetHandler(w http.ResponseWriter, r *http.
 	// Resolve inside the plugin directory and verify the result is still under
 	// it — assetPath comes straight from the URL.
 	cleaned := path.Clean("/" + assetPath)
-	target := filepath.Join(plugin.dir, filepath.FromSlash(strings.TrimPrefix(cleaned, "/")))
+	target := filepath.Join(pluginDir, filepath.FromSlash(strings.TrimPrefix(cleaned, "/")))
 
-	resolvedDir, err := filepath.Abs(plugin.dir)
+	resolvedDir, err := filepath.Abs(pluginDir)
 	if err != nil {
 		http.NotFound(w, r)
 		return

@@ -139,6 +139,62 @@ func redactPluginConfig(manifest *PluginManifest, config map[string]any) (map[st
 	return redacted, set
 }
 
+// validatePluginConfigValue holds a saved value to what the manifest declared,
+// returning the value to store.
+//
+// Numbers are coerced rather than merely checked: the admin form sends what the
+// browser gave it, and a plugin asking for a number should get one.
+func validatePluginConfigValue(field *PluginConfigField, value any) (any, error) {
+	switch field.Type {
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return nil, fmt.Errorf("must be true or false")
+		}
+
+	case "number", "system", "talkgroup":
+		number, ok := jsonFloat(value)
+		if !ok {
+			return nil, fmt.Errorf("must be a number")
+		}
+		if field.Min != nil && number < *field.Min {
+			return nil, fmt.Errorf("must be %v or more", *field.Min)
+		}
+		if field.Max != nil && number > *field.Max {
+			return nil, fmt.Errorf("must be %v or less", *field.Max)
+		}
+		return number, nil
+
+	case "select":
+		// A value outside the declared options is a stale form or a hand-made
+		// request; either way the plugin would then branch on something it has
+		// never heard of.
+		matched := false
+		for i := range field.Options {
+			if fmt.Sprintf("%v", field.Options[i].Value) == fmt.Sprintf("%v", value) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, fmt.Errorf("is not one of the available choices")
+		}
+
+	default:
+		text, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("must be text")
+		}
+		if field.MaxLength != nil && len(text) > *field.MaxLength {
+			return nil, fmt.Errorf("must be %d characters or fewer", *field.MaxLength)
+		}
+		if field.Required && strings.TrimSpace(text) == "" {
+			return nil, fmt.Errorf("is required")
+		}
+	}
+
+	return value, nil
+}
+
 // PluginsActionHandler routes the state-changing plugin endpoints. They are
 // separate from the bulk config save because installing is a long, fallible
 // network operation that has no business inside the config transaction.
@@ -517,7 +573,18 @@ func (admin *Admin) pluginConfig(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if err := WritePluginConfigValue(controller.Database, plugin.Manifest, key, value); err != nil {
+		// The manifest's own constraints, enforced here rather than only in the
+		// browser. A plugin reads its settings with rdio.config.get and gets
+		// whatever was stored, so a number field holding an object — which the
+		// API accepted — became the plugin's problem at runtime, somewhere far
+		// from the form that allowed it.
+		coerced, err := validatePluginConfigValue(field, value)
+		if err != nil {
+			writeJsonError(w, http.StatusBadRequest, fmt.Sprintf("%s: %v", field.Label, err))
+			return
+		}
+
+		if err := WritePluginConfigValue(controller.Database, plugin.Manifest, key, coerced); err != nil {
 			writeJsonError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

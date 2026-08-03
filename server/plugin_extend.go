@@ -34,29 +34,57 @@ type pluginResolvedField struct {
 	table string
 	key   string
 	value string
+	// query is built once when the extension is resolved rather than per call.
+	// This runs on the emit dispatcher, which sits upstream of ingest, so
+	// formatting a string per extension per call was work paid for on the one
+	// goroutine everything else waits behind.
+	query string
 }
 
 // PluginFieldExtensions returns every registered call-field extension, resolved
 // to real table names. Returns nil when no plugin registers one, which lets the
 // callers skip the work entirely on a normal install.
 func (controller *Controller) PluginFieldExtensions() []pluginResolvedField {
+	// Cached, because this is read once per call on the emit path and the
+	// answer only changes when a plugin starts or stops. Rebuilding it meant
+	// walking the plugin list and allocating three slices under two locks for
+	// every call served.
+	if cached := controller.pluginFieldCache.Load(); cached != nil {
+		return *cached
+	}
+
 	var resolved []pluginResolvedField
 
 	for _, plugin := range controller.Plugins.Enabled() {
-		if plugin.runtime == nil || plugin.Manifest == nil {
+		_, runtime, ok := controller.Plugins.RunningRuntime(plugin.PluginId)
+		if !ok || plugin.Manifest == nil {
 			continue
 		}
-		for _, extension := range plugin.runtime.FieldExtensions() {
+		for _, extension := range runtime.FieldExtensions() {
+			table := plugin.Manifest.TableName(extension.Table)
+
 			resolved = append(resolved, pluginResolvedField{
 				field: extension.Field,
-				table: plugin.Manifest.TableName(extension.Table),
+				table: table,
 				key:   extension.KeyColumn,
 				value: extension.ValueColumn,
+				query: fmt.Sprintf(
+					"select `%s` from `%s` where `%s` = ?",
+					extension.ValueColumn, table, extension.KeyColumn,
+				),
 			})
 		}
 	}
 
+	controller.pluginFieldCache.Store(&resolved)
+
 	return resolved
+}
+
+// InvalidatePluginExtensions drops the cached extension list. Called whenever a
+// plugin starts or stops, which is the only thing that can change it.
+func (controller *Controller) InvalidatePluginExtensions() {
+	controller.pluginFieldCache.Store(nil)
 }
 
 // pluginResolvedSearch is a search extension paired with its real table name.
@@ -113,12 +141,7 @@ func (controller *Controller) ApplyPluginFields(call *Call) {
 	for _, extension := range extensions {
 		var value sql.NullString
 
-		query := fmt.Sprintf(
-			"select `%s` from `%s` where `%s` = ?",
-			extension.value, extension.table, extension.key,
-		)
-
-		if err := controller.Database.QueryRow(query, id).Scan(&value); err != nil {
+		if err := controller.Database.QueryRow(extension.query, id).Scan(&value); err != nil {
 			// A missing row is the normal case — most calls have no value for
 			// most extensions. Anything else is a plugin's own schema problem
 			// and shouldn't break serving the call.

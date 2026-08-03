@@ -136,6 +136,61 @@ func (plugins *Plugins) DataDir(config *Config, pluginId string) (string, error)
 	return dir, nil
 }
 
+// setState mutates a plugin's live fields under the registry lock.
+//
+// Error, Running, runtime and dir describe the running process rather than the
+// database row, and they are written from wherever a plugin happens to be
+// started or stopped while the admin panel and the HTTP handlers read the same
+// pointers. Nothing serialised that: Plugins.Start releases the lock before
+// looping, and PluginAssetHandler read Running with no lock at all.
+func (plugins *Plugins) setState(plugin *Plugin, mutate func(*Plugin)) {
+	if plugin == nil {
+		return
+	}
+
+	plugins.mutex.Lock()
+	defer plugins.mutex.Unlock()
+
+	mutate(plugin)
+}
+
+// RunningRuntime returns a plugin's runtime if it is loaded, read under the
+// lock so the answer cannot be torn by a concurrent start or stop.
+func (plugins *Plugins) RunningRuntime(pluginId string) (*Plugin, *PluginRuntime, bool) {
+	plugins.mutex.RLock()
+	defer plugins.mutex.RUnlock()
+
+	for _, plugin := range plugins.List {
+		if plugin.PluginId != pluginId {
+			continue
+		}
+		if !plugin.Enabled || !plugin.Running || plugin.runtime == nil {
+			return plugin, nil, false
+		}
+		return plugin, plugin.runtime, true
+	}
+
+	return nil, nil, false
+}
+
+// ServableDir returns a plugin's directory if its assets should be served.
+func (plugins *Plugins) ServableDir(pluginId string) (string, bool) {
+	plugins.mutex.RLock()
+	defer plugins.mutex.RUnlock()
+
+	for _, plugin := range plugins.List {
+		if plugin.PluginId != pluginId {
+			continue
+		}
+		if !plugin.Enabled || !plugin.Running || plugin.dir == "" {
+			return "", false
+		}
+		return plugin.dir, true
+	}
+
+	return "", false
+}
+
 // Get returns an installed plugin by its manifest id.
 func (plugins *Plugins) Get(pluginId string) (*Plugin, bool) {
 	plugins.mutex.RLock()
@@ -483,19 +538,24 @@ func (plugins *Plugins) Start(controller *Controller) error {
 		}
 
 		if ok, reason := plugin.Manifest.CompatibleWith(Version); !ok {
-			plugin.Error = reason
+			plugins.setState(plugin, func(p *Plugin) { p.Error = reason })
 			controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("plugin %s not started: %s", plugin.PluginId, reason))
 			continue
 		}
 
 		if err := plugins.startPlugin(controller, plugin); err != nil {
-			plugin.Error = err.Error()
+			plugins.setState(plugin, func(p *Plugin) { p.Error = err.Error() })
 			controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("plugin %s failed to start: %v", plugin.PluginId, err))
 			continue
 		}
 
-		plugin.Running = true
-		plugin.Error = ""
+		plugins.setState(plugin, func(p *Plugin) {
+			p.Running = true
+			p.Error = ""
+		})
+		// The resolved extension list is cached on the emit path, and this is
+		// one of the two moments that can change it.
+		controller.InvalidatePluginExtensions()
 		controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("plugin %s %s started", plugin.PluginId, plugin.Version))
 	}
 
@@ -526,7 +586,7 @@ func (plugins *Plugins) startPlugin(controller *Controller, plugin *Plugin) erro
 		return err
 	}
 
-	plugin.runtime = runtime
+	plugins.setState(plugin, func(p *Plugin) { p.runtime = runtime })
 
 	return nil
 }
@@ -540,22 +600,37 @@ func (plugins *Plugins) Stop(controller *Controller) {
 	plugins.mutex.Unlock()
 
 	for _, plugin := range list {
-		if plugin.runtime != nil {
-			// Deregister before stopping, so nothing can be dispatched into a
-			// runtime that is on its way down.
-			if controller != nil && controller.PluginDispatch != nil {
-				controller.PluginDispatch.Unregister(plugin.PluginId)
-			}
-			// Same for the plugin bus. A method left registered would route
-			// into a dead runtime and fail every call, rather than reporting
-			// honestly that nobody offers it any more.
-			if controller != nil && controller.PluginRpc != nil {
-				controller.PluginRpc.Unregister(plugin.PluginId)
-			}
-			plugin.runtime.Stop()
-			plugin.runtime = nil
+		// Taken under the lock and cleared there, so a reader either sees a
+		// runtime it can use or none at all — never one being torn down.
+		var runtime *PluginRuntime
+
+		plugins.setState(plugin, func(p *Plugin) {
+			runtime = p.runtime
+			p.runtime = nil
+			p.Running = false
+		})
+
+		if runtime == nil {
+			continue
 		}
-		plugin.Running = false
+
+		// Deregister before stopping, so nothing can be dispatched into a
+		// runtime that is on its way down.
+		if controller != nil && controller.PluginDispatch != nil {
+			controller.PluginDispatch.Unregister(plugin.PluginId)
+		}
+		// Same for the plugin bus. A method left registered would route into a
+		// dead runtime and fail every call, rather than reporting honestly that
+		// nobody offers it any more.
+		if controller != nil && controller.PluginRpc != nil {
+			controller.PluginRpc.Unregister(plugin.PluginId)
+		}
+
+		runtime.Stop()
+	}
+
+	if controller != nil {
+		controller.InvalidatePluginExtensions()
 	}
 }
 
@@ -593,6 +668,10 @@ func (plugins *Plugins) StopOne(controller *Controller, pluginId string) bool {
 	}
 	if controller != nil && controller.PluginRpc != nil {
 		controller.PluginRpc.Unregister(pluginId)
+	}
+
+	if controller != nil {
+		controller.InvalidatePluginExtensions()
 	}
 
 	if runtime == nil {

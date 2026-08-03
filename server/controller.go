@@ -25,6 +25,7 @@ import (
 	"os/signal"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -86,6 +87,10 @@ type Controller struct {
 	// every CFG request.
 	configCacheMu sync.RWMutex
 	configCache   *configCache
+
+	// pluginFieldCache holds the resolved call-field extensions. Read once per
+	// call on the emit path; only a plugin starting or stopping changes it.
+	pluginFieldCache atomic.Pointer[[]pluginResolvedField]
 }
 
 type configCache struct {

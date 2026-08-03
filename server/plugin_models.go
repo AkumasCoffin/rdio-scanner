@@ -134,11 +134,28 @@ var pluginModels = []pluginModel{
 		summary: "Watched directories that calls are ingested from.",
 		list:    func(c *Controller) ([]any, error) { return modelToList(c.Dirwatches.List) },
 		replace: func(c *Controller, v []any) error {
+			// Stopped and restarted around the write, the way the admin save
+			// path does it. Without that the row was stored and shown in the
+			// panel and in list(), and no files were ingested from the new
+			// directory until the server restarted — a plugin adding a watch
+			// appeared to succeed and silently did nothing.
+			c.Dirwatches.Stop()
+
 			c.Dirwatches.FromMap(v)
+
 			if err := c.Dirwatches.Write(c.Database); err != nil {
+				c.Dirwatches.Start(c)
 				return err
 			}
-			return c.Dirwatches.Read(c.Database)
+
+			if err := c.Dirwatches.Read(c.Database); err != nil {
+				c.Dirwatches.Start(c)
+				return err
+			}
+
+			c.Dirwatches.Start(c)
+
+			return nil
 		},
 	},
 }
