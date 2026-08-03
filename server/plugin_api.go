@@ -439,6 +439,7 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	// --- rdio.fs / rdio.exec / rdio.crypto --------------------------------
 
 	rt.bindFs(vm, rdio, throw)
+	rt.bindNet(vm, rdio, throw)
 	rt.bindExec(vm, rdio, throw)
 	rt.bindCrypto(vm, rdio, throw)
 	rt.bindAudio(vm, rdio, throw)

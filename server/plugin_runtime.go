@@ -113,6 +113,9 @@ type PluginRuntime struct {
 	wsHandlers map[string]goja.Callable
 	routes     []*pluginRoute
 	intervals  []*eventloop.Interval
+	// listeners are the sockets this plugin opened, closed on Stop so a
+	// disabled plugin does not leave a port bound.
+	listeners []*pluginListener
 
 	fieldExtensions  []*pluginFieldExtension
 	searchExtensions []*pluginSearchExtension
@@ -334,6 +337,10 @@ func (rt *PluginRuntime) Stop() {
 	for _, interval := range intervals {
 		rt.loop.ClearInterval(interval)
 	}
+
+	// Sockets close before the loop does, or a message arriving mid-shutdown
+	// would be queued onto a runtime already on its way out.
+	rt.closeListeners()
 
 	// Give shutdown handlers a moment on the loop, then stop it regardless.
 	done := make(chan struct{})

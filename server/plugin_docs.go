@@ -123,6 +123,10 @@ var pluginCapabilities = []struct {
 	{"exec", "Run a program. Returns a promise with its exit code and output.", []string{
 		"rdio.exec(name, args, options)",
 	}},
+	{"net", "TCP and UDP, so a plugin can be a source of calls rather than only a reaction to them. Messages arrive on your event loop like any other handler.", []string{
+		"listen(network, address, handler) — network is tcp or udp. The handler gets {data, text, remote, reply}; reply writes back on the same connection or to the same sender. Returns {network, address, close()}, where address is what was actually bound so port 0 is usable",
+		"send(network, address, data, {timeoutMs, reply}) — one write to something already listening; returns a promise, carrying the response when reply is set",
+	}},
 	{"crypto", "Hashing and encoding, which JavaScript does not provide.", []string{
 		"hash(algorithm, data)", "hmac(algorithm, key, data)",
 		"base64Encode(data)", "base64Decode(text)", "hexEncode(data)", "hexDecode(text)",
