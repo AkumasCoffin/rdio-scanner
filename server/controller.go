@@ -125,6 +125,9 @@ func NewController(config *Config) *Controller {
 	controller.PluginDispatch = NewPluginDispatch(controller)
 	controller.PluginRpc = NewPluginRpc(controller)
 	controller.PluginStore = NewPluginStore(controller)
+	// Plugins carries a Controller field that nothing ever set, so anything
+	// reaching back through it silently did nothing.
+	controller.Plugins.Controller = controller
 	controller.pluginFeatures = NewPluginFeatureCache()
 	controller.Scheduler = NewScheduler(controller)
 	controller.Stats = NewStats(controller)

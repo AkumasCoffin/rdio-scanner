@@ -437,6 +437,14 @@ func (plugins *Plugins) SetEnabled(db *Database, pluginId string, enabled bool) 
 		return fmt.Errorf("no such plugin %q", pluginId)
 	}
 
+	// Turning a plugin back on is an operator saying they have looked at it.
+	// Its record goes with that, so it restarts from a clean slate rather than
+	// one strike away from being disabled again.
+	if enabled && plugins.Controller != nil && plugins.Controller.PluginDispatch != nil {
+		plugins.Controller.PluginDispatch.health.forget(pluginId)
+		plugin.Error = ""
+	}
+
 	plugins.mutex.Lock()
 	plugin.Enabled = enabled
 	plugins.mutex.Unlock()

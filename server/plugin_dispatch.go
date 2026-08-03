@@ -102,6 +102,10 @@ type PluginDispatch struct {
 	// with a stalling server and no way to learn a plugin is why.
 	metrics *pluginMetrics
 
+	// health decides when the server stops trusting a plugin, so a broken one
+	// on a hot path does not need an operator watching to be contained.
+	health *pluginHealth
+
 	// vetoLogThrottle keeps the veto line from becoming the problem. A
 	// call.emit filter withholding most calls from most listeners is doing
 	// exactly its job, and that was one database write per listener per call.
@@ -114,6 +118,7 @@ func NewPluginDispatch(controller *Controller) *PluginDispatch {
 	dispatch := &PluginDispatch{
 		points:          map[string]bool{},
 		metrics:         newPluginMetrics(),
+		health:          newPluginHealth(),
 		vetoLogThrottle: NewLogThrottle(5, time.Minute),
 		controller:      controller,
 	}
@@ -494,6 +499,8 @@ func (dispatch *PluginDispatch) invokeWithin(budget *pluginBudget, handler *plug
 	allowed, ok := budget.take(timeout)
 	if !ok {
 		dispatch.metrics.observeSkipped(handler.pluginId, point, handler.verb)
+		dispatch.noteMisbehaviour(handler.pluginId, point, "the call ran out of time before this handler was reached")
+
 		return nil, errPluginBudgetSpent
 	}
 	timeout = allowed
@@ -510,6 +517,13 @@ func (dispatch *PluginDispatch) invokeWithin(budget *pluginBudget, handler *plug
 		// failing, never timing out — was invisible, and that is the one that
 		// takes a large site down.
 		dispatch.metrics.observe(handler.pluginId, point, handler.verb, elapsed, err)
+
+		// Only being too slow counts against a plugin. A handler that throws is
+		// wrong, and wrong is the author's problem to fix — it costs the server
+		// nothing, because the value passes through untouched.
+		if err != nil && isPluginTimeout(err) {
+			dispatch.noteMisbehaviour(handler.pluginId, point, "the handler was still running at its deadline")
+		}
 	}()
 
 	// Each handler gets its own copy, for the same reason observers do: goja
