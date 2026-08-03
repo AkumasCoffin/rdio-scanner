@@ -164,12 +164,7 @@ func (controller *Controller) servePluginRoute(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	headers := map[string]any{}
-	for key, values := range r.Header {
-		if len(values) > 0 {
-			headers[key] = values[0]
-		}
-	}
+	headers := pluginRequestHeaders(r.Header)
 
 	request := map[string]any{
 		"method":  r.Method,
@@ -202,6 +197,34 @@ func (controller *Controller) servePluginRoute(w http.ResponseWriter, r *http.Re
 
 // writePluginResponse turns a handler's return value into an HTTP response. A
 // plugin may return nothing (204), a bare value (200 with a JSON body), or a
+// pluginRequestHeaders presents every header under both spellings.
+//
+// Go canonicalises to `Authorization` and `Content-Type`; every JavaScript
+// author reaches for `req.headers.authorization`, because that is what fetch
+// and Node hand them. Property access is case-sensitive, so the natural
+// spelling silently returns undefined — and a plugin checking an admin token
+// that way rejects every request from its own settings page, answering 401 with
+// nothing anywhere to explain it.
+func pluginRequestHeaders(header http.Header) map[string]any {
+	headers := map[string]any{}
+
+	for key, values := range header {
+		if len(values) == 0 {
+			continue
+		}
+
+		headers[key] = values[0]
+
+		// Only when it differs, so a header that is already lowercase does not
+		// appear twice to a plugin iterating them.
+		if lower := strings.ToLower(key); lower != key {
+			headers[lower] = values[0]
+		}
+	}
+
+	return headers
+}
+
 // {status, headers, body} object for full control.
 func writePluginResponse(w http.ResponseWriter, result any) {
 	if result == nil {
