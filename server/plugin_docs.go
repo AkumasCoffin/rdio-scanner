@@ -197,39 +197,17 @@ func writeVerbsSection(b *strings.Builder) {
 func writePointsSection(b *strings.Builder) {
 	b.WriteString("## Extension points\n\n")
 
-	groups := []struct {
-		title  string
-		points []string
-	}{
-		{"Lifecycle", []string{
-			PointStartup, PointShutdown, PointTick, PointConfigChanged,
-			PointClientConnect, PointClientDisconnect,
-		}},
-		{"Ingest", []string{
-			PointCallReceive, PointCallAccept, PointCallDuplicate,
-			PointCallConvert, PointCallStore, PointCallStored,
-		}},
-		{"Delivery", []string{
-			PointCallDelay, PointCallEmit, PointCallPayload, PointCallEmitted,
-			PointDownstreamSend, PointClientConfig,
-		}},
-		{"Access", []string{
-			PointAccessCheck, PointAccessScope, PointApikeyCheck, PointAdminCheck,
-		}},
-		{"Data", []string{
-			PointCallSearch, PointCallPrune, PointCallAudio, PointConfigSave,
-		}},
-	}
+	groups := pluginPointGroups()
 
 	for _, group := range groups {
-		b.WriteString("### " + group.title + "\n\n")
+		b.WriteString("### " + group.Title + "\n\n")
 		// Verbs are a column because they are the thing an author most needs
 		// and had no way to check. Most points invoke one or two, and
 		// registering the wrong one is refused at load rather than accepted and
 		// silently never fired.
 		b.WriteString("| Point | Verbs | Timeout | Notes |\n|---|---|---|---|\n")
 
-		for _, point := range group.points {
+		for _, point := range group.Points {
 			timeout := "default"
 			if custom, ok := pointTimeouts[point]; ok {
 				timeout = custom.String()

@@ -327,6 +327,24 @@ export class RdioScannerService implements OnDestroy {
     private livefeedMapPriorToHoldSystem: RdioScannerLivefeedMap | undefined;
     private livefeedMapPriorToHoldTalkgroup: RdioScannerLivefeedMap | undefined;
     private livefeedMode = RdioScannerLivefeedMode.Offline;
+
+    /**
+     * Tells plugins the live feed turned on or off.
+     *
+     * frontend-api.md documented ctx.on('livefeed') from the beginning and
+     * nothing ever emitted it, so a plugin that paused work while the feed was
+     * off never started again. Routed through one setter rather than sprinkled
+     * at each assignment, so a new transition cannot forget it.
+     */
+    private setLivefeedMode(mode: RdioScannerLivefeedMode): void {
+        if (this.livefeedMode === mode) {
+            return;
+        }
+
+        this.livefeedMode = mode;
+
+        this.pluginHost.emit('livefeed', mode !== RdioScannerLivefeedMode.Offline);
+    }
     private livefeedPaused = false;
 
     private playbackList: RdioScannerPlaybackList | undefined;
@@ -1103,7 +1121,7 @@ export class RdioScannerService implements OnDestroy {
         this.stop();
 
         if (this.livefeedMode === RdioScannerLivefeedMode.Offline) {
-            this.livefeedMode = RdioScannerLivefeedMode.Playback;
+            this.setLivefeedMode(RdioScannerLivefeedMode.Playback);
 
             if (this.livefeedMapPriorToHoldSystem) {
                 this.holdSystem({ resubscribe: false });
@@ -2217,7 +2235,7 @@ export class RdioScannerService implements OnDestroy {
             return sysMap;
         }, {});
 
-        this.livefeedMode = RdioScannerLivefeedMode.Online;
+        this.setLivefeedMode(RdioScannerLivefeedMode.Online);
 
         this.trackUmamiEvent('livefeed-start');
 
@@ -2260,7 +2278,7 @@ export class RdioScannerService implements OnDestroy {
     stopLivefeed(): void {
         this.trackUmamiEvent('livefeed-stop');
 
-        this.livefeedMode = RdioScannerLivefeedMode.Offline;
+        this.setLivefeedMode(RdioScannerLivefeedMode.Offline);
 
         this.clearQueue();
 
@@ -2272,7 +2290,7 @@ export class RdioScannerService implements OnDestroy {
     }
 
     stopPlaybackMode(): void {
-        this.livefeedMode = RdioScannerLivefeedMode.Offline;
+        this.setLivefeedMode(RdioScannerLivefeedMode.Offline);
 
         this.playbackRefreshing = false;
 

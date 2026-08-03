@@ -86,6 +86,13 @@ const (
 type pluginPointDef struct {
 	name  string
 	verbs []pluginVerb
+	// group is the heading this point appears under in the reference. It lives
+	// here rather than in a list the documentation keeps separately, because
+	// that list was hand-maintained and plugins.ready was missing from it — the
+	// one point the getting-started guide tells every author to use was absent
+	// from the reference entirely, and the test meant to catch that passed by
+	// accident because the name happened to appear inside another point's note.
+	group string
 }
 
 var (
@@ -101,46 +108,46 @@ var (
 var pluginPointDefs = []pluginPointDef{
 	// Lifecycle. Delivered through the runtime's own handler list, which only
 	// ever holds observers.
-	{PointStartup, verbsObserve},
-	{PointPluginsReady, verbsObserve},
-	{PointShutdown, verbsObserve},
-	{PointTick, verbsObserve},
-	{PointConfigChanged, verbsObserve},
-	{PointClientConnect, verbsObserve},
-	{PointClientDisconnect, verbsObserve},
+	{PointStartup, verbsObserve, "Lifecycle"},
+	{PointPluginsReady, verbsObserve, "Lifecycle"},
+	{PointShutdown, verbsObserve, "Lifecycle"},
+	{PointTick, verbsObserve, "Lifecycle"},
+	{PointConfigChanged, verbsObserve, "Lifecycle"},
+	{PointClientConnect, verbsObserve, "Lifecycle"},
+	{PointClientDisconnect, verbsObserve, "Lifecycle"},
 
 	// Ingest.
-	{PointCallReceive, verbsObserveFilter},
-	{PointCallAccept, verbsObserveFilter},
-	{PointCallDuplicate, verbsObserveFilter},
+	{PointCallReceive, verbsObserveFilter, "Ingest"},
+	{PointCallAccept, verbsObserveFilter, "Ingest"},
+	{PointCallDuplicate, verbsObserveFilter, "Ingest"},
 	// Replacing conversion is all-or-nothing, so there is nothing to observe
 	// or amend — a plugin either owns the encoder or it does not.
-	{PointCallConvert, verbsOverride},
-	{PointCallStore, verbsObserveFilter},
-	{PointCallStored, verbsObserve},
+	{PointCallConvert, verbsOverride, "Ingest"},
+	{PointCallStore, verbsObserveFilter, "Ingest"},
+	{PointCallStored, verbsObserve, "Ingest"},
 
 	// Delivery.
-	{PointCallDelay, verbsObserveFilter},
-	{PointCallEmit, verbsObserveFilter},
-	{PointCallPayload, verbsObserveFilter},
-	{PointCallEmitted, verbsObserve},
-	{PointDownstreamSend, verbsObserveFilter},
-	{PointClientConfig, verbsObserveFilter},
+	{PointCallDelay, verbsObserveFilter, "Delivery"},
+	{PointCallEmit, verbsObserveFilter, "Delivery"},
+	{PointCallPayload, verbsObserveFilter, "Delivery"},
+	{PointCallEmitted, verbsObserve, "Delivery"},
+	{PointDownstreamSend, verbsObserveFilter, "Delivery"},
+	{PointClientConfig, verbsObserveFilter, "Delivery"},
 
 	// Access. Provide supplies a decision core could not make; filter then
 	// narrows or refuses one it did.
-	{PointAccessCheck, verbsAuth},
-	{PointAccessScope, verbsObserveFilter},
-	{PointApikeyCheck, verbsAuth},
-	{PointAdminCheck, verbsAuth},
+	{PointAccessCheck, verbsAuth, "Access"},
+	{PointAccessScope, verbsObserveFilter, "Access"},
+	{PointApikeyCheck, verbsAuth, "Access"},
+	{PointAdminCheck, verbsAuth, "Access"},
 
 	// Data.
-	{PointCallSearch, verbsObserveFilter},
-	{PointCallPrune, verbsObserveFilter},
+	{PointCallSearch, verbsObserveFilter, "Data"},
+	{PointCallPrune, verbsObserveFilter, "Data"},
 	// Supplying audio core does not have is the whole purpose; there is no
 	// original value to observe or filter.
-	{PointCallAudio, verbsProvide},
-	{PointConfigSave, verbsObserveFilter},
+	{PointCallAudio, verbsProvide, "Data"},
+	{PointConfigSave, verbsObserveFilter, "Data"},
 }
 
 // pluginPoints is the names, derived so the two can never disagree.
@@ -177,6 +184,35 @@ func pointAcceptsVerb(point string, verb pluginVerb) bool {
 	}
 
 	return false
+}
+
+// pluginPointGroups is the reference's headings, in order, each with the points
+// that belong to it — derived from the declarations, so a point added without a
+// group is a compile error rather than a silent omission.
+func pluginPointGroups() []struct {
+	Title  string
+	Points []string
+} {
+	order := []string{"Lifecycle", "Ingest", "Delivery", "Access", "Data"}
+
+	byGroup := map[string][]string{}
+	for _, def := range pluginPointDefs {
+		byGroup[def.group] = append(byGroup[def.group], def.name)
+	}
+
+	out := []struct {
+		Title  string
+		Points []string
+	}{}
+
+	for _, title := range order {
+		out = append(out, struct {
+			Title  string
+			Points []string
+		}{Title: title, Points: byGroup[title]})
+	}
+
+	return out
 }
 
 // pointVerbNames is the accepted verbs in a form fit for an error message or a
