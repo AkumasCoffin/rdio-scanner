@@ -326,9 +326,16 @@ func (options *Options) Write(db *Database) error {
 			return err
 		}
 		if n, err := res.RowsAffected(); err == nil && n == 0 {
-			if _, err := db.Exec("insert into `rdioScannerConfigs` (`key`, `val`) values (?, ?)", key, raw); err != nil {
-				return err
-			}
+			// Through ExecInsert because this is where a skewed Postgres
+			// sequence surfaces: an option that already has a row is only ever
+			// updated, so the sequence is never touched, and the first save
+			// after a new option is added is the one that fails. It then fails
+			// on every save afterwards, because the row it collided over was
+			// never written.
+			return db.ExecInsert(
+				"rdioScannerConfigs", "_id",
+				"insert into `rdioScannerConfigs` (`key`, `val`) values (?, ?)", key, raw,
+			)
 		}
 		return nil
 	}

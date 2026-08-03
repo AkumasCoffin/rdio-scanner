@@ -25,7 +25,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	_ "modernc.org/sqlite"
 )
 
@@ -168,49 +168,142 @@ func (db *Database) repairSequences() error {
 	}
 
 	repaired := []string{}
+	failed := []string{}
 
 	for _, tc := range postgresSerialColumns {
-		table, column := tc[0], tc[1]
+		moved, err := db.repairSequence(tc[0], tc[1])
 
-		var (
-			maxId sql.NullInt64
-			last  sql.NullInt64
-		)
-
-		// A table absent from this schema version (or a column that never got
-		// a sequence) is not an error — skip it and carry on.
-		q := fmt.Sprintf(`select max("%s"), pg_sequence_last_value(pg_get_serial_sequence('"%s"', '%s'))`, column, table, column)
-		if err := db.Sql.QueryRow(q).Scan(&maxId, &last); err != nil {
+		if err != nil {
+			// One table's failure must not end the sweep. These are processed
+			// in alphabetical order, so returning here left every table after
+			// the failing one skewed — and rdioScannerConfigs is fourth of
+			// thirteen, which is a long way from the end.
+			failed = append(failed, fmt.Sprintf("%s.%s: %v", tc[0], tc[1], err))
 			continue
 		}
 
-		// Empty table: leave the sequence untouched so the first insert still
-		// gets key 1.
-		if !maxId.Valid || maxId.Int64 < 1 {
-			continue
+		if moved != "" {
+			repaired = append(repaired, moved)
 		}
-
-		if last.Valid && last.Int64 >= maxId.Int64 {
-			continue
-		}
-
-		s := fmt.Sprintf(`select setval(pg_get_serial_sequence('"%s"', '%s'), (select max("%s") from "%s"))`, table, column, column, table)
-		if _, err := db.Sql.Exec(s); err != nil {
-			return fmt.Errorf("repairsequences: %s.%s: %v", table, column, err)
-		}
-
-		from := "unused"
-		if last.Valid {
-			from = fmt.Sprintf("%d", last.Int64)
-		}
-		repaired = append(repaired, fmt.Sprintf("%s.%s (%s -> %d)", table, column, from, maxId.Int64))
 	}
 
 	if len(repaired) > 0 {
 		log.Printf("realigned postgres sequences behind their table: %s\n", strings.Join(repaired, ", "))
 	}
 
+	if len(failed) > 0 {
+		// Reported rather than swallowed. A sequence that could not be checked
+		// is one that will collide later, in a save the operator cannot connect
+		// to anything — which is precisely how this went unnoticed.
+		return fmt.Errorf("repairsequences: %s", strings.Join(failed, "; "))
+	}
+
 	return nil
+}
+
+// repairSequence realigns one sequence, and reports what it changed.
+//
+// The alignment is unconditional for a non-empty table rather than guarded by a
+// comparison against the sequence's current value, because that comparison
+// cannot be made correctly from `pg_sequence_last_value` alone: it reports
+// last_value without is_called, and a sequence left at (last_value = N,
+// is_called = false) — which is what several restore paths produce — hands out
+// N rather than N+1. Read that way the sequence looks caught up with a table
+// whose highest key is N, so it was skipped as healthy on every boot, and every
+// insert that reached for a new key collided with the row already holding N:
+//
+//	pq: duplicate key value violates unique constraint "rdioScannerConfigs_pkey"
+//
+// Silent, and permanent, since each boot took the same branch. setval with an
+// explicit is_called leaves no such ambiguity, costs one indexed max() per
+// table, and is idempotent.
+func (db *Database) repairSequence(table string, column string) (string, error) {
+	var (
+		maxId sql.NullInt64
+		last  sql.NullInt64
+	)
+
+	// A table absent from this schema version, or a column that never got a
+	// sequence, is not a failure — there is nothing to realign.
+	probe := fmt.Sprintf(
+		`select max("%s"), pg_sequence_last_value(pg_get_serial_sequence('"%s"', '%s'))`,
+		column, table, column,
+	)
+	if err := db.Sql.QueryRow(probe).Scan(&maxId, &last); err != nil {
+		return "", nil
+	}
+
+	// Empty table: leave it alone so the first insert still gets key 1.
+	if !maxId.Valid || maxId.Int64 < 1 {
+		return "", nil
+	}
+
+	set := fmt.Sprintf(
+		`select setval(pg_get_serial_sequence('"%s"', '%s'), (select max("%s") from "%s"), true)`,
+		table, column, column, table,
+	)
+	if _, err := db.Sql.Exec(set); err != nil {
+		return "", err
+	}
+
+	// Only worth a line when it actually moved. The is_called case cannot be
+	// told apart from a healthy sequence here, so it is reported as a repair
+	// only when last_value was genuinely behind or unused.
+	if last.Valid && last.Int64 >= maxId.Int64 {
+		return "", nil
+	}
+
+	from := "unused"
+	if last.Valid {
+		from = fmt.Sprintf("%d", last.Int64)
+	}
+
+	return fmt.Sprintf("%s.%s (%s -> %d)", table, column, from, maxId.Int64), nil
+}
+
+// isSequenceCollision reports whether an error is Postgres refusing an insert
+// because the key a sequence handed out is already taken.
+//
+// Narrow on purpose: SQLSTATE 23505 covers every unique constraint, and a
+// genuine duplicate — two accesses sharing a code, two systems sharing an id —
+// is a real error the operator has to see, not something to retry silently.
+// Only a collision on the table's own primary key indicates a skewed sequence.
+func isSequenceCollision(err error, table string) bool {
+	pqErr, ok := err.(*pq.Error)
+	if !ok {
+		return false
+	}
+
+	return pqErr.Code == "23505" && pqErr.Constraint == table+"_pkey"
+}
+
+// ExecInsert runs an insert whose key comes from a sequence, realigning that
+// sequence and trying once more if it collides.
+//
+// Startup alignment is not enough on its own. A dump restored while the server
+// is running, or any writer that inserts an explicit key, leaves the sequence
+// behind again — and the operator meets it as a save that fails with a message
+// about a constraint they have never heard of, which no amount of retrying the
+// save will clear. Repairing at the point of collision means the second attempt
+// succeeds and the cause is gone rather than waiting for the next restart.
+func (db *Database) ExecInsert(table string, column string, query string, args ...any) error {
+	_, err := db.Exec(query, args...)
+
+	if err == nil || db.Config.DbType != DbTypePostgres || !isSequenceCollision(err, table) {
+		return err
+	}
+
+	if _, repairErr := db.repairSequence(table, column); repairErr != nil {
+		// The original error is the one worth reporting: it is what actually
+		// stopped the write, and the repair failing is a detail beneath it.
+		return fmt.Errorf("%v (realigning %s.%s also failed: %v)", err, table, column, repairErr)
+	}
+
+	log.Printf("realigned the %s.%s sequence after a key collision\n", table, column)
+
+	_, err = db.Exec(query, args...)
+
+	return err
 }
 
 func (db *Database) ParseDateTime(f any) (time.Time, error) {
