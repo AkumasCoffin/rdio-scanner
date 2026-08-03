@@ -33,11 +33,6 @@ const pluginConfigTableName = "config"
 // memory multiplier, not just a large slice.
 const pluginQueryMaxRows = 50000
 
-// pluginTableIdentifier matches a backtick-quoted identifier in plugin SQL.
-// Plugins write their declared table names; the host rewrites them to the real
-// namespaced names. Nothing is refused — see rewrite for why.
-var pluginTableIdentifier = regexp.MustCompile("`([a-zA-Z_][a-zA-Z0-9_]*)`")
-
 // pluginSqlLeadingKeyword grabs the first word of a statement so exec/query can
 // be held to the statement kinds each is meant for.
 var pluginSqlLeadingKeyword = regexp.MustCompile(`^\s*([a-zA-Z]+)`)
@@ -85,6 +80,12 @@ func NewPluginDb(database *Database, manifest *PluginManifest) *PluginDb {
 // rewrite maps every backtick-quoted identifier that names one of this plugin's
 // declared tables onto its namespaced form.
 //
+// It scans rather than pattern-matches. The regex it replaced had no idea what
+// a string literal was, so it rewrote inside quoted text and comments as
+// happily as it did in a FROM clause — a plugin storing the words
+// "see `notes` for detail" got them silently altered. Scanning is barely more
+// code and is the difference between a rewrite and a find-and-replace.
+//
 // Nothing is refused. A plugin may read and write any table in the database,
 // core's included — a query it could not run here it could run by other means,
 // and pretending otherwise only made the boundary look stronger than it was.
@@ -94,17 +95,102 @@ func NewPluginDb(database *Database, manifest *PluginManifest) *PluginDb {
 // Column names are backtick-quoted too, so the rule is simply: an identifier
 // matching a declared table name is rewritten, anything else is left alone.
 func (pluginDb *PluginDb) rewrite(query string) (string, error) {
-	rewritten := pluginTableIdentifier.ReplaceAllStringFunc(query, func(match string) string {
-		name := strings.Trim(match, "`")
+	var out strings.Builder
+	out.Grow(len(query) + 32)
 
-		if pluginDb.tables[name] {
-			return "`" + pluginDb.prefix + name + "`"
+	runes := []rune(query)
+
+	for i := 0; i < len(runes); {
+		switch runes[i] {
+		// String literals are copied through untouched. A regex over the whole
+		// statement rewrote inside them, so a plugin storing the text
+		// "see `notes` for detail" had its own prose silently rewritten to
+		// "see `plugin_x_notes` for detail" — data corruption with nothing to
+		// indicate it, in the one place a plugin is most likely to put words a
+		// person will read.
+		case 0x27, '"':
+			quote := runes[i]
+			out.WriteRune(quote)
+			i++
+
+			for i < len(runes) {
+				out.WriteRune(runes[i])
+
+				// Doubling is how SQL escapes a quote inside a literal.
+				if runes[i] == quote {
+					if i+1 < len(runes) && runes[i+1] == quote {
+						out.WriteRune(quote)
+						i += 2
+						continue
+					}
+					i++
+					break
+				}
+
+				i++
+			}
+
+		// Comments likewise: a table name mentioned in one is a note, not a
+		// reference.
+		case '-':
+			if i+1 < len(runes) && runes[i+1] == '-' {
+				for i < len(runes) && runes[i] != 0x0a {
+					out.WriteRune(runes[i])
+					i++
+				}
+				continue
+			}
+			out.WriteRune(runes[i])
+			i++
+
+		case '/':
+			if i+1 < len(runes) && runes[i+1] == '*' {
+				out.WriteString("/*")
+				i += 2
+				for i < len(runes) {
+					if runes[i] == '*' && i+1 < len(runes) && runes[i+1] == '/' {
+						out.WriteString("*/")
+						i += 2
+						break
+					}
+					out.WriteRune(runes[i])
+					i++
+				}
+				continue
+			}
+			out.WriteRune(runes[i])
+			i++
+
+		case '`':
+			end := i + 1
+			for end < len(runes) && runes[end] != '`' {
+				end++
+			}
+
+			if end >= len(runes) {
+				// Unterminated. Copy the rest verbatim rather than guessing.
+				out.WriteString(string(runes[i:]))
+				i = len(runes)
+				continue
+			}
+
+			name := string(runes[i+1 : end])
+
+			if pluginDb.tables[name] {
+				out.WriteString("`" + pluginDb.prefix + name + "`")
+			} else {
+				out.WriteString("`" + name + "`")
+			}
+
+			i = end + 1
+
+		default:
+			out.WriteRune(runes[i])
+			i++
 		}
+	}
 
-		return match
-	})
-
-	return rewritten, nil
+	return out.String(), nil
 }
 
 func leadingKeyword(query string) string {
