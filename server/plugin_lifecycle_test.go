@@ -214,3 +214,53 @@ func TestDeliveryIsPerRuntimeNotPerHandler(t *testing.T) {
 		t.Error("no handlers produced a delivery")
 	}
 }
+
+// The admin password was put into the payload every observer and filter
+// received, not just the provider that needs it — so three lines of JavaScript
+// in any installed plugin were enough to exfiltrate it, for a capability none
+// of them have. A provider genuinely needs it: verifying a credential against
+// an external directory cannot be done with a hash.
+func TestAdminPasswordReachesOnlyAProvider(t *testing.T) {
+	controller := &Controller{Logs: &Logs{}}
+	dispatch := NewPluginDispatch(controller)
+
+	// Observer and filter are handed the same map, so checking the filter
+	// covers both. An observer needs a live runtime to dispatch into and this
+	// test has no use for one.
+	var providerSaw, filterSaw map[string]any
+
+	dispatch.Register(&pluginHandler{
+		pluginId: "auth", verb: verbProvide,
+		callable: &funcCallable{fn: func(args ...any) (any, error) {
+			providerSaw, _ = args[0].(map[string]any)
+			return map[string]any{"ok": true}, nil
+		}},
+	}, PointAdminCheck)
+
+	dispatch.Register(&pluginHandler{
+		pluginId: "nosy", verb: verbFilter,
+		callable: &funcCallable{fn: func(args ...any) (any, error) {
+			filterSaw, _ = args[0].(map[string]any)
+			return nil, nil
+		}},
+	}, PointAdminCheck)
+
+	// passed=false so the provider runs, which is the only path that gets it.
+	if !dispatch.CheckAdmin("hunter2", "10.0.0.1", false) {
+		t.Fatal("the provider granted access but the check refused")
+	}
+
+	if providerSaw == nil {
+		t.Fatal("the provider never ran")
+	}
+	if providerSaw["password"] != "hunter2" {
+		t.Errorf("the provider did not receive the password it needs: %v", providerSaw["password"])
+	}
+
+	if filterSaw == nil {
+		t.Fatal("the filter never ran")
+	}
+	if _, leaked := filterSaw["password"]; leaked {
+		t.Error("the plaintext admin password was handed to a filter")
+	}
+}

@@ -53,10 +53,12 @@ const (
 	// pieces, so a plugin cannot exhaust memory with one call.
 	pluginFsMaxRead = 256 << 20 // 256 MiB
 
-	// pluginExecTimeout is how long a program may run before it is killed.
-	// Plugins can lower it; a long-running process belongs in rdio.net or a
-	// scheduled job, not in a blocking call.
-	pluginExecTimeout = 5 * time.Minute
+	// pluginExecTimeout is how long a program may run before it is killed, and
+	// pluginExecTimeoutMax is as far as a plugin may raise it. A process meant
+	// to outlive a single call belongs behind a scheduled job or its own
+	// service, not in a call the server is waiting on.
+	pluginExecTimeout    = 5 * time.Minute
+	pluginExecTimeoutMax = 30 * time.Minute
 
 	// pluginExecMaxOutput bounds what is captured from a program's output.
 	pluginExecMaxOutput = 32 << 20 // 32 MiB
@@ -255,6 +257,13 @@ func (rt *PluginRuntime) bindExec(vm *goja.Runtime, rdio *goja.Object, throw fun
 			if m, ok := options.Export().(map[string]any); ok {
 				if ms, ok := numberFromMap(m, "timeoutMs"); ok && ms > 0 {
 					timeout = time.Duration(ms) * time.Millisecond
+					// Capped, the way rdio.http already caps its own. Without
+					// this the comment above claiming plugins can only lower it
+					// was untrue, and {timeoutMs: 86400000} held a goroutine and
+					// a child process for a day.
+					if timeout > pluginExecTimeoutMax {
+						timeout = pluginExecTimeoutMax
+					}
 				}
 				if dir := stringFromMap(m, "cwd"); dir != "" {
 					workDir = dir

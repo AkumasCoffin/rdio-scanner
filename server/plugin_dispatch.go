@@ -300,6 +300,9 @@ func (dispatch *PluginDispatch) Notify(point string, value any) {
 	handlers := dispatch.handlersFor(point, verbOn)
 
 	for _, runtime := range distinctRuntimes(len(handlers), func(i int) *PluginRuntime { return handlers[i].runtime }) {
+		if runtime == nil {
+			continue
+		}
 		runtime.EmitTo(point, clonePluginValue(value))
 	}
 }

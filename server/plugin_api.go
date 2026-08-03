@@ -501,6 +501,33 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 		return vm.ToValue(rt.controller.PluginSystemsList())
 	})
 
+	// The three lookups a call handler actually performs. call.stored carries
+	// system and talkgroup as bare integers, so without these every plugin
+	// wanting to name them wrote the same scan over list().
+	systems.Set("get", func(systemId int64) goja.Value {
+		system := rt.controller.PluginSystem(uint(systemId))
+		if system == nil {
+			return goja.Null()
+		}
+		return vm.ToValue(system)
+	})
+
+	systems.Set("talkgroup", func(systemId int64, talkgroupId int64) goja.Value {
+		talkgroup := rt.controller.PluginTalkgroup(uint(systemId), uint(talkgroupId))
+		if talkgroup == nil {
+			return goja.Null()
+		}
+		return vm.ToValue(talkgroup)
+	})
+
+	systems.Set("unit", func(systemId int64, unitId int64) goja.Value {
+		unit := rt.controller.PluginUnit(uint(systemId), uint(unitId))
+		if unit == nil {
+			return goja.Null()
+		}
+		return vm.ToValue(unit)
+	})
+
 	rdio.Set("systems", systems)
 
 	// --- rdio.apikeys -----------------------------------------------------
@@ -797,13 +824,26 @@ func exportPluginArgs(args goja.Value) []any {
 		return nil
 	}
 
-	exported := args.Export()
-
-	if list, ok := exported.([]any); ok {
-		return list
+	list, ok := args.Export().([]any)
+	if !ok {
+		return nil
 	}
 
-	return []any{exported}
+	out := make([]any, len(list))
+	for i, value := range list {
+		// database/sql has no idea what a goja.ArrayBuffer is, so a blob
+		// argument failed at the driver — which meant every binary-producing
+		// API in the plugin surface (crypto, fs, audio) had no way to write
+		// what it produced, and the blob column type the manifest advertises
+		// could not be used at all.
+		if buffer, isBuffer := value.(goja.ArrayBuffer); isBuffer {
+			out[i] = buffer.Bytes()
+			continue
+		}
+		out[i] = value
+	}
+
+	return out
 }
 
 func stringFromMap(m map[string]any, key string) string {

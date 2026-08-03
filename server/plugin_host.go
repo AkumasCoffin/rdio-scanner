@@ -216,6 +216,18 @@ func (controller *Controller) ForwardToDownstreams(
 // No permission gates this: it is the same configuration every websocket client
 // already receives, minus nothing. A plugin that reacts per-talkgroup needs it,
 // and withholding it would only push plugins into storing a stale copy.
+// PluginSystemsList is the configured systems, as a plugin sees them.
+//
+// It used to carry three fields per talkgroup — id, label, name — and nothing
+// else, which made the most ordinary plugin task impossible: "alert on any
+// talkgroup in the Fire group" needs the group, and resolving one meant falling
+// back to rdio.models and joining three collections by hand.
+//
+// Group and tag arrive resolved to their labels as well as their ids, because
+// an id is not what anyone is matching on and looking it up is the same join
+// every plugin would otherwise write for itself. Units come along for the same
+// reason: unit-id to alias is the commonest lookup a transcription or
+// notification plugin does, and units exist nowhere else in the plugin API.
 func (controller *Controller) PluginSystemsList() []map[string]any {
 	systems := []map[string]any{}
 
@@ -223,6 +235,30 @@ func (controller *Controller) PluginSystemsList() []map[string]any {
 	list := make([]*System, len(controller.Systems.List))
 	copy(list, controller.Systems.List)
 	controller.Systems.mutex.Unlock()
+
+	label := func(get func(any) (string, bool), id uint) string {
+		if id == 0 {
+			return ""
+		}
+		if text, ok := get(id); ok {
+			return text
+		}
+		return ""
+	}
+
+	groupLabel := func(id any) (string, bool) {
+		if group, ok := controller.Groups.GetGroup(id); ok && group != nil {
+			return group.Label, true
+		}
+		return "", false
+	}
+
+	tagLabel := func(id any) (string, bool) {
+		if tag, ok := controller.Tags.GetTag(id); ok && tag != nil {
+			return tag.Label, true
+		}
+		return "", false
+	}
 
 	for _, system := range list {
 		if system == nil {
@@ -234,10 +270,32 @@ func (controller *Controller) PluginSystemsList() []map[string]any {
 			if talkgroup == nil {
 				continue
 			}
+
 			talkgroups = append(talkgroups, map[string]any{
-				"id":    talkgroup.Id,
-				"label": talkgroup.Label,
-				"name":  talkgroup.Name,
+				"id":        talkgroup.Id,
+				"label":     talkgroup.Label,
+				"name":      talkgroup.Name,
+				"groupId":   talkgroup.GroupId,
+				"group":     label(groupLabel, talkgroup.GroupId),
+				"tagId":     talkgroup.TagId,
+				"tag":       label(tagLabel, talkgroup.TagId),
+				"frequency": talkgroup.Frequency,
+				"delay":     talkgroup.Delay,
+				"alert":     talkgroup.Alert,
+				"led":       talkgroup.Led,
+				"order":     talkgroup.Order,
+			})
+		}
+
+		units := []map[string]any{}
+		for _, unit := range system.Units.List {
+			if unit == nil {
+				continue
+			}
+			units = append(units, map[string]any{
+				"id":    unit.Id,
+				"label": unit.Label,
+				"order": unit.Order,
 			})
 		}
 
@@ -245,10 +303,64 @@ func (controller *Controller) PluginSystemsList() []map[string]any {
 			"id":         system.Id,
 			"label":      system.Label,
 			"talkgroups": talkgroups,
+			"units":      units,
+			"delay":      system.Delay,
+			"alert":      system.Alert,
+			"led":        system.Led,
+			"order":      system.Order,
 		})
 	}
 
 	return systems
+}
+
+// PluginSystem answers for one system, so a plugin holding a call's system id
+// does not have to scan the whole list to name it.
+func (controller *Controller) PluginSystem(systemId uint) map[string]any {
+	for _, system := range controller.PluginSystemsList() {
+		if id, ok := jsonUint(system["id"]); ok && id == systemId {
+			return system
+		}
+	}
+
+	return nil
+}
+
+// PluginTalkgroup answers for one talkgroup. This is the lookup a call handler
+// actually wants: call.stored carries system and talkgroup as bare integers,
+// and turning them into something a person can read was an O(n) scan the plugin
+// had to write.
+func (controller *Controller) PluginTalkgroup(systemId uint, talkgroupId uint) map[string]any {
+	system := controller.PluginSystem(systemId)
+	if system == nil {
+		return nil
+	}
+
+	talkgroups, _ := system["talkgroups"].([]map[string]any)
+	for _, talkgroup := range talkgroups {
+		if id, ok := jsonUint(talkgroup["id"]); ok && id == talkgroupId {
+			return talkgroup
+		}
+	}
+
+	return nil
+}
+
+// PluginUnit answers for one unit alias.
+func (controller *Controller) PluginUnit(systemId uint, unitId uint) map[string]any {
+	system := controller.PluginSystem(systemId)
+	if system == nil {
+		return nil
+	}
+
+	units, _ := system["units"].([]map[string]any)
+	for _, unit := range units {
+		if id, ok := jsonUint(unit["id"]); ok && id == unitId {
+			return unit
+		}
+	}
+
+	return nil
 }
 
 // PluginVerifyApikey checks an API key against a system/talkgroup, the same way

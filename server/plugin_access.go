@@ -356,9 +356,10 @@ func (dispatch *PluginDispatch) CheckApikey(key string, call *Call, found *Apike
 
 // CheckAdmin settles an admin login.
 //
-// The password is handed over because an external directory cannot verify a
-// credential it is not given, and this system has no permission gates by
-// design. It is never logged, here or anywhere downstream.
+// The password reaches a provider, and nothing else. An external directory
+// cannot verify a credential it is not given, so a provider needs it; observers
+// and filters cannot use it and no longer see it. It is never logged, here or
+// anywhere downstream.
 //
 // `passed` is whether rdio's own bcrypt compare succeeded. Provide only runs
 // when it did not, so an auth plugin cannot lock out the local password; filter
@@ -369,16 +370,25 @@ func (dispatch *PluginDispatch) CheckAdmin(password string, remoteAddr string, p
 		return passed
 	}
 
-	value := map[string]any{
-		"password": password,
-		"ip":       remoteAddr,
-		"passed":   passed,
-	}
-
+	// The password goes only to a provider, and only when the local check has
+	// already failed.
+	//
+	// A provider needs it: verifying a credential against an external directory
+	// is the entire reason that verb exists there, and it cannot be done with a
+	// hash. Nothing else does. Observers and filters were being handed the
+	// plaintext admin password too, which made three lines of JavaScript in any
+	// installed plugin enough to exfiltrate it — for a capability none of them
+	// could use.
 	granted := passed
 
 	if !granted {
-		if result, ok := dispatch.Provide(PointAdminCheck, value, pointTimeout(PointAdminCheck)); ok {
+		attempt := map[string]any{
+			"password": password,
+			"ip":       remoteAddr,
+			"passed":   false,
+		}
+
+		if result, ok := dispatch.Provide(PointAdminCheck, attempt, pointTimeout(PointAdminCheck)); ok {
 			if fields, isMap := result.(map[string]any); isMap {
 				granted, _ = fields["ok"].(bool)
 			}
@@ -389,7 +399,10 @@ func (dispatch *PluginDispatch) CheckAdmin(password string, remoteAddr string, p
 		return false
 	}
 
-	value["passed"] = true
+	value := map[string]any{
+		"ip":     remoteAddr,
+		"passed": true,
+	}
 
 	dispatch.Notify(PointAdminCheck, value)
 
