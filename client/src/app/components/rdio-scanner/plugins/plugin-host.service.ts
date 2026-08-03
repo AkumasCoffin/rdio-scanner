@@ -141,6 +141,24 @@ interface DomAttachment {
     once: boolean;
 }
 
+/**
+ * The admin session token, when this page has one.
+ *
+ * A plugin's admin panel has to be able to reach its own admin endpoint, and
+ * those endpoints authenticate with rdio.admin.verifyToken — so without this a
+ * plugin could render a settings form and then be refused by its own backend,
+ * with no way to authenticate at all.
+ *
+ * Sent only when an admin is signed in. On the public scanner page there is no
+ * token and nothing is added, so a plugin route that does not check one is
+ * reached exactly as before.
+ */
+function pluginApiHeaders(): Record<string, string> {
+    const token = window?.sessionStorage?.getItem('rdio-scanner-admin-token') || '';
+
+    return token ? { Authorization: token } : {};
+}
+
 @Injectable()
 export class RdioScannerPluginHostService {
     /** Views contributed by plugins, for the navigation to render. */
@@ -681,13 +699,14 @@ export class RdioScannerPluginHostService {
 
             api: {
                 get(path: string): Promise<unknown> {
-                    return fetch(`api/plugin/${pluginId}/${String(path).replace(/^\/+/, '')}`)
-                        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))));
+                    return fetch(`api/plugin/${pluginId}/${String(path).replace(/^\/+/, '')}`, {
+                        headers: pluginApiHeaders(),
+                    }).then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))));
                 },
                 post(path: string, body: unknown): Promise<unknown> {
                     return fetch(`api/plugin/${pluginId}/${String(path).replace(/^\/+/, '')}`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'application/json', ...pluginApiHeaders() },
                         body: JSON.stringify(body ?? {}),
                     }).then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))));
                 },
