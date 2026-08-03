@@ -85,12 +85,16 @@ var pluginCapabilities = []struct {
 		"get(key)", "getAll()", "set(key, value)", "expose(key, value)",
 	}},
 	{"db", "SQL against any table in the database, core's included.", []string{
-		"query(sql, args)", "exec(sql, args)", "queryAsync(sql, args)", "execAsync(sql, args)",
+		"query(sql, args) — blocks this plugin's event loop while it runs",
+		"exec(sql, args) — blocks this plugin's event loop while it runs",
+		"queryAsync(sql, args) — returns a promise; the loop keeps running",
+		"execAsync(sql, args) — returns a promise; the loop keeps running",
 	}},
 	{"models", "Read and write the server's configuration. See below.", nil},
 	{"calls", "Read calls and audio, publish fields onto them, and create new ones.", []string{
 		"get(id, {audio})", "search(options)", "findId(system, talkgroup, dateTime)",
-		"update(id, fields)", "extendField(spec)",
+		"update(id, {audio, audioName, audioType}) — the write path for a call you reprocessed; nothing else about a call is changeable, use extendField to add to one",
+		"extendField(spec)",
 		"create({system, talkgroup, audio, dateTime, audioName, audioType, meta}) — goes in the same door an upload does, so blacklists, duplicate detection, conversion and every extension point apply",
 	}},
 	{"plugins", "Call and be called by other plugins, and broadcast events between them.", []string{
@@ -119,15 +123,16 @@ var pluginCapabilities = []struct {
 		"base64Encode(data)", "base64Decode(text)", "hexEncode(data)", "hexDecode(text)",
 		"randomBytes(n)", "uuid()",
 	}},
-	{"audio", "Decode, analyse and re-encode call audio. Needs ffmpeg installed.", []string{
+	{"audio", "Decode, analyse and re-encode call audio. Needs ffmpeg installed. Everything here returns a promise except goertzel.", []string{
 		"probe(data) — duration, codec, sample rate, channels",
-		"decode(data, {sampleRate, channels}) — 16-bit PCM as an Int16Array",
-		"encode(samples, {sampleRate, channels, format})",
+		"decode(data, {sampleRate, channels}) — {sampleRate, channels, count, samples}, where samples is an ArrayBuffer of signed 16-bit little-endian PCM. Read it with `new Int16Array(result.samples)`",
+		"encode(samples, {sampleRate, channels, format}) — an ArrayBuffer. The default format is lossy, so pass {format: 'wav'} if you need decode/encode to round-trip exactly",
 		"convert(data, {format, bitrate, sampleRate, normalize, filter})",
-		"goertzel(samples, frequencies, {sampleRate, windowSize}) — energy per window, for tone detection",
+		"goertzel(samples, frequencies, {sampleRate, windowSize}) — energy per window, for tone detection. The only one here that answers synchronously",
 	}},
 	{"http", "Outbound requests, including multipart uploads.", []string{
-		"request(options)", "multipart(options)",
+		"request({url, method, headers, body, timeoutMs, binary}) — returns a promise; pass binary for an ArrayBuffer body instead of a string, and check `truncated`",
+		"multipart({url, headers, fields, files, timeoutMs, binary}) — the same, for uploads",
 	}},
 	{"routes", "Serve HTTP endpoints.", []string{
 		"register(method, path, handler)", "registerAbsolute(path, handler)",
@@ -218,7 +223,11 @@ func writePointsSection(b *strings.Builder) {
 
 	for _, group := range groups {
 		b.WriteString("### " + group.title + "\n\n")
-		b.WriteString("| Point | Timeout | Notes |\n|---|---|---|\n")
+		// Verbs are a column because they are the thing an author most needs
+		// and had no way to check. Most points invoke one or two, and
+		// registering the wrong one is refused at load rather than accepted and
+		// silently never fired.
+		b.WriteString("| Point | Verbs | Timeout | Notes |\n|---|---|---|---|\n")
 
 		for _, point := range group.points {
 			timeout := "default"
@@ -226,8 +235,10 @@ func writePointsSection(b *strings.Builder) {
 				timeout = custom.String()
 			}
 
+			verbs := "`" + strings.Join(pointVerbNames(point), "`, `") + "`"
+
 			note := pointNotes[point]
-			b.WriteString(fmt.Sprintf("| `%s` | %s | %s |\n", point, timeout, note))
+			b.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s |\n", point, verbs, timeout, note))
 		}
 
 		b.WriteString("\n")

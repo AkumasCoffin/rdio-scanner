@@ -468,6 +468,15 @@ func (rt *PluginRuntime) DispatchRoute(route *pluginRoute, request map[string]an
 		stop := rt.armWatchdog(vm, "route:"+route.path, pluginCallTimeout)
 		defer stop()
 
+		// The raw body becomes an ArrayBuffer here rather than at the call
+		// site, because only the loop has a runtime to build one with. goja has
+		// no special case for []byte, so without this it would arrive as a
+		// reflected Go slice: no byteLength, element access through reflection,
+		// and JSON.stringify producing an array of integers one per byte.
+		if raw, ok := request["bodyBytes"].([]byte); ok {
+			request["bodyBytes"] = vm.NewArrayBuffer(raw)
+		}
+
 		value, err := route.handler(goja.Undefined(), vm.ToValue(request))
 		if err != nil {
 			ch <- outcome{nil, err}

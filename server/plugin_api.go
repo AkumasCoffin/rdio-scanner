@@ -883,6 +883,10 @@ func (rt *PluginRuntime) httpPromise(vm *goja.Runtime, spec goja.Value, isMultip
 		return vm.ToValue(promise)
 	}
 
+	// Whether the response is data or text. Text stays the default so nothing
+	// that already calls http changes.
+	binary, _ := options["binary"].(bool)
+
 	timeout := pluginHttpTimeout
 	if ms, ok := numberFromMap(options, "timeoutMs"); ok && ms > 0 {
 		timeout = time.Duration(ms) * time.Millisecond
@@ -901,10 +905,18 @@ func (rt *PluginRuntime) httpPromise(vm *goja.Runtime, spec goja.Value, isMultip
 		}
 		defer response.Body.Close()
 
-		body, err := io.ReadAll(io.LimitReader(response.Body, pluginHttpMaxResponse))
+		// One byte past the limit, so a response that exactly fills it can be
+		// told apart from one that was cut short.
+		body, err := io.ReadAll(io.LimitReader(response.Body, pluginHttpMaxResponse+1))
 		if err != nil {
 			rt.settle(func(vm *goja.Runtime) { reject(vm.NewGoError(err)) })
 			return
+		}
+
+		truncated := false
+		if len(body) > pluginHttpMaxResponse {
+			body = body[:pluginHttpMaxResponse]
+			truncated = true
 		}
 
 		headers := map[string]any{}
@@ -917,10 +929,26 @@ func (rt *PluginRuntime) httpPromise(vm *goja.Runtime, spec goja.Value, isMultip
 		result := map[string]any{
 			"status":  response.StatusCode,
 			"headers": headers,
-			"body":    string(body),
+			// Reported rather than swallowed: half a file still parses as a
+			// file, so silence here is indistinguishable from success.
+			"truncated": truncated,
 		}
 
-		rt.settle(func(vm *goja.Runtime) { resolve(vm.ToValue(result)) })
+		rt.settle(func(vm *goja.Runtime) {
+			// A JavaScript string is UTF-8, so returning arbitrary bytes
+			// through one replaces every invalid sequence — around half of all
+			// byte values do not survive. Fetching audio, an image or a
+			// protobuf over HTTP was therefore silently corrupted, which is
+			// exactly the defect rdio.exec was fixed for. Same remedy: ask for
+			// bytes and get an ArrayBuffer.
+			if binary {
+				result["body"] = vm.NewArrayBuffer(body)
+			} else {
+				result["body"] = string(body)
+			}
+
+			resolve(vm.ToValue(result))
+		})
 	}()
 
 	return vm.ToValue(promise)
@@ -988,15 +1016,75 @@ func (rt *PluginRuntime) searchCalls(options goja.Value) (*CallsSearchResults, e
 // letting a plugin rewrite core columns would make a call record's provenance
 // impossible to reason about. This exists as the seam for the day a genuinely
 // core-owned field needs plugin correction.
+// updateCall writes back the parts of a stored call a plugin is allowed to
+// change.
+//
+// Only the audio, and the two fields that describe it. Everything a plugin
+// might want to *add* to a call belongs in the plugin's own table, published
+// with calls.extendField — that keeps the plugin's schema its own business and
+// keeps core's row meaning what it says.
+//
+// Audio is the exception because there is nothing else it could be. A plugin
+// that cleans up or re-encodes a call has to be able to store the result, and
+// until now it could not: call.store happens before the row exists and
+// call.audio is a read. The method was documented as though it worked and its
+// allow-list was empty, so every call to it threw.
 func (rt *PluginRuntime) updateCall(id uint, fields map[string]any) error {
-	for key := range fields {
-		return fmt.Errorf(
-			"field %q cannot be updated by a plugin; store it in one of your own tables and publish it with rdio.calls.extendField",
-			key,
-		)
+	if len(fields) == 0 {
+		return nil
 	}
 
-	return nil
+	audio, hasAudio := fields["audio"]
+	name, hasName := fields["audioName"]
+	audioType, hasType := fields["audioType"]
+
+	for key := range fields {
+		switch key {
+		case "audio", "audioName", "audioType":
+		default:
+			return fmt.Errorf(
+				"field %q cannot be updated by a plugin; store it in one of your own tables and publish it with rdio.calls.extendField",
+				key,
+			)
+		}
+	}
+
+	call, err := rt.controller.Calls.GetCall(id, rt.controller.Database)
+	if err != nil {
+		return err
+	}
+	if call == nil {
+		return fmt.Errorf("no call with id %d", id)
+	}
+
+	if hasAudio {
+		body, err := pluginBytes(audio)
+		if err != nil {
+			return fmt.Errorf("audio: %v", err)
+		}
+		// Empty is refused rather than stored. A plugin handing back nothing
+		// has almost certainly hit an error path it did not handle, and
+		// honouring it would silently replace a call with silence — the one
+		// outcome that cannot be undone.
+		if len(body) == 0 {
+			return fmt.Errorf("audio is empty; refusing to replace a stored call with nothing")
+		}
+		call.Audio = body
+	}
+
+	if hasName {
+		if text, ok := name.(string); ok {
+			call.AudioName = text
+		}
+	}
+
+	if hasType {
+		if text, ok := audioType.(string); ok {
+			call.AudioType = text
+		}
+	}
+
+	return rt.controller.Calls.UpdateAudio(call, rt.controller.Database)
 }
 
 func (rt *PluginRuntime) buildHttpRequest(options map[string]any, isMultipart bool) (*http.Request, error) {

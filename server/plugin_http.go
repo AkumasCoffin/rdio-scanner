@@ -171,7 +171,15 @@ func (controller *Controller) servePluginRoute(w http.ResponseWriter, r *http.Re
 		"path":    r.URL.Path,
 		"query":   query,
 		"headers": headers,
-		"body":    string(body),
+		// Text, because that is what almost every request is and a plugin
+		// reading JSON should not have to decode a buffer first.
+		"body": string(body),
+		// And the same bytes untouched, because a JavaScript string is UTF-8
+		// and roughly half of all byte values do not survive being put through
+		// one. Without this a plugin route could not accept an uploaded file,
+		// an image, or anything else that is not text — it would receive a
+		// mangled copy with nothing to indicate it.
+		"bodyBytes": body,
 	}
 
 	result, err := plugin.runtime.DispatchRoute(route, request)

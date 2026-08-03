@@ -644,6 +644,26 @@ func (calls *Calls) applyPluginSearchFields(db *Database, extensions []pluginRes
 	}
 }
 
+// UpdateAudio replaces a stored call's audio and the two fields describing it.
+//
+// Deliberately narrow. This is the write path for a plugin that reprocesses a
+// call after the fact — noise reduction, a different encoding — and nothing
+// else about the row is reachable through it.
+func (calls *Calls) UpdateAudio(call *Call, db *Database) error {
+	calls.mutex.Lock()
+	defer calls.mutex.Unlock()
+
+	_, err := db.Exec(
+		"update `rdioScannerCalls` set `audio` = ?, `audioName` = ?, `audioType` = ? where `id` = ?",
+		call.Audio, call.AudioName, call.AudioType, call.Id,
+	)
+	if err != nil {
+		return fmt.Errorf("call.updateAudio: %s", err.Error())
+	}
+
+	return nil
+}
+
 func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 	var (
 		b           []byte
