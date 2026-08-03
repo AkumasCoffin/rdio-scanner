@@ -879,10 +879,17 @@ export class RdioScannerAdminService implements OnDestroy {
         ));
     }
 
-    async uninstallPlugin(pluginId: string): Promise<unknown> {
+    /**
+     * Uninstalls a plugin, optionally taking its data with it.
+     *
+     * Purging has to be decided here. It needs the manifest to know which
+     * tables belong to the plugin, and the manifest goes with the registry row
+     * — so there is no "uninstall now, purge later".
+     */
+    async uninstallPlugin(pluginId: string, purge = false): Promise<unknown> {
         return await firstValueFrom(this.ngHttpClient.post(
             this.pluginUrl('/uninstall'),
-            { pluginId },
+            { pluginId, purge },
             { headers: this.getHeaders(), responseType: 'json' },
         ));
     }

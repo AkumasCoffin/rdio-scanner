@@ -383,6 +383,15 @@ func (admin *Admin) pluginToggle(w http.ResponseWriter, r *http.Request) {
 func (admin *Admin) pluginUninstall(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		PluginId string `json:"pluginId"`
+		// Purge removes the plugin's tables and data directory as well.
+		//
+		// Offered here because here is the only place it can be done. Purging
+		// needs the manifest to know which tables belong to the plugin, and the
+		// manifest lives in the registry row uninstall is about to delete — so
+		// the advice the UI used to give, "uninstall now and purge later if you
+		// want the data gone", described something that could not be done. The
+		// tables and the data directory were simply orphaned.
+		Purge bool `json:"purge"`
 	}
 
 	if err := decodePluginBody(r, &body); err != nil {

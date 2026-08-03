@@ -331,17 +331,32 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
     async uninstall(plugin: AdminPlugin): Promise<void> {
         if (!confirm(
             `Uninstall "${plugin.name}"?\n\n` +
-            `Its settings and data are kept, so reinstalling restores everything. ` +
-            `Use "Purge data" afterwards if you want them removed.`
+            `Its settings and data are kept, so reinstalling restores everything.`
         )) {
             return;
         }
 
+        // Asked now because now is the only time it can be answered. Purging
+        // needs the manifest to know which tables belong to the plugin, and
+        // the manifest goes with the registry row — so "uninstall now, purge
+        // later", which this dialog used to advise, described something that
+        // could not be done. The tables were simply orphaned.
+        const purge = confirm(
+            `Also delete "${plugin.name}"'s stored data and settings?\n\n` +
+            `OK deletes them permanently. Cancel keeps them, and reinstalling restores everything.\n\n` +
+            `This is the only chance to remove them — once the plugin is uninstalled, ` +
+            `Rdio Scanner no longer knows which tables were its.`
+        );
+
         this.busy = true;
 
         try {
-            await this.adminService.uninstallPlugin(plugin.pluginId);
-            this.matSnackBar.open(`${plugin.name} uninstalled. Its settings were kept.`, '', { duration: 5000 });
+            await this.adminService.uninstallPlugin(plugin.pluginId, purge);
+            this.matSnackBar.open(
+                purge
+                    ? `${plugin.name} uninstalled and its data deleted.`
+                    : `${plugin.name} uninstalled. Its settings were kept.`,
+                '', { duration: 5000 });
             await this.load();
             await this.loadAvailable();
         } catch (err) {

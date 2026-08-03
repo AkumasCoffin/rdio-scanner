@@ -81,6 +81,15 @@ type PluginStore struct {
 
 	mutex sync.Mutex
 	cache map[string]*pluginStoreCacheEntry
+
+	// installMutex serialises installs. Two at once raced over the same
+	// directory — one could remove what the other had just put there — and
+	// Plugins.Write is check-then-insert, so two first-installs of the same
+	// plugin raced the unique constraint and one came back a 500.
+	//
+	// Separate from mutex, which guards only the listing cache: an install
+	// takes minutes and must not block someone browsing.
+	installMutex sync.Mutex
 }
 
 type pluginStoreCacheEntry struct {
@@ -213,6 +222,21 @@ func (store *PluginStore) findRepo(rawUrl string) (*PluginRepo, error) {
 	}
 
 	return nil, fmt.Errorf("repository %q is not configured", rawUrl)
+}
+
+// escapeBranch escapes a branch for use in a URL path, per segment.
+//
+// url.PathEscape turns a slash into %2F, and a branch name is allowed to
+// contain slashes — feature/x is the commonest convention there is. GitHub
+// wants those slashes as path separators, so escaping them made every such
+// branch 404: it listed in the admin panel, and neither its manifests nor its
+// tarball could be fetched.
+func escapeBranch(branch string) string {
+	parts := strings.Split(branch, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
 }
 
 func (store *PluginStore) githubRequest(repo *PluginRepo, rawUrl string) (*http.Response, error) {
@@ -363,7 +387,7 @@ func (store *PluginStore) Available(rawUrl string, branch string, fresh bool) ([
 			// the same way, and one plugin's broken manifest shouldn't stop the
 			// rest of the listing.
 			raw := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/plugins/%s/%s",
-				url.PathEscape(owner), url.PathEscape(name), url.PathEscape(branch),
+				url.PathEscape(owner), url.PathEscape(name), escapeBranch(branch),
 				url.PathEscape(entry.Name), PluginManifestName)
 
 			if fresh {
@@ -537,6 +561,9 @@ func (store *PluginStore) Install(rawUrl string, branch string, pluginId string)
 		return nil, "", fmt.Errorf("invalid plugin id %q", pluginId)
 	}
 
+	store.installMutex.Lock()
+	defer store.installMutex.Unlock()
+
 	repo, err := store.findRepo(rawUrl)
 	if err != nil {
 		return nil, "", err
@@ -552,7 +579,7 @@ func (store *PluginStore) Install(rawUrl string, branch string, pluginId string)
 	}
 
 	archiveUrl := fmt.Sprintf("https://api.github.com/repos/%s/%s/tarball/%s",
-		url.PathEscape(owner), url.PathEscape(name), url.PathEscape(branch))
+		url.PathEscape(owner), url.PathEscape(name), escapeBranch(branch))
 
 	response, err := store.githubRequest(repo, archiveUrl)
 	if err != nil {
@@ -567,7 +594,14 @@ func (store *PluginStore) Install(rawUrl string, branch string, pluginId string)
 
 	// Extract to a staging directory first so a failed or malicious archive
 	// never leaves a half-written plugin where the loader would find it.
-	staging, err := os.MkdirTemp(pluginsDir, ".install-*")
+	//
+	// Beside the plugins directory rather than inside it. A process killed mid
+	// install skips the cleanup below, and staging inside meant the leftover
+	// was picked up by the directory scan as a plugin named ".install-123456"
+	// — which then could not be removed from the admin panel either, because
+	// the id validator rejects the leading dot. Same filesystem, so the rename
+	// at the end is still atomic.
+	staging, err := os.MkdirTemp(store.Controller.Config.BaseDir, ".rdio-plugin-install-*")
 	if err != nil {
 		return nil, "", err
 	}
@@ -595,14 +629,47 @@ func (store *PluginStore) Install(rawUrl string, branch string, pluginId string)
 
 	target := filepath.Join(pluginsDir, pluginId)
 
-	// Replacing an existing install: remove the old files but never the
-	// database tables, so settings and data survive an update.
-	if err := os.RemoveAll(target); err != nil && !os.IsNotExist(err) {
-		return nil, "", err
+	// Move the old install aside rather than deleting it, so a failure leaves
+	// the plugin that was working still there.
+	//
+	// It used to remove and then rename. A crash between the two, or a rename
+	// that failed for any reason, destroyed the installed plugin — and the
+	// staging copy was removed by the deferred cleanup on the way out, so the
+	// only two copies went at once. On Windows it is worse than a crash window:
+	// RemoveAll fails outright while any file under it is open, and the asset
+	// handler holds plugin files open, so updating a running plugin failed
+	// there routinely.
+	aside := ""
+
+	if _, err := os.Stat(target); err == nil {
+		aside = target + ".replacing"
+
+		// A leftover from an earlier interrupted attempt.
+		os.RemoveAll(aside)
+
+		if err := os.Rename(target, aside); err != nil {
+			return nil, "", fmt.Errorf("cannot move the installed plugin aside: %v", err)
+		}
 	}
 
 	if err := os.Rename(staging, target); err != nil {
+		// Put back what was working.
+		if aside != "" {
+			if restoreErr := os.Rename(aside, target); restoreErr != nil {
+				return nil, "", fmt.Errorf(
+					"install failed (%v) and the previous version could not be restored from %s (%v); the plugin is not installed",
+					err, aside, restoreErr,
+				)
+			}
+		}
+
 		return nil, "", err
+	}
+
+	if aside != "" {
+		// Best effort. The new version is in place either way, and a leftover
+		// .replacing directory is skipped by the scan.
+		os.RemoveAll(aside)
 	}
 
 	store.InvalidateCache()

@@ -357,6 +357,18 @@ func (plugins *Plugins) scan(config *Config) (map[string]*scannedPlugin, error) 
 		}
 
 		name := entry.Name()
+
+		// Anything that cannot be a plugin id is not a plugin, and treating it
+		// as one is worse than ignoring it: a directory named ".install-123"
+		// left by a crashed install was reported as a broken plugin on every
+		// boot, and could not be removed from the admin panel either, because
+		// the same validator rejects it there. Installs stage outside this
+		// directory now; this is the second line of defence, and it also covers
+		// the ".replacing" directory an interrupted update can leave.
+		if !pluginIdRegexp.MatchString(name) {
+			continue
+		}
+
 		pluginDir := filepath.Join(dir, name)
 
 		manifest, err := ReadPluginManifest(pluginDir)
