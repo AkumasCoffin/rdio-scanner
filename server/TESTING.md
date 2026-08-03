@@ -46,9 +46,27 @@ nothing to gain from a real one.
 ## Race detection
 
 ```sh
-CGO_ENABLED=1 go test ./server -race -run 'Plugin|Clone|Dispatch|Watchdog'
+cd server && CGO_ENABLED=1 go test -race ./...
 ```
 
-Needs a C toolchain, which is why it does not run everywhere. Much of the plugin
-work is concurrent — dispatch, the event loops, the registry — so this is worth
-running somewhere it can before a release.
+The whole suite runs under it in well under a minute, so there is no reason to
+narrow it with `-run`.
+
+It needs a C toolchain, which is the only reason it does not run everywhere.
+On Windows `scoop install gcc` is enough and needs no elevation; on Debian or
+Ubuntu, `build-essential`. Nothing else has to change — `CGO_ENABLED=1` on the
+command line is all it takes, and release builds stay `CGO_ENABLED=0`.
+
+Worth running before a release because most of the plugin system is concurrent:
+dispatch runs handlers while ingest writes, `call.emit` fans out per listener,
+sockets and timers deliver onto event loops, and the registry is read from all
+of them. Several defects found in the 6.14 sweep were exactly this shape — a
+value handed to two plugins by reference, then written by both.
+
+A green run proves less than it looks like, though: the detector only sees code
+that actually ran concurrently during the tests. The tests that make it earn its
+keep are the ones that deliberately race — `TestClonedCallValueIsSafeAgainstConcurrentCoreAccess`
+above all, which fails with a genuine `WARNING: DATA RACE` the moment the
+`[]map[string]any` case is taken back out of `clonePluginValue`. If you add
+concurrent machinery, add a test that drives it from two goroutines, or the
+detector will keep reporting nothing.
