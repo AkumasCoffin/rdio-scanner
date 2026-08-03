@@ -159,3 +159,101 @@ func TestCallSyncWatchesWorkWhileAPromiseIsPending(t *testing.T) {
 		t.Fatalf("the next job on the loop inherited a stranded interrupt: %v", err)
 	}
 }
+
+// A plugin spinning in a raw setInterval used to make shutdown impossible.
+//
+// Only rdio.schedule timers are tracked and cleared; the setTimeout and
+// setInterval goja_nodejs binds into every runtime are not. So Stop blocked on
+// the running job, and Terminate — which begins by calling Stop — blocked
+// behind it, and Controller.Terminate never reached the exit. On a container
+// host, where stopping means SIGTERM, that made every stop a kill and no
+// plugin ever ran its shutdown handler.
+func TestAPluginSpinningInARawTimerCannotBlockShutdown(t *testing.T) {
+	rt := watchdogRuntime()
+	rt.controller = &Controller{Logs: &Logs{}}
+	rt.loopLogThrottle = NewLogThrottle(1, time.Minute)
+
+	rt.loop = eventloop.NewEventLoop(eventloop.EnableConsole(false))
+	rt.loop.Start()
+
+	// Deliberately a raw setInterval, which nothing tracks and nothing clears.
+	if err := rt.runOnLoopAndWait(5*time.Second, func(vm *goja.Runtime) {
+		rt.vm = vm
+		if _, err := vm.RunString(`setInterval(function () { while (true) {} }, 5)`); err != nil {
+			t.Fatal(err)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Let it get into the loop.
+	time.Sleep(200 * time.Millisecond)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		rt.Stop()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Stop never returned; SIGTERM would hang here and the server would have to be killed")
+	}
+}
+
+// The loop's queue is unbounded and the busiest producer is one job per
+// listener per call, each holding a copy of the call. A plugin slower than
+// calls arrive would grow that backlog until the process ran out of memory,
+// with nothing having said a word.
+func TestRunOnLoopShedsWhenThePluginFallsBehind(t *testing.T) {
+	rt := watchdogRuntime()
+	rt.controller = &Controller{Logs: &Logs{}}
+	rt.loopLogThrottle = NewLogThrottle(1, time.Minute)
+
+	rt.loop = eventloop.NewEventLoop(eventloop.EnableConsole(false))
+	rt.loop.Start()
+	defer rt.loop.Stop()
+
+	// Occupy the loop so nothing drains.
+	blocked := make(chan struct{})
+	release := make(chan struct{})
+
+	rt.runOnLoop(func(vm *goja.Runtime) {
+		close(blocked)
+		<-release
+	})
+	<-blocked
+
+	accepted := 0
+	for i := 0; i < pluginLoopMaxQueued+64; i++ {
+		if rt.runOnLoop(func(vm *goja.Runtime) {}) {
+			accepted++
+		}
+	}
+
+	close(release)
+
+	if accepted >= pluginLoopMaxQueued+64 {
+		t.Fatalf("every one of %d jobs was accepted; the queue is still unbounded", accepted)
+	}
+	if accepted == 0 {
+		t.Fatal("nothing was accepted, so the bound is not a bound but a wall")
+	}
+}
+
+// An observer on a per-listener point must not be given two orders of magnitude
+// more time than the filter running beside it.
+func TestObserverTimeoutFollowsThePoint(t *testing.T) {
+	if got := observerTimeout(PointCallEmit); got > 2*time.Second {
+		t.Errorf("an observer on the hottest point in the server may take %v", got)
+	}
+	// With a floor, so a tight per-listener deadline does not make ordinary
+	// observer work impossible.
+	if got := observerTimeout(PointCallEmit); got < time.Second {
+		t.Errorf("the floor was not applied: %v", got)
+	}
+	if got := observerTimeout(PointCallStored); got != pluginDispatchTimeout {
+		t.Errorf("a point with no override gave an observer %v", got)
+	}
+}

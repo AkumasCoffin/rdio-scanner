@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
@@ -35,6 +36,30 @@ const pluginCallTimeout = 30 * time.Second
 // pluginStartupTimeout bounds evaluating main.js. Shorter than a callback
 // because startup should only be registering handlers.
 const pluginStartupTimeout = 15 * time.Second
+
+// pluginLoopMaxQueued bounds one plugin's pending work. Deep enough that a
+// burst of calls is absorbed, shallow enough that a plugin falling behind is
+// noticed while the process still has memory: every queued job holds a copy of
+// whatever it was handed.
+const pluginLoopMaxQueued = 4096
+
+// observerTimeout is what an observer at a point may take.
+//
+// Observers used to get a flat pluginCallTimeout regardless of where they were
+// registered, which meant one on call.emit could hold the loop for thirty
+// seconds against a documented 250ms ceiling — two orders of magnitude more
+// than the filter running beside it. They get the point's own budget now, with
+// a floor so a tight per-listener deadline does not make ordinary observer work
+// impossible.
+func observerTimeout(point string) time.Duration {
+	timeout := pointTimeout(point)
+
+	if timeout < time.Second {
+		return time.Second
+	}
+
+	return timeout
+}
 
 // pluginRoute is one HTTP endpoint a plugin has registered.
 type pluginRoute struct {
@@ -97,6 +122,12 @@ type PluginRuntime struct {
 	config   map[string]any
 	configMu sync.RWMutex
 
+	// queued counts jobs waiting on the event loop, so a plugin that cannot
+	// keep up is shed rather than allowed to grow an unbounded backlog.
+	queued atomic.Int64
+
+	loopLogThrottle *LogThrottle
+
 	stopped bool
 }
 
@@ -121,7 +152,8 @@ func NewPluginRuntime(controller *Controller, plugin *Plugin) (*PluginRuntime, e
 		manifest:      plugin.Manifest,
 		db:            NewPluginDb(controller.Database, plugin.Manifest),
 		dataDir:       dataDir,
-		handlers:      map[string][]goja.Callable{},
+		handlers:        map[string][]goja.Callable{},
+		loopLogThrottle: NewLogThrottle(1, time.Minute),
 		wsHandlers:    map[string]goja.Callable{},
 		routes:        []*pluginRoute{},
 		exposedConfig: map[string]any{},
@@ -323,8 +355,49 @@ func (rt *PluginRuntime) Stop() {
 
 	select {
 	case <-stopped:
+		return
+
 	case <-time.After(5 * time.Second):
-		rt.loop.Terminate()
+	}
+
+	// The loop would not stop, which means something is still running on it.
+	//
+	// Terminate is not the answer on its own: in goja_nodejs it begins by
+	// calling Stop, which is the call that just failed to return — so a plugin
+	// spinning in a raw setInterval made Stop block, Terminate block behind it,
+	// and Controller.Terminate never reach the exit. SIGTERM simply did not
+	// work, which on a container host means every stop is a kill and no plugin
+	// ever runs its shutdown handler.
+	//
+	// Interrupting is what lets Stop return: the running script aborts at its
+	// next instruction boundary and the loop can drain. Only rdio.schedule
+	// timers are tracked and cleared above; the raw setTimeout and setInterval
+	// goja_nodejs binds into every runtime are not, and this is what covers
+	// them.
+	//
+	// Repeatedly, because goja consumes the interrupt flag when it delivers it.
+	// One interrupt kills the callback that is running; an interval that
+	// re-arms every few milliseconds is back a moment later, so a single shot
+	// stops one iteration and nothing more.
+	interrupting := time.NewTicker(20 * time.Millisecond)
+	defer interrupting.Stop()
+
+	deadline := time.After(5 * time.Second)
+
+	for {
+		select {
+		case <-stopped:
+			return
+
+		case <-deadline:
+			rt.loop.Terminate()
+			return
+
+		case <-interrupting.C:
+			if rt.vm != nil {
+				rt.vm.Interrupt(fmt.Sprintf("plugin %s is shutting down", rt.manifest.Id))
+			}
+		}
 	}
 }
 
@@ -391,7 +464,26 @@ func (rt *PluginRuntime) runOnLoop(fn func(vm *goja.Runtime)) bool {
 		return false
 	}
 
+	// The event loop's queue is unbounded, and the busiest producer is Notify
+	// on call.emit — one job per listener per call, each holding a cloned copy
+	// of the call. A plugin whose observer is slower than calls arrive builds a
+	// backlog that grows without limit, each entry pinning its copy, until the
+	// process runs out of memory with nothing having said a word.
+	//
+	// Shedding is the right failure here for the same reason it is on the emit
+	// queue: these are observers, they cannot change anything, and the call is
+	// already stored. Refusing to queue costs a plugin one notification;
+	// queueing without limit costs the server.
+	if rt.queued.Load() >= pluginLoopMaxQueued {
+		rt.reportLoopSaturated()
+		return false
+	}
+
+	rt.queued.Add(1)
+
 	return loop.RunOnLoop(func(vm *goja.Runtime) {
+		defer rt.queued.Add(-1)
+
 		defer func() {
 			if r := recover(); r != nil {
 				rt.controller.Logs.LogEvent(
@@ -402,6 +494,20 @@ func (rt *PluginRuntime) runOnLoop(fn func(vm *goja.Runtime)) bool {
 		}()
 		fn(vm)
 	})
+}
+
+// reportLoopSaturated says once a minute that a plugin is falling behind.
+// Throttled because the condition is per dropped job and the log is a database
+// write — the same trap the veto line fell into.
+func (rt *PluginRuntime) reportLoopSaturated() {
+	if rt.loopLogThrottle != nil && !rt.loopLogThrottle.Allow(rt.manifest.Id) {
+		return
+	}
+
+	rt.controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf(
+		"plugin %s has %d jobs queued and is not keeping up; dropping notifications until it catches up. Slow work belongs on its own worker, not in a handler.",
+		rt.manifest.Id, pluginLoopMaxQueued,
+	))
 }
 
 // toValue converts a Go payload into a JS value. Structs go through goja's
@@ -575,7 +681,12 @@ func (rt *PluginRuntime) EmitTo(point string, payload any) {
 	}
 
 	rt.runOnLoop(func(vm *goja.Runtime) {
-		stop := rt.armWatchdog(vm, point, pluginCallTimeout)
+		// The point's own budget, not a flat thirty seconds. An observer on
+		// call.emit runs once per listener per call against a documented 250ms
+		// ceiling, and giving it two orders of magnitude more than the filter
+		// beside it is what let a single observer hold the loop long enough to
+		// build the backlog above.
+		stop := rt.armWatchdog(vm, point, observerTimeout(point))
 		defer stop()
 
 		value := rt.toValue(vm, payload)
