@@ -93,8 +93,8 @@ func (options *Options) FromMap(m map[string]any) *Options {
 		}
 	}
 	setUint := func(key string, dest *uint) {
-		if v, ok := m[key].(float64); ok {
-			*dest = uint(v)
+		if v, ok := jsonUintFrom(m, key); ok {
+			*dest = v
 		}
 	}
 	setBool := func(key string, dest *bool) {

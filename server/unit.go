@@ -31,9 +31,8 @@ type Unit struct {
 }
 
 func (unit *Unit) FromMap(m map[string]any) *Unit {
-	switch v := m["id"].(type) {
-	case float64:
-		unit.Id = uint(v)
+	if v, ok := jsonUint(m["id"]); ok {
+		unit.Id = v
 	}
 
 	switch v := m["label"].(type) {
@@ -41,9 +40,8 @@ func (unit *Unit) FromMap(m map[string]any) *Unit {
 		unit.Label = v
 	}
 
-	switch v := m["order"].(type) {
-	case float64:
-		unit.Order = uint(v)
+	if v, ok := jsonUint(m["order"]); ok {
+		unit.Order = v
 	}
 
 	return unit

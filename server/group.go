@@ -29,9 +29,8 @@ type Group struct {
 }
 
 func (group *Group) FromMap(m map[string]any) *Group {
-	switch v := m["_id"].(type) {
-	case float64:
-		group.Id = uint(v)
+	if v, ok := jsonUint(m["_id"]); ok {
+		group.Id = v
 	}
 
 	switch v := m["label"].(type) {

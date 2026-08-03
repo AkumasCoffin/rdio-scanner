@@ -178,29 +178,7 @@ func applyPluginCallValue(call *Call, value any) {
 // both have to be handled or a plugin's arithmetic changes the type underneath
 // it and the value is silently dropped.
 func pluginUint(raw any) (uint, bool) {
-	switch v := raw.(type) {
-	case int64:
-		if v < 0 {
-			return 0, false
-		}
-		return uint(v), true
-	case float64:
-		if v < 0 {
-			return 0, false
-		}
-		return uint(v), true
-	case int:
-		if v < 0 {
-			return 0, false
-		}
-		return uint(v), true
-	case uint:
-		return v, true
-	case uint64:
-		return uint(v), true
-	}
-
-	return 0, false
+	return jsonUint(raw)
 }
 
 // pluginStringMap normalises the metadata map, stringifying values so a plugin

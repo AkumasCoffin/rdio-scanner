@@ -39,9 +39,8 @@ func NewAccess() *Access {
 }
 
 func (access *Access) FromMap(m map[string]any) *Access {
-	switch v := m["_id"].(type) {
-	case float64:
-		access.Id = uint(v)
+	if v, ok := jsonUint(m["_id"]); ok {
+		access.Id = v
 	}
 
 	switch v := m["code"].(type) {
@@ -61,14 +60,12 @@ func (access *Access) FromMap(m map[string]any) *Access {
 		access.Ident = v
 	}
 
-	switch v := m["limit"].(type) {
-	case float64:
-		access.Limit = uint(v)
+	if v, ok := jsonUint(m["limit"]); ok {
+		access.Limit = v
 	}
 
-	switch v := m["order"].(type) {
-	case float64:
-		access.Order = uint(v)
+	if v, ok := jsonUint(m["order"]); ok {
+		access.Order = v
 	}
 
 	switch v := m["systems"].(type) {
@@ -90,9 +87,8 @@ func (access *Access) HasAccess(call *Call) bool {
 			for _, f := range v {
 				switch v := f.(type) {
 				case map[string]any:
-					switch id := v["id"].(type) {
-					case float64:
-						if id == float64(call.System) {
+					if id, ok := jsonUint(v["id"]); ok {
+						if id == call.System {
 							switch tg := v["talkgroups"].(type) {
 							case string:
 								if tg == "*" {
@@ -100,9 +96,8 @@ func (access *Access) HasAccess(call *Call) bool {
 								}
 							case []any:
 								for _, f := range tg {
-									switch tg := f.(type) {
-									case float64:
-										if tg == float64(call.Talkgroup) {
+									if tg, ok := jsonUint(f); ok {
+										if tg == call.Talkgroup {
 											return true
 										}
 									}

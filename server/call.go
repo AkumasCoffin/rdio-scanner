@@ -776,24 +776,20 @@ func (searchOptions *CallsSearchOptions) fromMap(m map[string]any) error {
 		searchOptions.Group = v
 	}
 
-	switch v := m["limit"].(type) {
-	case float64:
-		searchOptions.Limit = uint(v)
+	if v, ok := jsonUint(m["limit"]); ok {
+		searchOptions.Limit = v
 	}
 
-	switch v := m["offset"].(type) {
-	case float64:
-		searchOptions.Offset = uint(v)
+	if v, ok := jsonUint(m["offset"]); ok {
+		searchOptions.Offset = v
 	}
 
-	switch v := m["sort"].(type) {
-	case float64:
+	if v, ok := jsonFloat(m["sort"]); ok {
 		searchOptions.Sort = v
 	}
 
-	switch v := m["system"].(type) {
-	case float64:
-		searchOptions.System = uint(v)
+	if v, ok := jsonUint(m["system"]); ok {
+		searchOptions.System = v
 	}
 
 	switch v := m["tag"].(type) {
@@ -801,9 +797,8 @@ func (searchOptions *CallsSearchOptions) fromMap(m map[string]any) error {
 		searchOptions.Tag = v
 	}
 
-	switch v := m["talkgroup"].(type) {
-	case float64:
-		searchOptions.Talkgroup = uint(v)
+	if v, ok := jsonUint(m["talkgroup"]); ok {
+		searchOptions.Talkgroup = v
 	}
 
 	switch v := m["q"].(type) {

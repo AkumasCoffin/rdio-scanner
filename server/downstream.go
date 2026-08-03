@@ -41,9 +41,8 @@ type Downstream struct {
 }
 
 func (downstream *Downstream) FromMap(m map[string]any) *Downstream {
-	switch v := m["_id"].(type) {
-	case float64:
-		downstream.Id = uint(v)
+	if v, ok := jsonUint(m["_id"]); ok {
+		downstream.Id = v
 	}
 
 	switch v := m["apiKey"].(type) {
@@ -56,9 +55,8 @@ func (downstream *Downstream) FromMap(m map[string]any) *Downstream {
 		downstream.Disabled = v
 	}
 
-	switch v := m["order"].(type) {
-	case float64:
-		downstream.Order = uint(v)
+	if v, ok := jsonUint(m["order"]); ok {
+		downstream.Order = v
 	}
 
 	switch v := m["systems"].(type) {
@@ -88,9 +86,8 @@ func (downstream *Downstream) HasAccess(call *Call) bool {
 		for _, f := range v {
 			switch v := f.(type) {
 			case map[string]any:
-				switch id := v["id"].(type) {
-				case float64:
-					if id == float64(call.System) {
+				if id, ok := jsonUint(v["id"]); ok {
+					if id == call.System {
 						switch tg := v["talkgroups"].(type) {
 						case string:
 							if tg == "*" {
@@ -98,9 +95,8 @@ func (downstream *Downstream) HasAccess(call *Call) bool {
 							}
 						case []any:
 							for _, f := range tg {
-								switch tg := f.(type) {
-								case float64:
-									if tg == float64(call.Talkgroup) {
+								if tg, ok := jsonUint(f); ok {
+									if tg == call.Talkgroup {
 										return true
 									}
 								}

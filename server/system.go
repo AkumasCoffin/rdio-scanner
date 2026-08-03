@@ -48,14 +48,12 @@ func NewSystem() *System {
 
 func (system *System) FromMap(m map[string]any) *System {
 
-	switch v := m["_id"].(type) {
-	case float64:
-		system.RowId = uint(v)
+	if v, ok := jsonUint(m["_id"]); ok {
+		system.RowId = v
 	}
 
-	switch v := m["id"].(type) {
-	case float64:
-		system.Id = uint(v)
+	if v, ok := jsonUint(m["id"]); ok {
+		system.Id = v
 	}
 
 	switch v := m["autoPopulate"].(type) {
@@ -78,9 +76,8 @@ func (system *System) FromMap(m map[string]any) *System {
 		system.Led = v
 	}
 
-	switch v := m["order"].(type) {
-	case float64:
-		system.Order = uint(v)
+	if v, ok := jsonUint(m["order"]); ok {
+		system.Order = v
 	}
 
 	switch v := m["talkgroups"].(type) {
@@ -93,9 +90,8 @@ func (system *System) FromMap(m map[string]any) *System {
 		system.Units.FromMap(v)
 	}
 
-	switch v := m["delay"].(type) {
-	case float64:
-		system.Delay = uint(v)
+	if v, ok := jsonUint(m["delay"]); ok {
+		system.Delay = v
 	}
 
 	switch v := m["alert"].(type) {
@@ -210,10 +206,9 @@ func (systems *Systems) GetScopedSystems(client *Client, groups *Groups, tags *T
 						systemId    uint
 					)
 
-					switch v := mSystemId.(type) {
-					case float64:
-						systemId = uint(v)
-					default:
+					if v, ok := jsonUint(mSystemId); ok {
+						systemId = v
+					} else {
 						continue
 					}
 
@@ -234,8 +229,8 @@ func (systems *Systems) GetScopedSystems(client *Client, groups *Groups, tags *T
 						rawSystem.Talkgroups = NewTalkgroups()
 						for _, fTalkgroupId := range v {
 							switch v := fTalkgroupId.(type) {
-							case float64:
-								talkgroupId := uint(v)
+							case float64, int64, int:
+								talkgroupId, _ := jsonUint(v)
 								rawTalkgroup, ok := system.Talkgroups.GetTalkgroup(talkgroupId)
 								if !ok {
 									continue

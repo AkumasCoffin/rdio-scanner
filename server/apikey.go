@@ -35,9 +35,8 @@ type Apikey struct {
 }
 
 func (apikey *Apikey) FromMap(m map[string]any) *Apikey {
-	switch v := m["_id"].(type) {
-	case float64:
-		apikey.Id = uint(v)
+	if v, ok := jsonUint(m["_id"]); ok {
+		apikey.Id = v
 	}
 
 	switch v := m["disabled"].(type) {
@@ -55,9 +54,8 @@ func (apikey *Apikey) FromMap(m map[string]any) *Apikey {
 		apikey.Key = v
 	}
 
-	switch v := m["order"].(type) {
-	case float64:
-		apikey.Order = uint(v)
+	if v, ok := jsonUint(m["order"]); ok {
+		apikey.Order = v
 	}
 
 	switch v := m["systems"].(type) {
@@ -78,9 +76,8 @@ func (apikey *Apikey) HasAccess(call *Call) bool {
 		for _, f := range v {
 			switch v := f.(type) {
 			case map[string]any:
-				switch id := v["id"].(type) {
-				case float64:
-					if id == float64(call.System) {
+				if id, ok := jsonUint(v["id"]); ok {
+					if id == call.System {
 						switch tg := v["talkgroups"].(type) {
 						case string:
 							if tg == "*" {
@@ -88,9 +85,8 @@ func (apikey *Apikey) HasAccess(call *Call) bool {
 							}
 						case []any:
 							for _, f := range tg {
-								switch tg := f.(type) {
-								case float64:
-									if tg == float64(call.Talkgroup) {
+								if tg, ok := jsonUint(f); ok {
+									if tg == call.Talkgroup {
 										return true
 									}
 								}

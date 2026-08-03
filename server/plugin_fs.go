@@ -27,6 +27,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,32 +79,40 @@ func (rt *PluginRuntime) bindFs(vm *goja.Runtime, rdio *goja.Object, throw func(
 		return vm.ToValue(resolve(path))
 	})
 
-	fs.Set("readFile", func(path string) goja.Value {
-		full := resolve(path)
+	// readPart is the shared body of readFile and readText.
+	//
+	// The size guard belongs to both. readText had none at all, which made the
+	// unbounded call the more natural one to reach for: a log file is exactly
+	// what someone reads as text, and exactly what is large enough to exhaust
+	// the server's memory.
+	readPart := func(name string, path string, options goja.Value) []byte {
+		var offset, length int64
 
-		info, err := os.Stat(full)
+		if options != nil && !goja.IsUndefined(options) && !goja.IsNull(options) {
+			if m, ok := options.Export().(map[string]any); ok {
+				if v, ok := numberFromMap(m, "offset"); ok && v > 0 {
+					offset = int64(v)
+				}
+				if v, ok := numberFromMap(m, "length"); ok && v > 0 {
+					length = int64(v)
+				}
+			}
+		}
+
+		body, err := readFileRange(resolve(path), offset, length, pluginFsMaxRead)
 		if err != nil {
-			throw("fs.readFile: %v", err)
-		}
-		if info.Size() > pluginFsMaxRead {
-			throw("fs.readFile: %s is %d bytes, larger than the %d byte limit; read it in pieces",
-				path, info.Size(), pluginFsMaxRead)
+			throw("fs.%s: %v", name, err)
 		}
 
-		body, err := os.ReadFile(full)
-		if err != nil {
-			throw("fs.readFile: %v", err)
-		}
+		return body
+	}
 
-		return vm.ToValue(vm.NewArrayBuffer(body))
+	fs.Set("readFile", func(path string, options goja.Value) goja.Value {
+		return vm.ToValue(vm.NewArrayBuffer(readPart("readFile", path, options)))
 	})
 
-	fs.Set("readText", func(path string) goja.Value {
-		body, err := os.ReadFile(resolve(path))
-		if err != nil {
-			throw("fs.readText: %v", err)
-		}
-		return vm.ToValue(string(body))
+	fs.Set("readText", func(path string, options goja.Value) goja.Value {
+		return vm.ToValue(string(readPart("readText", path, options)))
 	})
 
 	fs.Set("writeFile", func(path string, data goja.Value) goja.Value {
@@ -323,6 +332,69 @@ func (rt *PluginRuntime) bindExec(vm *goja.Runtime, rdio *goja.Object, throw fun
 		}
 		return run(name, args, options)
 	})
+}
+
+// readFileRange reads part of a file, refusing anything that would pull more
+// than max into memory in one go.
+//
+// The guard has to cover text as well as bytes. readText had none, and a log
+// file — the obvious thing to read as text — is exactly the case large enough
+// to exhaust the server. A length of 0 means "the whole file, if it fits".
+func readFileRange(path string, offset int64, length int64, max int64) ([]byte, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("offset %d is before the start of the file", offset)
+	}
+	if length > max {
+		return nil, fmt.Errorf("asked for %d bytes, more than the %d byte limit for one read", length, max)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+
+	remaining := info.Size() - offset
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	// Only the unbounded form is refused for being too big. Someone who named a
+	// length has already accepted reading part of the file.
+	if length == 0 {
+		if remaining > max {
+			return nil, fmt.Errorf("%s is %d bytes from offset %d, larger than the %d byte limit; pass {offset, length} to read part of it",
+				path, remaining, offset, max)
+		}
+		length = remaining
+	}
+
+	if length > remaining {
+		length = remaining
+	}
+	if length == 0 {
+		return []byte{}, nil
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	if offset > 0 {
+		if _, err := file.Seek(offset, io.SeekStart); err != nil {
+			return nil, err
+		}
+	}
+
+	body := make([]byte, length)
+
+	read, err := io.ReadFull(file, body)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return nil, err
+	}
+
+	return body[:read], nil
 }
 
 // boundedBuffer collects output up to a limit and then discards the rest, so a

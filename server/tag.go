@@ -29,9 +29,8 @@ type Tag struct {
 }
 
 func (tag *Tag) FromMap(m map[string]any) *Tag {
-	switch v := m["_id"].(type) {
-	case float64:
-		tag.Id = uint(v)
+	if v, ok := jsonUint(m["_id"]); ok {
+		tag.Id = v
 	}
 
 	switch v := m["label"].(type) {

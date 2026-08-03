@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dop251/goja"
@@ -100,5 +103,65 @@ func TestExecReportsTruncation(t *testing.T) {
 	straddle.Write([]byte("abcdef"))
 	if !straddle.truncated || string(straddle.Bytes()) != "abcd" {
 		t.Fatalf("straddling write kept %q, truncated=%v", straddle.Bytes(), straddle.truncated)
+	}
+}
+
+
+// readText had no size guard at all while readFile refused above the limit,
+// which made the unbounded call the natural one to reach for — a log file is
+// exactly what a plugin reads as text, and exactly what is large enough to
+// exhaust the server's memory.
+func TestPluginFsReadsAreBounded(t *testing.T) {
+	dir := t.TempDir()
+
+	path := filepath.Join(dir, "big.log")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), 4096), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const max = 1024
+
+	// The whole-file form refuses, and says what to do instead.
+	if _, err := readFileRange(path, 0, 0, max); err == nil {
+		t.Fatal("a file past the limit was read in full")
+	} else if !strings.Contains(err.Error(), "offset, length") {
+		t.Errorf("the refusal does not say how to proceed: %v", err)
+	}
+
+	// And that advice works, which it did not when the message was written —
+	// there was no ranged read to follow it with.
+	body, err := readFileRange(path, 100, 200, max)
+	if err != nil {
+		t.Fatalf("a ranged read failed: %v", err)
+	}
+	if len(body) != 200 {
+		t.Fatalf("a ranged read returned %d bytes, expected 200", len(body))
+	}
+
+	// Running off the end returns what is there rather than failing.
+	if body, err = readFileRange(path, 4000, 500, max); err != nil {
+		t.Fatalf("a read past the end failed: %v", err)
+	}
+	if len(body) != 96 {
+		t.Fatalf("a read past the end returned %d bytes, expected 96", len(body))
+	}
+
+	// Starting past the end is empty, not an error.
+	if body, err = readFileRange(path, 99999, 10, max); err != nil || len(body) != 0 {
+		t.Fatalf("a read starting past the end returned %d bytes, %v", len(body), err)
+	}
+
+	// A length over the limit is refused even though it is a ranged read.
+	if _, err = readFileRange(path, 0, max+1, max); err == nil {
+		t.Fatal("a ranged read larger than the limit was allowed")
+	}
+
+	// A file within the limit still reads whole, which is the common case.
+	small := filepath.Join(dir, "small.txt")
+	if err = os.WriteFile(small, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if body, err = readFileRange(small, 0, 0, max); err != nil || string(body) != "hello" {
+		t.Fatalf("a small file read as %q, %v", body, err)
 	}
 }

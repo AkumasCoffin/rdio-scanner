@@ -105,7 +105,9 @@ var pluginCapabilities = []struct {
 	}},
 	{"systems", "The configured systems and talkgroups.", []string{"list()"}},
 	{"fs", "The filesystem. Relative paths resolve inside this plugin's data directory.", []string{
-		"readFile(path)", "readText(path)", "writeFile(path, data)", "appendFile(path, data)",
+		"readFile(path, {offset, length}) — an ArrayBuffer; a file over the size limit is refused unless you name a range",
+		"readText(path, {offset, length}) — the same, as a string",
+		"writeFile(path, data)", "appendFile(path, data)",
 		"exists(path)", "stat(path)", "list(path)", "mkdir(path)", "remove(path)",
 		"rename(from, to)", "resolve(path)", "tempDir()",
 	}},

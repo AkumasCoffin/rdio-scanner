@@ -41,14 +41,12 @@ type Talkgroup struct {
 
 func (talkgroup *Talkgroup) FromMap(m map[string]any) *Talkgroup {
 
-	switch v := m["id"].(type) {
-	case float64:
-		talkgroup.Id = uint(v)
+	if v, ok := jsonUint(m["id"]); ok {
+		talkgroup.Id = v
 	}
 
-	switch v := m["frequency"].(type) {
-	case float64:
-		talkgroup.Frequency = uint(v)
+	if v, ok := jsonUint(m["frequency"]); ok {
+		talkgroup.Frequency = v
 	}
 
 	switch v := m["group"].(type) {
@@ -56,9 +54,8 @@ func (talkgroup *Talkgroup) FromMap(m map[string]any) *Talkgroup {
 		talkgroup.group = v
 	}
 
-	switch v := m["groupId"].(type) {
-	case float64:
-		talkgroup.GroupId = uint(v)
+	if v, ok := jsonUint(m["groupId"]); ok {
+		talkgroup.GroupId = v
 	}
 
 	switch v := m["label"].(type) {
@@ -76,9 +73,8 @@ func (talkgroup *Talkgroup) FromMap(m map[string]any) *Talkgroup {
 		talkgroup.Name = v
 	}
 
-	switch v := m["order"].(type) {
-	case float64:
-		talkgroup.Order = uint(v)
+	if v, ok := jsonUint(m["order"]); ok {
+		talkgroup.Order = v
 	}
 
 	switch v := m["tag"].(type) {
@@ -86,14 +82,12 @@ func (talkgroup *Talkgroup) FromMap(m map[string]any) *Talkgroup {
 		talkgroup.tag = v
 	}
 
-	switch v := m["tagId"].(type) {
-	case float64:
-		talkgroup.TagId = uint(v)
+	if v, ok := jsonUint(m["tagId"]); ok {
+		talkgroup.TagId = v
 	}
 
-	switch v := m["delay"].(type) {
-	case float64:
-		talkgroup.Delay = uint(v)
+	if v, ok := jsonUint(m["delay"]); ok {
+		talkgroup.Delay = v
 	}
 
 	switch v := m["alert"].(type) {

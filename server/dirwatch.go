@@ -73,14 +73,12 @@ func NewDirwatch() *Dirwatch {
 }
 
 func (dirwatch *Dirwatch) FromMap(m map[string]any) *Dirwatch {
-	switch v := m["_id"].(type) {
-	case float64:
-		dirwatch.Id = uint(v)
+	if v, ok := jsonUint(m["_id"]); ok {
+		dirwatch.Id = v
 	}
 
-	switch v := m["delay"].(type) {
-	case float64:
-		dirwatch.Delay = uint(v)
+	if v, ok := jsonUint(m["delay"]); ok {
+		dirwatch.Delay = v
 	}
 
 	switch v := m["deleteAfter"].(type) {
@@ -103,9 +101,8 @@ func (dirwatch *Dirwatch) FromMap(m map[string]any) *Dirwatch {
 		dirwatch.Extension = v
 	}
 
-	switch v := m["frequency"].(type) {
-	case float64:
-		dirwatch.Frequency = uint(v)
+	if v, ok := jsonUint(m["frequency"]); ok {
+		dirwatch.Frequency = v
 	}
 
 	switch v := m["mask"].(type) {
@@ -113,19 +110,16 @@ func (dirwatch *Dirwatch) FromMap(m map[string]any) *Dirwatch {
 		dirwatch.Mask = v
 	}
 
-	switch v := m["order"].(type) {
-	case float64:
-		dirwatch.Order = uint(v)
+	if v, ok := jsonUint(m["order"]); ok {
+		dirwatch.Order = v
 	}
 
-	switch v := m["systemId"].(type) {
-	case float64:
-		dirwatch.SystemId = uint(v)
+	if v, ok := jsonUint(m["systemId"]); ok {
+		dirwatch.SystemId = v
 	}
 
-	switch v := m["talkgroupId"].(type) {
-	case float64:
-		dirwatch.TalkgroupId = uint(v)
+	if v, ok := jsonUint(m["talkgroupId"]); ok {
+		dirwatch.TalkgroupId = v
 	}
 
 	switch v := m["type"].(type) {
