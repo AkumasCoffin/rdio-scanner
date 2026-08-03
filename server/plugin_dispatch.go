@@ -16,6 +16,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -291,6 +292,14 @@ func (dispatch *PluginDispatch) Notify(point string, value any) {
 // having done nothing. A plugin may degrade the server's behaviour; it must
 // never be able to lose a call.
 func (dispatch *PluginDispatch) Filter(point string, value any, timeout time.Duration) (any, bool) {
+	return dispatch.FilterWithin(nil, point, value, timeout)
+}
+
+// FilterWithin is Filter bounded by an allowance shared across everything one
+// call does. Points reached once per call pass nil and are governed by their
+// own timeout; the per-listener point passes a real budget, because there the
+// cost is the timeout multiplied by the audience.
+func (dispatch *PluginDispatch) FilterWithin(budget *pluginBudget, point string, value any, timeout time.Duration) (any, bool) {
 	handlers := dispatch.handlersFor(point, verbFilter)
 	if len(handlers) == 0 {
 		return value, true
@@ -301,7 +310,13 @@ func (dispatch *PluginDispatch) Filter(point string, value any, timeout time.Dur
 	var changed map[string]any
 
 	for _, handler := range handlers {
-		result, err := dispatch.invoke(handler, point, timeout, current)
+		result, err := dispatch.invokeWithin(budget, handler, point, timeout, current)
+		if err == errPluginBudgetSpent {
+			// Nothing left for this call. Skipping is the same outcome as a
+			// handler that failed — the value passes through untouched — and
+			// the caller reports the overrun once rather than per handler.
+			break
+		}
 		if err != nil {
 			dispatch.logFailure(handler, point, err)
 			continue
@@ -410,9 +425,27 @@ func (dispatch *PluginDispatch) Provide(point string, args any, timeout time.Dur
 }
 
 func (dispatch *PluginDispatch) invoke(handler *pluginHandler, point string, timeout time.Duration, args ...any) (any, error) {
+	return dispatch.invokeWithin(nil, handler, point, timeout, args...)
+}
+
+// invokeWithin is invoke with a per-call allowance. A nil budget means
+// unbounded, which is every point that is reached once per call rather than
+// once per listener.
+func (dispatch *PluginDispatch) invokeWithin(budget *pluginBudget, handler *pluginHandler, point string, timeout time.Duration, args ...any) (any, error) {
 	if timeout <= 0 {
 		timeout = pluginDispatchTimeout
 	}
+
+	// The allowance is checked before the work, and charged for what the work
+	// actually took. A handler that returns promptly barely touches it.
+	allowed, ok := budget.take(timeout)
+	if !ok {
+		return nil, errPluginBudgetSpent
+	}
+	timeout = allowed
+
+	started := time.Now()
+	defer func() { budget.spend(time.Since(started)) }()
 
 	// Each handler gets its own copy, for the same reason observers do: goja
 	// hands the Go map itself to JavaScript, so without this two plugins on one
@@ -425,8 +458,34 @@ func (dispatch *PluginDispatch) invoke(handler *pluginHandler, point string, tim
 	return handler.runtime.CallSync(point, timeout, handler.callable, copied...)
 }
 
+// reportBudgetSpent says once, per call, that the allowance ran out — naming
+// how much of the work was skipped so the line is actionable rather than
+// merely alarming.
+//
+// Throttled with the emit warning for the same reason: the condition repeats
+// per call, and the log is a database write.
+func (dispatch *PluginDispatch) reportBudgetSpent(point string, skipped int, total int) {
+	if dispatch.controller == nil || dispatch.controller.emitLogThrottle == nil {
+		return
+	}
+	if !dispatch.controller.emitLogThrottle.Allow("budget:" + point) {
+		return
+	}
+
+	dispatch.controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf(
+		"plugins at %s used their whole time budget for one call; %d of %d were handled without them. A plugin on this point is too slow to run once per listener.",
+		point, skipped, total,
+	))
+}
+
 func (dispatch *PluginDispatch) logFailure(handler *pluginHandler, point string, err error) {
 	dispatch.controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf(
 		"plugin %s failed at %s, continuing without it: %v", handler.pluginId, point, err,
 	))
 }
+
+// errPluginBudgetSpent means a handler was skipped because the call had
+// nothing left to spend, not because anything went wrong. It is deliberately
+// distinct from a handler failure: the outcome for the value is the same, but
+// only one of the two is worth telling an operator about.
+var errPluginBudgetSpent = errors.New("the call's plugin time budget is spent")

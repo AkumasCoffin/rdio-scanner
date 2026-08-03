@@ -60,6 +60,10 @@ type Controller struct {
 	// (not-found / access-denied) so bot traffic to dead share links can't
 	// flood the logs table.
 	calLogThrottle *LogThrottle
+	// emitLogThrottle rate-limits the "queue is full" warning. The condition
+	// that triggers it is thousands of calls deep, so an unthrottled line would
+	// write a row per call into the database the server is already behind on.
+	emitLogThrottle *LogThrottle
 	Clients            *Clients
 	Register           chan *Client
 	Unregister         chan *Client
@@ -126,6 +130,9 @@ func NewController(config *Config) *Controller {
 	controller.Stats = NewStats(controller)
 	// At most 5 CAL not-found/denied log lines per source IP per minute.
 	controller.calLogThrottle = NewLogThrottle(5, time.Minute)
+	// Once a minute per queue is enough to make a sustained problem obvious
+	// without the log itself adding load.
+	controller.emitLogThrottle = NewLogThrottle(1, time.Minute)
 
 	controller.Logs.setDaemon(config.daemon)
 	controller.Logs.setDatabase(controller.Database)
@@ -183,7 +190,11 @@ func (controller *Controller) InvalidateConfigCache() {
 // concurrent callers (multiple IngestCall paths, Delayer timers) can't race
 // and reorder forwarded calls between downstream servers.
 func (controller *Controller) EmitCallToDownstreams(call *Call) {
-	controller.downstreamEmitQueue <- call
+	select {
+	case controller.downstreamEmitQueue <- call:
+	default:
+		controller.reportQueueFull("downstream", call)
+	}
 }
 
 // EmitCallToClients pushes a call to live WebSocket listeners. Subject to the
@@ -194,7 +205,51 @@ func (controller *Controller) EmitCallToDownstreams(call *Call) {
 // concurrent emit paths (delay=0 ingest + Delayer timer fires + Start()
 // catchup) can't reorder messages on the per-client WS connections.
 func (controller *Controller) EmitCallToClients(call *Call) {
-	controller.clientEmitQueue <- call
+	select {
+	case controller.clientEmitQueue <- call:
+	default:
+		controller.reportQueueFull("listener", call)
+	}
+}
+
+// QueueIngest hands a call to the ingest goroutine, or says it could not.
+//
+// Every caller has something better to do than wait. The upload handler can
+// tell the recorder to retry; dirwatch can leave the file on disk. Blocking
+// meant a stalled ingest goroutine propagated all the way back to
+// trunk-recorder, which times out and throws the audio away — losing the call
+// outright, which is the one thing the system exists to prevent.
+func (controller *Controller) QueueIngest(call *Call) error {
+	select {
+	case controller.Ingest <- call:
+		return nil
+	default:
+		return fmt.Errorf("the ingest queue is full (%d calls waiting); the server is not keeping up", cap(controller.Ingest))
+	}
+}
+
+// reportQueueFull records a delivery queue overflowing, without becoming part
+// of the problem.
+//
+// Dropping here is deliberate, and it is the lesser of the two losses. These
+// queues are drained by a single dispatcher that a slow plugin can stall, and
+// they are fed from the ingest goroutine — so blocking on a full one stops
+// ingest, and stopping ingest loses every call that follows rather than one
+// broadcast. A dropped emit costs listeners a call on the live feed; the call
+// itself is already stored and searchable.
+//
+// A full queue means thousands of calls are already backed up, so the log is
+// throttled: unthrottled it would write a row per call into the same database
+// the server is struggling to keep up with.
+func (controller *Controller) reportQueueFull(queue string, call *Call) {
+	if !controller.emitLogThrottle.Allow(queue) {
+		return
+	}
+
+	controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf(
+		"%s queue is full; dropping the broadcast for system %d talkgroup %d. The call is stored — whatever drains that queue is too slow, most likely a plugin.",
+		queue, call.System, call.Talkgroup,
+	))
 }
 
 // EmitCall is the legacy "do both" path. Preserved for any external/future

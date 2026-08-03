@@ -83,7 +83,16 @@ func (dispatch *PluginDispatch) FilterCall(point string, call *Call) bool {
 
 	dispatch.Notify(point, value)
 
-	filtered, keep := dispatch.Filter(point, value, pointTimeout(point))
+	// One allowance for the whole of this call's journey through ingest. The
+	// individual point timeouts are generous on purpose — re-encoding a long
+	// call legitimately takes time — but they are per point and per handler, so
+	// their sum is what an upload actually waits for, and every other upload
+	// waits behind that.
+	if call.pluginBudget == nil {
+		call.pluginBudget = newPluginBudget(pluginIngestCallBudget)
+	}
+
+	filtered, keep := dispatch.FilterWithin(call.pluginBudget, point, value, pointTimeout(point))
 	if !keep {
 		return false
 	}

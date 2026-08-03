@@ -196,7 +196,11 @@ func (dirwatch *Dirwatch) ingestDefault(p string) error {
 		}
 
 		if ok, err := call.IsValid(); ok {
-			dirwatch.controller.Ingest <- call
+			// Queued before the file is removed, so a refused send leaves the
+			// audio on disk for the next scan rather than destroying it.
+			if err = dirwatch.controller.QueueIngest(call); err != nil {
+				return err
+			}
 
 			if dirwatch.DeleteAfter {
 				if err = os.Remove(p); err != nil {
@@ -258,7 +262,12 @@ func (dirwatch *Dirwatch) ingestDSDPlus(p string) error {
 	}
 
 	if ok, err := call.IsValid(); ok {
-		dirwatch.controller.Ingest <- call
+		// The file is only removed once the call is safely queued. Deleting
+		// after a refused send would destroy the only copy of the audio; left
+		// alone, the next scan picks it up again.
+		if err = dirwatch.controller.QueueIngest(call); err != nil {
+			return err
+		}
 
 		if dirwatch.DeleteAfter {
 			if err = os.Remove(p); err != nil {
@@ -295,7 +304,12 @@ func (dirwatch *Dirwatch) ingestSdrTrunk(p string) error {
 	}
 
 	if ok, err := call.IsValid(); ok {
-		dirwatch.controller.Ingest <- call
+		// The file is only removed once the call is safely queued. Deleting
+		// after a refused send would destroy the only copy of the audio; left
+		// alone, the next scan picks it up again.
+		if err = dirwatch.controller.QueueIngest(call); err != nil {
+			return err
+		}
 
 		if dirwatch.DeleteAfter {
 			if err = os.Remove(p); err != nil {
@@ -360,7 +374,10 @@ func (dirwatch *Dirwatch) ingestTrunkRecorder(p string) error {
 	}
 
 	if ok, err := call.IsValid(); ok {
-		dirwatch.controller.Ingest <- call
+		// Both files below are removed only after this succeeds.
+		if err = dirwatch.controller.QueueIngest(call); err != nil {
+			return err
+		}
 
 	} else {
 		return err

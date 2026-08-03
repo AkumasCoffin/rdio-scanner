@@ -106,7 +106,15 @@ func (api *Api) HandleCall(key string, call *Call, w http.ResponseWriter) {
 	}
 
 	call.apiKeyIdent = apikey.Ident
-	api.Controller.Ingest <- call
+
+	// Refusing loudly beats hanging. A blocked send here held the recorder's
+	// HTTP request open until its own timeout, and a recorder that times out
+	// throws the audio away — so the call was lost with nothing saying so.
+	// A 503 is something an uploader understands and retries.
+	if err := api.Controller.QueueIngest(call); err != nil {
+		api.exitWithError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 
 	w.Write([]byte("Call imported successfully.\n"))
 }

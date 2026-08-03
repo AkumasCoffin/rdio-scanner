@@ -238,11 +238,10 @@ func (rt *PluginRuntime) createCall(spec map[string]any) (bool, error) {
 
 	// Non-blocking. The ingest channel is deep, and a plugin that could block on
 	// a full one would stall its own event loop behind the very goroutine it is
-	// feeding.
-	select {
-	case rt.controller.Ingest <- call:
-		return true, nil
-	default:
-		return false, fmt.Errorf("ingest queue is full")
+	// feeding. Every other producer now goes through the same door.
+	if err := rt.controller.QueueIngest(call); err != nil {
+		return false, err
 	}
+
+	return true, nil
 }

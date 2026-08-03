@@ -58,6 +58,12 @@ type Call struct {
 	// to a client; nil on every install with no field-extending plugin, which
 	// is why this costs nothing when unused.
 	pluginFields map[string]any
+	// pluginBudget is the time allowance shared by every ingest point this call
+	// passes through. It lives on the call because that is exactly its scope:
+	// the five ingest points are separate dispatches, all charged to the same
+	// upload, all on the single goroutine every other upload waits behind.
+	// Created on first use, so an install with no plugins never allocates one.
+	pluginBudget *pluginBudget
 }
 
 func NewCall() *Call {

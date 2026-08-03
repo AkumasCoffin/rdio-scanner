@@ -425,13 +425,25 @@ func (clients *Clients) EmitCall(call *Call, restricted bool) (recipients int) {
 
 	filtering := dispatch != nil && dispatch.Active(PointCallEmit)
 
+	// One allowance for the whole fan-out. This loop is serial, on the single
+	// goroutine draining the emit queue, and it is the only place in the server
+	// where a plugin's cost is multiplied by the size of the audience.
+	var budget *pluginBudget
+	if filtering {
+		budget = newPluginBudget(pluginEmitCallBudget)
+	}
+
 	for _, c := range candidates {
-		if filtering && !dispatch.ShouldEmit(call, c) {
+		if filtering && !dispatch.ShouldEmit(call, c, budget) {
 			continue
 		}
 
 		c.enqueue(&Message{Command: MessageCommandCall, Payload: call})
 		recipients++
+	}
+
+	if skipped := budget.skipped(); skipped > 0 {
+		dispatch.reportBudgetSpent(PointCallEmit, skipped, len(candidates))
 	}
 
 	return recipients

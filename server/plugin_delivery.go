@@ -91,7 +91,15 @@ func (dispatch *PluginDispatch) FilterCallPayload(call *Call) {
 // plugin is actually registered — the native access and livefeed checks have
 // already run by this point, so this decides nothing that rdio could decide
 // itself.
-func (dispatch *PluginDispatch) ShouldEmit(call *Call, client *Client) bool {
+// The budget is per call, not per listener: it is the whole point. A
+// per-invocation timeout says how long one listener's decision may take, and
+// says nothing about the same decision being made five hundred times on the
+// single goroutine that drains the emit queue.
+//
+// Running out means every remaining listener is emitted to unfiltered. That is
+// the right way round — a plugin that cannot answer in time must not be able to
+// silence the feed for everyone still waiting.
+func (dispatch *PluginDispatch) ShouldEmit(call *Call, client *Client, budget *pluginBudget) bool {
 	if !dispatch.Active(PointCallEmit) {
 		return true
 	}
@@ -101,7 +109,7 @@ func (dispatch *PluginDispatch) ShouldEmit(call *Call, client *Client) bool {
 
 	dispatch.Notify(PointCallEmit, value)
 
-	_, keep := dispatch.Filter(PointCallEmit, value, pointTimeout(PointCallEmit))
+	_, keep := dispatch.FilterWithin(budget, PointCallEmit, value, pointTimeout(PointCallEmit))
 
 	return keep
 }
