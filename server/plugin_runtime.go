@@ -227,17 +227,58 @@ func (rt *PluginRuntime) readMain() (string, error) {
 	return string(b), nil
 }
 
-// armWatchdog interrupts the runtime if the current job overruns. Jobs are
-// serialised on the event loop, so interrupting only ever kills the job that
-// is actually running.
+// armWatchdog interrupts the runtime if the work it guards outlasts its
+// deadline. Jobs are serialised on the event loop, so interrupting only ever
+// kills the job that is actually running.
+//
+// The bookkeeping matters more than it looks. time.Stop does not wait for a
+// timer that has already begun running, so the naive version — stop, then
+// clear — had a window where the clear ran first and the interrupt landed
+// afterwards, with nothing left to receive it. The flag stayed set and the
+// *next* job on that loop died immediately, reporting a timeout in whatever
+// point the previous one had been running. Clearing unconditionally was wrong
+// for the same reason in reverse: with two watchdogs armed, the inner one's
+// disarm cancelled the outer one's.
+//
+// So: the timer only interrupts if it wins the race, and the disarm only
+// clears an interrupt this watchdog actually raised.
 func (rt *PluginRuntime) armWatchdog(vm *goja.Runtime, label string, timeout time.Duration) func() {
+	var (
+		mutex    sync.Mutex
+		fired    bool
+		disarmed bool
+	)
+
 	timer := time.AfterFunc(timeout, func() {
+		mutex.Lock()
+		defer mutex.Unlock()
+
+		if disarmed {
+			return
+		}
+
+		fired = true
 		vm.Interrupt(fmt.Sprintf("plugin %s exceeded the %s time limit in %s", rt.manifest.Id, timeout, label))
 	})
 
 	return func() {
 		timer.Stop()
-		vm.ClearInterrupt()
+
+		mutex.Lock()
+		defer mutex.Unlock()
+
+		// Idempotent: the loop disarms when the handler settles, and the
+		// waiting caller disarms if it gives up first. Whichever happens
+		// second must not clear an interrupt raised by something else.
+		if disarmed {
+			return
+		}
+
+		disarmed = true
+
+		if fired {
+			vm.ClearInterrupt()
+		}
 	}
 }
 
@@ -580,9 +621,36 @@ func (rt *PluginRuntime) CallSync(point string, timeout time.Duration, callable 
 
 	ch := make(chan outcome, 1)
 
+	// The disarm is shared with the waiting goroutine below. A handler whose
+	// promise never settles never disarms from the loop, and the interrupt
+	// would then sit raised until it killed some later, unrelated job.
+	var (
+		disarmMutex sync.Mutex
+		disarm      func()
+	)
+
+	stopWatchdog := func() {
+		disarmMutex.Lock()
+		fn := disarm
+		disarmMutex.Unlock()
+
+		if fn != nil {
+			fn()
+		}
+	}
+
 	scheduled := rt.runOnLoop(func(vm *goja.Runtime) {
+		// Disarmed by hand rather than deferred, because a handler that returns
+		// a promise is not finished when this function returns. Deferring meant
+		// the interrupt was cleared the instant the synchronous part ended, so
+		// any handler that awaited rdio.http, rdio.exec or rdio.audio ran
+		// completely unwatched afterwards — the documented per-point timeouts
+		// bounded only how long core waited, never how long the plugin ran.
 		stop := rt.armWatchdog(vm, point, timeout)
-		defer stop()
+
+		disarmMutex.Lock()
+		disarm = stop
+		disarmMutex.Unlock()
 
 		converted := make([]goja.Value, len(args))
 		for i, arg := range args {
@@ -591,17 +659,20 @@ func (rt *PluginRuntime) CallSync(point string, timeout time.Duration, callable 
 
 		value, err := adapter.fn(goja.Undefined(), converted...)
 		if err != nil {
+			stop()
 			ch <- outcome{nil, err}
 			return
 		}
 
 		if promise, ok := value.Export().(*goja.Promise); ok {
 			rt.awaitPromise(vm, promise, func(v any, err error) {
+				stop()
 				ch <- outcome{v, err}
 			})
 			return
 		}
 
+		stop()
 		ch <- outcome{value.Export(), nil}
 	})
 
@@ -613,6 +684,10 @@ func (rt *PluginRuntime) CallSync(point string, timeout time.Duration, callable 
 	case out := <-ch:
 		return out.value, out.err
 	case <-time.After(timeout + time.Second):
+		// Give up waiting, and take the watchdog down with us so a pending
+		// promise cannot leave an interrupt raised for the next job to hit.
+		stopWatchdog()
+
 		return nil, fmt.Errorf("plugin %s timed out at %s", rt.manifest.Id, point)
 	}
 }
