@@ -450,24 +450,35 @@ func (db *Database) migrateWithSchema(name string, schemas []string, verbose boo
 			log.Printf("running database migration %s", name)
 		}
 
-		if tx, err = db.Sql.Begin(); err == nil {
-			for _, query = range schemas {
-				if _, err = tx.Exec(db.formatQuery(query)); err != nil {
-					tx.Rollback()
-					return formatError(err, query)
-				}
-			}
+		// A failed Begin used to fall straight through to `return nil`: the
+		// migration did nothing, wrote no ledger row, and reported success, so
+		// startup carried on against a schema that had never been created and
+		// the first query to touch it failed instead — somewhere else entirely.
+		if tx, err = db.Sql.Begin(); err != nil {
+			return fmt.Errorf("%s: cannot begin: %v", name, err)
+		}
 
-			query = db.formatQuery(fmt.Sprintf("insert into `rdioScannerMeta` (`name`) values ('%s')", name))
-			if _, err = tx.Exec(query); err != nil {
+		for _, query = range schemas {
+			if _, err = tx.Exec(db.formatQuery(query)); err != nil {
 				tx.Rollback()
 				return formatError(err, query)
 			}
+		}
 
-			if err = tx.Commit(); err != nil {
-				tx.Rollback()
-				return err
-			}
+		query = db.formatQuery(fmt.Sprintf("insert into `rdioScannerMeta` (`name`) values ('%s')", name))
+		if _, err = tx.Exec(query); err != nil {
+			tx.Rollback()
+			return formatError(err, query)
+		}
+
+		// Worth knowing what this transaction does and does not buy. MySQL and
+		// MariaDB commit DDL implicitly, so a failure part way through leaves
+		// the earlier statements applied and the rollback undoes nothing — the
+		// reason every statement here wants to be re-runnable rather than
+		// relying on the rollback to tidy up.
+		if err = tx.Commit(); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("%s: %v", name, err)
 		}
 	}
 
