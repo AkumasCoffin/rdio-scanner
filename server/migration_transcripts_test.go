@@ -16,6 +16,9 @@
 package main
 
 import (
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -32,6 +35,25 @@ func newTestDatabase(t *testing.T) *Database {
 func newTestDatabaseWithDrops(t *testing.T, dropLegacy bool) *Database {
 	t.Helper()
 
+	// Point the suite at a real server and every one of these tests runs
+	// against it instead of SQLite.
+	//
+	// This exists because the plugin registry shipped broken on MySQL for
+	// months and nothing noticed: the schema only ever ran on SQLite, so two
+	// of the three supported backends were verified by reading. The static
+	// column-parity check catches a branch that declares the wrong columns;
+	// only a real server catches a statement that backend will not accept.
+	//
+	//	RDIO_TEST_DB_TYPE=postgresql 	//	RDIO_TEST_DB_HOST=localhost RDIO_TEST_DB_PORT=5432 	//	RDIO_TEST_DB_NAME=rdio_test RDIO_TEST_DB_USER=rdio RDIO_TEST_DB_PASS=... 	//	go test ./server -run 'Migration|Plugin|Transcript'
+	//
+	// The named database is emptied at the start of each test, so it must be
+	// one kept for testing and nothing else.
+	if config := testDatabaseConfigFromEnv(t, dropLegacy); config != nil {
+		db := NewDatabase(config)
+		emptyTestDatabase(t, db)
+		return db
+	}
+
 	dir := t.TempDir()
 
 	// Relative on purpose: GetDbFilePath uses path.IsAbs, which does not
@@ -44,6 +66,101 @@ func newTestDatabaseWithDrops(t *testing.T, dropLegacy bool) *Database {
 	}
 
 	return NewDatabase(config)
+}
+
+// testDatabaseConfigFromEnv builds a config for a real server, or nil when the
+// suite has not been pointed at one.
+func testDatabaseConfigFromEnv(t *testing.T, dropLegacy bool) *Config {
+	t.Helper()
+
+	dbType := strings.TrimSpace(os.Getenv("RDIO_TEST_DB_TYPE"))
+	if dbType == "" {
+		return nil
+	}
+
+	switch dbType {
+	case DbTypePostgres, DbTypeMysql, DbTypeMariadb:
+	default:
+		t.Fatalf("RDIO_TEST_DB_TYPE is %q; expected %s, %s or %s",
+			dbType, DbTypePostgres, DbTypeMysql, DbTypeMariadb)
+	}
+
+	port := uint(5432)
+	if dbType != DbTypePostgres {
+		port = 3306
+	}
+	if text := os.Getenv("RDIO_TEST_DB_PORT"); text != "" {
+		parsed, err := strconv.ParseUint(text, 10, 32)
+		if err != nil {
+			t.Fatalf("RDIO_TEST_DB_PORT is not a number: %v", err)
+		}
+		port = uint(parsed)
+	}
+
+	host := os.Getenv("RDIO_TEST_DB_HOST")
+	if host == "" {
+		host = "localhost"
+	}
+
+	name := os.Getenv("RDIO_TEST_DB_NAME")
+	if name == "" {
+		t.Fatal("RDIO_TEST_DB_NAME is required when RDIO_TEST_DB_TYPE is set")
+	}
+
+	return &Config{
+		BaseDir:           t.TempDir(),
+		DbType:            dbType,
+		DbHost:            host,
+		DbPort:            port,
+		DbName:            name,
+		DbUsername:        os.Getenv("RDIO_TEST_DB_USER"),
+		DbPassword:        os.Getenv("RDIO_TEST_DB_PASS"),
+		DropLegacyColumns: dropLegacy,
+	}
+}
+
+// emptyTestDatabase drops everything rdio owns, so each test starts from
+// nothing the way a SQLite temp file does.
+func emptyTestDatabase(t *testing.T, db *Database) {
+	t.Helper()
+
+	rows, err := db.Sql.Query(testTableListQuery(db))
+	if err != nil {
+		t.Fatalf("cannot list tables: %v", err)
+	}
+
+	names := []string{}
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			t.Fatalf("cannot read table name: %v", err)
+		}
+		// Only rdio's own tables and plugin tables. Anything else in the
+		// database belongs to whoever put it there.
+		if strings.HasPrefix(name, "rdioScanner") || strings.HasPrefix(name, "plugin_") {
+			names = append(names, name)
+		}
+	}
+	rows.Close()
+
+	for _, name := range names {
+		quoted := db.formatQuery("drop table if exists `" + name + "` cascade")
+		if db.Config.DbType != DbTypePostgres {
+			quoted = db.formatQuery("drop table if exists `" + name + "`")
+		}
+		if _, err := db.Sql.Exec(quoted); err != nil {
+			t.Fatalf("cannot drop %s: %v", name, err)
+		}
+	}
+}
+
+func testTableListQuery(db *Database) string {
+	if db.Config.DbType == DbTypePostgres {
+		return "select tablename from pg_tables where schemaname = current_schema()"
+	}
+	return "select table_name from information_schema.tables where table_schema = database()"
 }
 
 // rewindTranscriptMigration puts a database back into the shape it had before
