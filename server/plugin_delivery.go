@@ -99,12 +99,21 @@ func (dispatch *PluginDispatch) FilterCallPayload(call *Call) {
 // Running out means every remaining listener is emitted to unfiltered. That is
 // the right way round — a plugin that cannot answer in time must not be able to
 // silence the feed for everyone still waiting.
-func (dispatch *PluginDispatch) ShouldEmit(call *Call, client *Client, budget *pluginBudget) bool {
+func (dispatch *PluginDispatch) ShouldEmit(call *Call, client *Client, budget *pluginBudget, shared map[string]any) bool {
 	if !dispatch.Active(PointCallEmit) {
 		return true
 	}
 
-	value := pluginCallValue(call, false)
+	// The call half is identical for every listener, so it is built once by the
+	// caller and only the client half is assembled here. It was being rebuilt
+	// per listener — thirteen fields, a full copy of the call's metadata and a
+	// timestamp format — and then deep-copied again per handler. call.payload
+	// already reasoned "shape it once, the JSON is the same for everyone";
+	// call.emit is the point where that matters most and never got it.
+	value := make(map[string]any, len(shared)+1)
+	for key, entry := range shared {
+		value[key] = entry
+	}
 	value["client"] = pluginClientValue(client)
 
 	dispatch.Notify(PointCallEmit, value)

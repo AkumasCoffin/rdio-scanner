@@ -186,3 +186,39 @@
         word-break: break-all;
     }
 }
+
+// Where a plugin's time goes, per point. Deliberately dense and quiet: it is
+// reference material an operator reads when something is wrong, not something
+// to draw the eye on a healthy install.
+.plugin-cost {
+    margin-top: 0.5rem;
+    overflow-x: auto;
+
+    table {
+        border-collapse: collapse;
+        font-size: 0.75rem;
+        width: 100%;
+    }
+
+    th {
+        font-weight: 500;
+        opacity: 0.6;
+        text-align: left;
+    }
+
+    th,
+    td {
+        padding: 0.15rem 0.75rem 0.15rem 0;
+        white-space: nowrap;
+    }
+
+    // The numbers line up so an outlier is visible without reading them all.
+    td:not(:first-child):not(:nth-child(2)) {
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+    }
+
+    code {
+        font-size: 0.72rem;
+    }
+}

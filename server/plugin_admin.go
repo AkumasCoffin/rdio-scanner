@@ -29,6 +29,11 @@ import (
 type installedPluginView struct {
 	*Plugin
 	Config map[string]any `json:"config,omitempty"`
+	// Cost is what plugins actually charge the server, totalled across every
+	// point this one touches. Without it a plugin that is merely slow is
+	// invisible, and the symptom it produces — uploads backing up, listeners
+	// falling behind — has nothing connecting it to a cause.
+	Cost pluginPointStat `json:"cost"`
 	// ConfigSet names the password fields that do have a stored value. The
 	// value itself never leaves the server, so without this the form cannot
 	// tell a configured API key from an empty one and looks like the setting
@@ -66,6 +71,7 @@ func (admin *Admin) PluginsHandler(w http.ResponseWriter, r *http.Request) {
 		view := &installedPluginView{
 			Plugin:          plugin,
 			RestartRequired: plugin.Enabled != plugin.Running,
+			Cost:            controller.PluginDispatch.metrics.ForPlugin(plugin.PluginId),
 		}
 
 		if plugin.Manifest != nil {
@@ -93,6 +99,11 @@ func (admin *Admin) PluginsHandler(w http.ResponseWriter, r *http.Request) {
 		"repos":         repos,
 		"serverVersion": Version,
 		"pluginsDir":    controller.Plugins.Dir(controller.Config),
+		// Per point as well as per plugin, most expensive first, because
+		// "which plugin" and "doing what" are different questions and the
+		// second one is what tells an operator whether to disable it or move
+		// its work off the ingest path.
+		"cost": controller.PluginDispatch.metrics.Snapshot(),
 	})
 }
 
@@ -392,6 +403,10 @@ func (admin *Admin) pluginUninstall(w http.ResponseWriter, r *http.Request) {
 	// into it — for the rest of the process's life, since nothing afterwards
 	// holds a reference to stop it with.
 	controller.Plugins.StopOne(controller, body.PluginId)
+
+	// Its measurements go too, so an uninstalled plugin does not linger in the
+	// panel claiming time nothing is spending.
+	controller.PluginDispatch.metrics.Forget(body.PluginId)
 
 	if err := controller.Plugins.RemoveFiles(controller.Config, body.PluginId); err != nil {
 		writeJsonError(w, http.StatusInternalServerError, err.Error())

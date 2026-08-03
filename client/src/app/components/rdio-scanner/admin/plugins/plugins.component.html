@@ -94,6 +94,46 @@
                 <span class="chip missing" *ngIf="updateError(plugin)" [matTooltip]="updateError(plugin)">
                     Not checked
                 </span>
+                <span class="chip" *ngIf="costFor(plugin) as cost"
+                    [class.warn]="costIsConcerning(cost)"
+                    [matTooltip]="'Longest single run ' + (cost.maxMs | number:'1.0-1') + ' ms'">
+                    {{ cost.calls | number }} calls &middot; {{ cost.averageMs | number:'1.0-2' }} ms avg
+                </span>
+                <span class="chip warn" *ngIf="costFor(plugin) as cost"
+                    [style.display]="cost.timeouts ? null : 'none'"
+                    matTooltip="The handler was cut off at its deadline. Work this slow belongs on a worker, not in the chain.">
+                    {{ cost.timeouts | number }} timed out
+                </span>
+                <span class="chip warn" *ngIf="costFor(plugin) as cost"
+                    [style.display]="cost.skipped ? null : 'none'"
+                    matTooltip="Skipped because the call had no time left. Every listener was served without this plugin.">
+                    {{ cost.skipped | number }} skipped
+                </span>
+                <span class="chip warn" *ngIf="costFor(plugin) as cost"
+                    [style.display]="cost.failures ? null : 'none'"
+                    matTooltip="The handler threw or timed out. The value passed through unchanged.">
+                    {{ cost.failures | number }} failed
+                </span>
+            </div>
+
+            <!-- Where the time actually goes. "Which plugin" and "doing what"
+                 are different questions, and the second is the one that says
+                 whether to disable it or move its work off the ingest path. -->
+            <div class="plugin-cost" *ngIf="costByPoint(plugin).length">
+                <table>
+                    <tr>
+                        <th>Point</th><th>Verb</th><th>Calls</th>
+                        <th>Average</th><th>Longest</th><th>Total</th>
+                    </tr>
+                    <tr *ngFor="let entry of costByPoint(plugin)">
+                        <td><code>{{ entry.point }}</code></td>
+                        <td>{{ entry.verb }}</td>
+                        <td>{{ entry.calls | number }}</td>
+                        <td>{{ entry.averageMs | number:'1.0-2' }} ms</td>
+                        <td>{{ entry.maxMs | number:'1.0-1' }} ms</td>
+                        <td>{{ entry.totalMs | number:'1.0-0' }} ms</td>
+                    </tr>
+                </table>
             </div>
 
             <div class="plugin-actions">

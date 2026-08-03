@@ -97,13 +97,25 @@ type PluginDispatch struct {
 	// plus anything a plugin defined for other plugins to use.
 	points map[string]bool
 
+	// metrics is what plugins cost, kept unconditionally. The overhead is a
+	// mutex and some arithmetic per dispatch; the alternative is an operator
+	// with a stalling server and no way to learn a plugin is why.
+	metrics *pluginMetrics
+
+	// vetoLogThrottle keeps the veto line from becoming the problem. A
+	// call.emit filter withholding most calls from most listeners is doing
+	// exactly its job, and that was one database write per listener per call.
+	vetoLogThrottle *LogThrottle
+
 	controller *Controller
 }
 
 func NewPluginDispatch(controller *Controller) *PluginDispatch {
 	dispatch := &PluginDispatch{
-		points:     map[string]bool{},
-		controller: controller,
+		points:          map[string]bool{},
+		metrics:         newPluginMetrics(),
+		vetoLogThrottle: NewLogThrottle(5, time.Minute),
+		controller:      controller,
 	}
 
 	for _, point := range pluginPoints {
@@ -373,9 +385,9 @@ func (dispatch *PluginDispatch) FilterWithin(budget *pluginBudget, point string,
 		}
 
 		if drop, ok := m["drop"].(bool); ok && drop {
-			dispatch.controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf(
-				"plugin %s vetoed at %s", handler.pluginId, point,
-			))
+			dispatch.recordVeto(handler, point)
+			dispatch.logVeto(handler, point)
+
 			return current, false
 		}
 
@@ -481,12 +493,24 @@ func (dispatch *PluginDispatch) invokeWithin(budget *pluginBudget, handler *plug
 	// actually took. A handler that returns promptly barely touches it.
 	allowed, ok := budget.take(timeout)
 	if !ok {
+		dispatch.metrics.observeSkipped(handler.pluginId, point, handler.verb)
 		return nil, errPluginBudgetSpent
 	}
 	timeout = allowed
 
 	started := time.Now()
-	defer func() { budget.spend(time.Since(started)) }()
+
+	var result any
+	var err error
+
+	defer func() {
+		elapsed := time.Since(started)
+		budget.spend(elapsed)
+		// Measured unconditionally. A plugin that is merely slow — never
+		// failing, never timing out — was invisible, and that is the one that
+		// takes a large site down.
+		dispatch.metrics.observe(handler.pluginId, point, handler.verb, elapsed, err)
+	}()
 
 	// Each handler gets its own copy, for the same reason observers do: goja
 	// hands the Go map itself to JavaScript, so without this two plugins on one
@@ -496,7 +520,9 @@ func (dispatch *PluginDispatch) invokeWithin(budget *pluginBudget, handler *plug
 		copied[i] = clonePluginValue(arg)
 	}
 
-	return handler.runtime.CallSync(point, timeout, handler.callable, copied...)
+	result, err = handler.runtime.CallSync(point, timeout, handler.callable, copied...)
+
+	return result, err
 }
 
 // reportBudgetSpent says once, per call, that the allowance ran out — naming
@@ -516,6 +542,26 @@ func (dispatch *PluginDispatch) reportBudgetSpent(point string, skipped int, tot
 	dispatch.controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf(
 		"plugins at %s used their whole time budget for one call; %d of %d were handled without them. A plugin on this point is too slow to run once per listener.",
 		point, skipped, total,
+	))
+}
+
+func (dispatch *PluginDispatch) recordVeto(handler *pluginHandler, point string) {
+	dispatch.metrics.observeVeto(handler.pluginId, point)
+}
+
+// logVeto reports a veto, at most a few times a minute per plugin and point.
+//
+// Vetoing is not an error and on a per-listener point it is not even unusual —
+// but LogEvent writes a row, and an unthrottled line here meant a filter doing
+// its job wrote one per listener per call into the database the server is
+// already serving from.
+func (dispatch *PluginDispatch) logVeto(handler *pluginHandler, point string) {
+	if dispatch.vetoLogThrottle != nil && !dispatch.vetoLogThrottle.Allow(handler.pluginId+"|"+point) {
+		return
+	}
+
+	dispatch.controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf(
+		"plugin %s vetoed at %s", handler.pluginId, point,
 	))
 }
 

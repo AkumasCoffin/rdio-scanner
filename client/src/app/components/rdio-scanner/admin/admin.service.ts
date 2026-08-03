@@ -144,6 +144,7 @@ export interface AdminPlugin {
     present: boolean;
     running: boolean;
     config?: { [key: string]: unknown };
+    cost?: AdminPluginCost;
     // Password fields are blanked before they reach us. This says which of them
     // actually hold a value, so the form can show "saved" instead of empty.
     configSet?: { [key: string]: boolean };
@@ -193,11 +194,33 @@ export interface AdminPluginUpdatesResponse {
     updateCount: number;
 }
 
+/** What a plugin has actually cost the server, measured at dispatch. */
+export interface AdminPluginCost {
+    pluginId: string;
+    point?: string;
+    verb?: string;
+    calls: number;
+    failures: number;
+    timeouts: number;
+    vetoes: number;
+    // Handlers passed over because the call had no time budget left. Not a
+    // failure — nothing went wrong, there was simply nothing to spend.
+    skipped: number;
+    totalMs: number;
+    maxMs: number;
+    averageMs: number;
+    lastAt?: string;
+}
+
 export interface AdminPluginsResponse {
     plugins: AdminPlugin[];
     repos: AdminPluginRepo[];
     serverVersion: string;
     pluginsDir: string;
+    // Per point, most expensive first. "Which plugin" and "doing what" are
+    // different questions, and the second decides whether to disable it or
+    // move its work off the ingest path.
+    cost?: AdminPluginCost[];
 }
 
 export interface DirWatch {

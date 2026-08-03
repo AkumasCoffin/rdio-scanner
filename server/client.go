@@ -460,13 +460,19 @@ func (clients *Clients) EmitCall(call *Call, restricted bool) (recipients int) {
 	// One allowance for the whole fan-out. This loop is serial, on the single
 	// goroutine draining the emit queue, and it is the only place in the server
 	// where a plugin's cost is multiplied by the size of the audience.
-	var budget *pluginBudget
+	var (
+		budget *pluginBudget
+		shared map[string]any
+	)
+
 	if filtering {
 		budget = newPluginBudget(pluginEmitCallBudget)
+		// Built once for the whole fan-out: nothing in it varies by listener.
+		shared = pluginCallValue(call, false)
 	}
 
 	for _, c := range candidates {
-		if filtering && !dispatch.ShouldEmit(call, c, budget) {
+		if filtering && !dispatch.ShouldEmit(call, c, budget, shared) {
 			continue
 		}
 

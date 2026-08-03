@@ -23,6 +23,7 @@ import {
     AdminAvailablePlugin,
     AdminPlugin,
     AdminPluginRepo,
+    AdminPluginCost,
     AdminPluginUpdate,
     PluginConfigField,
     RdioScannerAdminService,
@@ -38,6 +39,9 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
     repos: AdminPluginRepo[] = [];
     available: AdminAvailablePlugin[] = [];
     branches: string[] = [];
+
+    /** Per-point cost, most expensive first. Empty until a plugin has run. */
+    cost: AdminPluginCost[] = [];
 
     serverVersion = '';
     pluginsDir = '';
@@ -107,6 +111,7 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
             this.repos = response.repos || [];
             this.serverVersion = response.serverVersion;
             this.pluginsDir = response.pluginsDir;
+            this.cost = response.cost || [];
 
             if (!this.selectedRepo && this.repos.length) {
                 this.selectedRepo = this.repos[0].url;
@@ -376,6 +381,29 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
 
         this.expandedConfig = plugin.pluginId;
         this.configDraft = { ...(plugin.config || {}) };
+    }
+
+    /**
+     * A plugin's measured cost, or undefined before it has done anything.
+     * Nothing is shown for a plugin that has never been dispatched into —
+     * zeroes would read as a measurement rather than an absence of one.
+     */
+    costFor(plugin: AdminPlugin): AdminPluginCost | undefined {
+        return plugin.cost && plugin.cost.calls > 0 ? plugin.cost : undefined;
+    }
+
+    /** The points one plugin spends its time at, most expensive first. */
+    costByPoint(plugin: AdminPlugin): AdminPluginCost[] {
+        return this.cost.filter((entry) => entry.pluginId === plugin.pluginId && entry.calls > 0);
+    }
+
+    /**
+     * Whether a plugin is worth an operator's attention: it is failing, timing
+     * out, or being skipped for running out of time. Slow on its own is not a
+     * fault — slow enough to be cut short is.
+     */
+    costIsConcerning(cost: AdminPluginCost | undefined): boolean {
+        return !!cost && (cost.failures > 0 || cost.timeouts > 0 || cost.skipped > 0);
     }
 
     /**

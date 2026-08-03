@@ -159,7 +159,7 @@ func TestEmitBudgetBoundsTheWholeFanOut(t *testing.T) {
 
 	served := 0
 	for i := 0; i < 200; i++ {
-		if dispatch.ShouldEmit(call, nil, budget) {
+		if dispatch.ShouldEmit(call, nil, budget, pluginCallValue(call, false)) {
 			served++
 		}
 	}
@@ -199,7 +199,7 @@ func TestEmitBudgetDoesNotBiteAFastFilter(t *testing.T) {
 	call := NewCall()
 
 	for i := 0; i < 2000; i++ {
-		if dispatch.ShouldEmit(call, nil, budget) {
+		if dispatch.ShouldEmit(call, nil, budget, pluginCallValue(call, false)) {
 			t.Fatalf("listener %d was served despite the filter vetoing", i)
 		}
 	}
