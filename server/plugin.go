@@ -178,6 +178,22 @@ func (plugins *Plugins) Read(db *Database, config *Config) error {
 		return fmt.Errorf("plugins.read: %v", err)
 	}
 
+	// What is already running has to survive a re-read.
+	//
+	// Read is called after every install and every uninstall, and it used to
+	// replace the list wholesale with freshly built values — dropping the
+	// runtime pointer, the Running flag and the resolved directory for every
+	// plugin, including the ones it was not asked about. Installing anything
+	// therefore detached every other plugin: their frontends started 404ing
+	// (the asset handler requires Running), lifecycle events stopped reaching
+	// them, Plugins.Stop later had no runtime left to stop, and purge — which
+	// only refuses while Running — would drop the tables of a plugin still
+	// executing.
+	live := map[string]*Plugin{}
+	for _, plugin := range plugins.List {
+		live[plugin.PluginId] = plugin
+	}
+
 	byPluginId := map[string]*Plugin{}
 	list := []*Plugin{}
 
@@ -213,6 +229,14 @@ func (plugins *Plugins) Read(db *Database, config *Config) error {
 			Branch:   branch.String,
 			Enabled:  enabled.Bool,
 			Commit:   commit.String,
+		}
+
+		// Carry over what belongs to the running process rather than to the
+		// row. The database has no opinion about whether a plugin is loaded.
+		if prior, ok := live[pluginId]; ok {
+			plugin.runtime = prior.runtime
+			plugin.Running = prior.Running
+			plugin.dir = prior.dir
 		}
 
 		if installedAt.Valid {
@@ -513,6 +537,51 @@ func (plugins *Plugins) Stop(controller *Controller) {
 		}
 		plugin.Running = false
 	}
+}
+
+// StopOne shuts a single plugin down, deregistering it first so nothing can be
+// dispatched into a runtime on its way out.
+//
+// Uninstall used to remove the files and the registry row and stop there, which
+// left the plugin running with its code deleted: its timers kept firing, its
+// routes and RPC methods stayed registered, and every extension point kept
+// dispatching into it. Reports whether anything was actually stopped.
+func (plugins *Plugins) StopOne(controller *Controller, pluginId string) bool {
+	plugins.mutex.Lock()
+
+	var target *Plugin
+	for _, plugin := range plugins.List {
+		if plugin.PluginId == pluginId {
+			target = plugin
+			break
+		}
+	}
+
+	if target == nil {
+		plugins.mutex.Unlock()
+		return false
+	}
+
+	runtime := target.runtime
+	target.runtime = nil
+	target.Running = false
+
+	plugins.mutex.Unlock()
+
+	if controller != nil && controller.PluginDispatch != nil {
+		controller.PluginDispatch.Unregister(pluginId)
+	}
+	if controller != nil && controller.PluginRpc != nil {
+		controller.PluginRpc.Unregister(pluginId)
+	}
+
+	if runtime == nil {
+		return false
+	}
+
+	runtime.Stop()
+
+	return true
 }
 
 // EmitEvent fans a lifecycle event out to every running plugin. Dispatch is

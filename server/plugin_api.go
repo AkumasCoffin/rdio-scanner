@@ -212,6 +212,16 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 				throw("rdio.%s: unknown extension point %q", verb, point)
 			}
 
+			// The point existing is not enough — it has to invoke this verb.
+			// Most points only ever call one or two, so accepting any of the
+			// four meant rdio.filter('call.convert') and rdio.on('call.audio')
+			// registered cleanly and then never ran, which is the exact thing
+			// the point check was added to prevent.
+			if !pointAcceptsVerb(point, verb) {
+				throw("rdio.%s: %q does not use %s; it uses %s",
+					verb, point, verb, strings.Join(pointVerbNames(point), ", "))
+			}
+
 			if verb == verbOn {
 				rt.mutex.Lock()
 				rt.handlers[point] = append(rt.handlers[point], handler)

@@ -221,29 +221,34 @@ func (rpc *PluginRpc) Publish(from string, topic string, payload any) int {
 	subscriptions := append([]*pluginSubscription{}, rpc.topics[topic]...)
 	rpc.mutex.RUnlock()
 
-	delivered := 0
-
+	// Not back to the sender. A plugin that both publishes and subscribes to a
+	// topic is the normal shape for a shared bus, and echoing to itself would
+	// make every such plugin write the same guard.
+	eligible := []*pluginSubscription{}
 	for _, subscription := range subscriptions {
-		// Not back to the sender. A plugin that both publishes and subscribes to
-		// a topic is the normal shape for a shared bus, and echoing to itself
-		// would make every such plugin write the same guard.
-		if subscription.pluginId == from {
-			continue
+		if subscription.pluginId != from {
+			eligible = append(eligible, subscription)
 		}
+	}
 
+	// Once per subscriber runtime, for the same reason Notify is: a runtime's
+	// EmitTo runs every handler it registered for the topic, so delivering per
+	// subscription gave a plugin that subscribed twice four copies of every
+	// event.
+	runtimes := distinctRuntimes(len(eligible), func(i int) *PluginRuntime { return eligible[i].runtime })
+
+	for _, runtime := range runtimes {
 		// One copy per subscriber, for the same reason Notify clones: each
 		// subscriber is a separate event loop, goja hands JavaScript the Go map
 		// itself, and `msg.payload.handled = true` is the obvious thing for a
 		// subscriber to write. Two of them doing it to a shared map is a fatal
 		// concurrent write, reachable with entirely ordinary plugin code.
-		subscription.runtime.EmitTo("plugins:"+topic, map[string]any{
+		runtime.EmitTo("plugins:"+topic, map[string]any{
 			"topic":   topic,
 			"from":    from,
 			"payload": clonePluginValue(payload),
 		})
-
-		delivered++
 	}
 
-	return delivered
+	return len(runtimes)
 }

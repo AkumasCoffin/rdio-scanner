@@ -386,6 +386,13 @@ func (admin *Admin) pluginUninstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Stop it before the files go. Removing the code from under a running
+	// plugin does not stop it: its timers keep firing, its routes and RPC
+	// methods stay registered, and every extension point keeps dispatching
+	// into it — for the rest of the process's life, since nothing afterwards
+	// holds a reference to stop it with.
+	controller.Plugins.StopOne(controller, body.PluginId)
+
 	if err := controller.Plugins.RemoveFiles(controller.Config, body.PluginId); err != nil {
 		writeJsonError(w, http.StatusInternalServerError, err.Error())
 		return

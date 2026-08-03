@@ -271,9 +271,50 @@ func clonePluginValue(value any) any {
 // Notify fires observers. Never blocks: the busiest caller is the single
 // goroutine draining ingest, and an observer must not be able to slow it.
 func (dispatch *PluginDispatch) Notify(point string, value any) {
-	for _, handler := range dispatch.handlersFor(point, verbOn) {
-		handler.runtime.EmitTo(point, clonePluginValue(value))
+	// Once per runtime, not once per handler.
+	//
+	// EmitTo runs every observer the plugin registered for the point — that is
+	// its job, and the runtime is what owns the list. Calling it once per
+	// registered handler therefore ran each observer once for every observer:
+	// three rdio.on('call.stored') handlers in one plugin meant nine
+	// invocations per call, so a handler that inserted a row inserted three.
+	// Registering more than one handler for a point is an entirely ordinary
+	// thing to do and nothing warned against it.
+	handlers := dispatch.handlersFor(point, verbOn)
+
+	for _, runtime := range distinctRuntimes(len(handlers), func(i int) *PluginRuntime { return handlers[i].runtime }) {
+		runtime.EmitTo(point, clonePluginValue(value))
 	}
+}
+
+// distinctRuntimes collapses a handler list to the runtimes behind it, in
+// order, without repeats.
+//
+// It exists because delivery is per runtime, not per handler: a runtime's
+// EmitTo runs every handler that runtime registered for the point. Iterating
+// handlers and calling EmitTo for each therefore ran every observer once per
+// observer — K registrations produced K² invocations, so a handler that
+// inserted a row inserted three when a plugin had three of them.
+func distinctRuntimes(count int, at func(int) *PluginRuntime) []*PluginRuntime {
+	var runtimes []*PluginRuntime
+
+	for i := 0; i < count; i++ {
+		runtime := at(i)
+
+		seen := false
+		for _, known := range runtimes {
+			if known == runtime {
+				seen = true
+				break
+			}
+		}
+
+		if !seen {
+			runtimes = append(runtimes, runtime)
+		}
+	}
+
+	return runtimes
 }
 
 // Filter runs the chain. Each handler receives the value as it stands and may

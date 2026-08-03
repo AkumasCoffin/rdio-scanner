@@ -353,14 +353,46 @@ func NewClients() *Clients {
 	}
 }
 
+// accessIdentity is what makes two connections count as the same access.
+//
+// Pointer identity used to be the answer, and it quietly stopped being true the
+// moment a plugin could scope an access: ScopeAccess and CheckAccess both hand
+// back a clone, so every client held its own pointer, every comparison failed,
+// AccessCount always returned 1, and the per-code connection limit never
+// applied to anyone. Installing any plugin that registered on access.scope
+// removed the limit for every access code on the server, with nothing said.
+//
+// The record's own identity is what was always meant: the row when it has one,
+// otherwise the code the listener actually presented.
+func accessIdentity(access *Access) (string, bool) {
+	if access == nil {
+		return "", false
+	}
+
+	if id, ok := jsonUint(access.Id); ok && id > 0 {
+		return fmt.Sprintf("id:%d", id), true
+	}
+
+	if access.Code != "" {
+		return "code:" + access.Code, true
+	}
+
+	return "", false
+}
+
 func (clients *Clients) AccessCount(client *Client) int {
+	identity, ok := accessIdentity(client.Access)
+	if !ok {
+		return 0
+	}
+
 	count := 0
 
 	clients.mutex.RLock()
 	defer clients.mutex.RUnlock()
 
 	for c := range clients.Map {
-		if c.Access == client.Access {
+		if other, ok := accessIdentity(c.Access); ok && other == identity {
 			count++
 		}
 	}

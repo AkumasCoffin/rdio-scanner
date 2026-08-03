@@ -75,40 +75,124 @@ const (
 	PointConfigSave = "config.save"
 )
 
-// pluginPoints is every built-in point. Plugins may add their own with
+// pluginPointDef declares a point and the verbs core actually invokes on it.
+//
+// The verbs are the load-bearing part. Registering was checked against the
+// point's name only, so a verb the point never invokes was accepted without
+// complaint and then never fired: rdio.filter('call.convert') and
+// rdio.on('call.audio') both registered successfully and did nothing at all.
+// That is precisely the failure the point list exists to prevent — the check
+// was simply one level too coarse.
+type pluginPointDef struct {
+	name  string
+	verbs []pluginVerb
+}
+
+var (
+	verbsObserve       = []pluginVerb{verbOn}
+	verbsObserveFilter = []pluginVerb{verbOn, verbFilter}
+	verbsOverride      = []pluginVerb{verbOverride}
+	verbsProvide       = []pluginVerb{verbProvide}
+	verbsAuth          = []pluginVerb{verbOn, verbFilter, verbProvide}
+)
+
+// pluginPointDefs is every built-in point. Plugins may add their own with
 // rdio.definePoint so they can extend each other without core changes.
-var pluginPoints = []string{
-	PointStartup,
-	PointPluginsReady,
-	PointShutdown,
-	PointTick,
-	PointConfigChanged,
-	PointClientConnect,
-	PointClientDisconnect,
+var pluginPointDefs = []pluginPointDef{
+	// Lifecycle. Delivered through the runtime's own handler list, which only
+	// ever holds observers.
+	{PointStartup, verbsObserve},
+	{PointPluginsReady, verbsObserve},
+	{PointShutdown, verbsObserve},
+	{PointTick, verbsObserve},
+	{PointConfigChanged, verbsObserve},
+	{PointClientConnect, verbsObserve},
+	{PointClientDisconnect, verbsObserve},
 
-	PointCallReceive,
-	PointCallAccept,
-	PointCallDuplicate,
-	PointCallConvert,
-	PointCallStore,
-	PointCallStored,
+	// Ingest.
+	{PointCallReceive, verbsObserveFilter},
+	{PointCallAccept, verbsObserveFilter},
+	{PointCallDuplicate, verbsObserveFilter},
+	// Replacing conversion is all-or-nothing, so there is nothing to observe
+	// or amend — a plugin either owns the encoder or it does not.
+	{PointCallConvert, verbsOverride},
+	{PointCallStore, verbsObserveFilter},
+	{PointCallStored, verbsObserve},
 
-	PointCallDelay,
-	PointCallEmit,
-	PointCallPayload,
-	PointCallEmitted,
-	PointDownstreamSend,
-	PointClientConfig,
+	// Delivery.
+	{PointCallDelay, verbsObserveFilter},
+	{PointCallEmit, verbsObserveFilter},
+	{PointCallPayload, verbsObserveFilter},
+	{PointCallEmitted, verbsObserve},
+	{PointDownstreamSend, verbsObserveFilter},
+	{PointClientConfig, verbsObserveFilter},
 
-	PointAccessCheck,
-	PointAccessScope,
-	PointApikeyCheck,
-	PointAdminCheck,
+	// Access. Provide supplies a decision core could not make; filter then
+	// narrows or refuses one it did.
+	{PointAccessCheck, verbsAuth},
+	{PointAccessScope, verbsObserveFilter},
+	{PointApikeyCheck, verbsAuth},
+	{PointAdminCheck, verbsAuth},
 
-	PointCallSearch,
-	PointCallPrune,
-	PointCallAudio,
-	PointConfigSave,
+	// Data.
+	{PointCallSearch, verbsObserveFilter},
+	{PointCallPrune, verbsObserveFilter},
+	// Supplying audio core does not have is the whole purpose; there is no
+	// original value to observe or filter.
+	{PointCallAudio, verbsProvide},
+	{PointConfigSave, verbsObserveFilter},
+}
+
+// pluginPoints is the names, derived so the two can never disagree.
+var pluginPoints = func() []string {
+	names := make([]string, 0, len(pluginPointDefs))
+	for _, def := range pluginPointDefs {
+		names = append(names, def.name)
+	}
+	return names
+}()
+
+// pointVerbs answers what a point accepts. A point defined by a plugin is
+// absent, and accepts anything — core cannot know what its author intended.
+var pointVerbs = func() map[string][]pluginVerb {
+	verbs := make(map[string][]pluginVerb, len(pluginPointDefs))
+	for _, def := range pluginPointDefs {
+		verbs[def.name] = def.verbs
+	}
+	return verbs
+}()
+
+// pointAcceptsVerb reports whether registering this verb against this point
+// would ever fire.
+func pointAcceptsVerb(point string, verb pluginVerb) bool {
+	allowed, known := pointVerbs[point]
+	if !known {
+		return true
+	}
+
+	for _, candidate := range allowed {
+		if candidate == verb {
+			return true
+		}
+	}
+
+	return false
+}
+
+// pointVerbNames is the accepted verbs in a form fit for an error message or a
+// documentation table.
+func pointVerbNames(point string) []string {
+	allowed, known := pointVerbs[point]
+	if !known {
+		return nil
+	}
+
+	names := make([]string, 0, len(allowed))
+	for _, verb := range allowed {
+		names = append(names, verb.String())
+	}
+
+	return names
 }
 
 // pointTimeouts overrides the default for points where the default is too
