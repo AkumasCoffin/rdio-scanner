@@ -115,16 +115,37 @@ func (db *Database) recordMigration(name string) error {
 	return err
 }
 
-// columnExists reports whether a column is still present, so the migration can
-// tell "already dropped" apart from "never existed".
-func (db *Database) columnExists(table string, column string) bool {
+// columnPresent reports whether a column exists, and separately whether the
+// question could be answered at all.
+//
+// The distinction is the whole point. A migration that reads "column is gone"
+// out of a lock timeout or a dropped connection will record itself complete
+// having copied nothing — and the ledger then says the work is done forever.
+// The probe tells the two apart: if the table itself reads fine and only the
+// column select failed, the column is genuinely absent.
+func (db *Database) columnPresent(table string, column string) (bool, error) {
 	query := db.formatQuery(fmt.Sprintf("select `%s` from `%s` limit 1", column, table))
-	rows, err := db.Sql.Query(query)
-	if err != nil {
-		return false
+	if rows, err := db.Sql.Query(query); err == nil {
+		rows.Close()
+		return true, nil
+	} else {
+		probe := db.formatQuery(fmt.Sprintf("select 1 from `%s` limit 1", table))
+		probeRows, probeErr := db.Sql.Query(probe)
+		if probeErr != nil {
+			return false, err
+		}
+		probeRows.Close()
 	}
-	rows.Close()
-	return true
+
+	return false, nil
+}
+
+// columnExists is the best-effort form, for the places where a wrong answer
+// only costs a skipped step that the next boot retries. Anything that writes to
+// the migration ledger must use columnPresent and respect the error.
+func (db *Database) columnExists(table string, column string) bool {
+	present, _ := db.columnPresent(table, column)
+	return present
 }
 
 func (db *Database) migrationTranscriptsToPlugin(verbose bool) error {
@@ -146,7 +167,18 @@ func (db *Database) migrationTranscriptsToPlugin(verbose bool) error {
 	}
 
 	// Nothing to move on a fresh install.
-	if !db.columnExists("rdioScannerCalls", "transcript") {
+	//
+	// This shortcut writes "done" into the ledger for all three remaining
+	// steps, so it must only ever run when the column is genuinely absent. If
+	// the question could not be answered — a lock timeout, a dropped
+	// connection — stop and let the next boot try again, rather than recording
+	// a migration that never ran and stranding the transcripts permanently.
+	legacyPresent, err := db.columnPresent("rdioScannerCalls", "transcript")
+	if err != nil {
+		return fmt.Errorf("transcript migration: cannot tell whether the legacy column exists: %v", err)
+	}
+
+	if !legacyPresent {
 		for _, name := range []string{transcriptMigrationCopy, transcriptMigrationVerify, transcriptMigrationDrop} {
 			if done, err := db.migrationDone(name); err == nil && !done {
 				db.recordMigration(name)

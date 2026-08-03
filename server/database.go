@@ -419,6 +419,9 @@ func (db *Database) migrate() error {
 		err = db.migration20260801120000(verbose)
 	}
 	if err == nil {
+		err = db.migration20260803090000(verbose)
+	}
+	if err == nil {
 		err = db.migrationTranscriptsToPlugin(verbose)
 	}
 
@@ -1164,6 +1167,77 @@ func (db *Database) migration20260519110000(verbose bool) error {
 	return db.migrateWithSchema("20260519110000-create-delayed-table", queries, verbose)
 }
 
+// migration20260803090000 adds the `commit` column that the MySQL and MariaDB
+// branch of the create-plugins-table migration left out.
+//
+// SQLite and Postgres declared it; the default branch did not, and nothing
+// added it afterwards. Plugins.Read selects `commit`, so on those two backends
+// the read failed on every boot and Controller.Start skipped the entire plugin
+// block — no auto-install, no plugins started, no plugins.ready, one log line.
+// 6.14 moved transcription out of the server into a plugin, so what an operator
+// actually saw was transcripts disappearing after an upgrade with nothing
+// explaining why.
+func (db *Database) migration20260803090000(verbose bool) error {
+	const name = "20260803090000-plugins-commit-column"
+
+	if done, err := db.migrationDone(name); err != nil || done {
+		return err
+	}
+
+	// Absent is the case to fix; a failed probe must not be mistaken for it,
+	// or this records itself complete having done nothing.
+	present, err := db.columnPresent("rdioScannerPlugins", "commit")
+	if err != nil {
+		return fmt.Errorf("%s: %v", name, err)
+	}
+
+	if !present {
+		if verbose {
+			log.Printf("running database migration %s", name)
+		}
+
+		query := db.formatQuery("alter table `rdioScannerPlugins` add column `commit` varchar(64)")
+		if _, err := db.Sql.Exec(query); err != nil {
+			return fmt.Errorf("%s: %v", name, err)
+		}
+	}
+
+	return db.recordMigration(name)
+}
+
+// pluginsTableSql is the registry schema, one variant per backend.
+//
+// Split out of the migration so a test can read all three without a server of
+// each kind. The MySQL branch shipped missing a column that the other two had,
+// which killed the plugin subsystem outright on that backend, and no test could
+// have caught it while the SQL lived inline in a method that needs a live
+// database to call.
+func pluginsTableSql(dbType string) []string {
+	switch dbType {
+	case DbTypeSqlite:
+		return []string{
+			"create table if not exists `rdioScannerPlugins` (`_id` integer primary key autoincrement, `pluginId` varchar(32) not null unique, `name` text, `version` varchar(32), `source` text, `branch` varchar(255), `enabled` boolean not null default 0, `installedAt` datetime, `manifest` text, `commit` varchar(64))",
+		}
+
+	case DbTypePostgres:
+		return []string{
+			`create table if not exists "rdioScannerPlugins" ("_id" serial primary key, "pluginId" varchar(32) not null unique, "name" text, "version" varchar(32), "source" text, "branch" varchar(255), "enabled" boolean not null default false, "installedAt" timestamptz, "manifest" text, "commit" varchar(64))`,
+		}
+
+	default:
+		return []string{
+			"create table if not exists `rdioScannerPlugins` (`_id` integer not null auto_increment, `pluginId` varchar(32) not null, `name` text, `version` varchar(32), `source` text, `branch` varchar(255), `enabled` boolean not null default 0, `installedAt` datetime, `manifest` text, `commit` varchar(64), primary key (`_id`), unique key `rdio_scanner_plugins_plugin_id` (`pluginId`))",
+		}
+	}
+}
+
+// pluginRegistryColumns is what Plugins.Read selects, and therefore what every
+// backend's schema has to provide.
+var pluginRegistryColumns = []string{
+	"_id", "pluginId", "name", "version", "source", "branch",
+	"enabled", "installedAt", "manifest", "commit",
+}
+
 // migration20260801120000 creates the plugin registry. One row per installed
 // plugin; the plugin's own tables are created separately from its manifest and
 // namespaced under `plugin_<id>_`.
@@ -1173,22 +1247,7 @@ func (db *Database) migration20260519110000(verbose bool) error {
 // plugin whose files have gone missing, and tells the purge action which tables
 // to drop when the manifest is no longer readable.
 func (db *Database) migration20260801120000(verbose bool) error {
-	var queries []string
-	switch db.Config.DbType {
-	case DbTypeSqlite:
-		queries = []string{
-			"create table `rdioScannerPlugins` (`_id` integer primary key autoincrement, `pluginId` varchar(32) not null unique, `name` text, `version` varchar(32), `source` text, `branch` varchar(255), `enabled` boolean not null default 0, `installedAt` datetime, `manifest` text, `commit` varchar(64))",
-		}
-	case DbTypePostgres:
-		queries = []string{
-			`create table "rdioScannerPlugins" ("_id" serial primary key, "pluginId" varchar(32) not null unique, "name" text, "version" varchar(32), "source" text, "branch" varchar(255), "enabled" boolean not null default false, "installedAt" timestamptz, "manifest" text, "commit" varchar(64))`,
-		}
-	default:
-		queries = []string{
-			"create table `rdioScannerPlugins` (`_id` integer not null auto_increment, `pluginId` varchar(32) not null, `name` text, `version` varchar(32), `source` text, `branch` varchar(255), `enabled` boolean not null default 0, `installedAt` datetime, `manifest` text, primary key (`_id`), unique key `rdio_scanner_plugins_plugin_id` (`pluginId`))",
-		}
-	}
-	return db.migrateWithSchema("20260801120000-create-plugins-table", queries, verbose)
+	return db.migrateWithSchema("20260801120000-create-plugins-table", pluginsTableSql(db.Config.DbType), verbose)
 }
 
 // migration20260615120000 adds indexes that make the admin logs page filters

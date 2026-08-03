@@ -231,10 +231,15 @@ func (rpc *PluginRpc) Publish(from string, topic string, payload any) int {
 			continue
 		}
 
+		// One copy per subscriber, for the same reason Notify clones: each
+		// subscriber is a separate event loop, goja hands JavaScript the Go map
+		// itself, and `msg.payload.handled = true` is the obvious thing for a
+		// subscriber to write. Two of them doing it to a shared map is a fatal
+		// concurrent write, reachable with entirely ordinary plugin code.
 		subscription.runtime.EmitTo("plugins:"+topic, map[string]any{
 			"topic":   topic,
 			"from":    from,
-			"payload": payload,
+			"payload": clonePluginValue(payload),
 		})
 
 		delivered++

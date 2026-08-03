@@ -239,6 +239,29 @@ func clonePluginValue(value any) any {
 			out[key] = entry
 		}
 		return out
+
+	// A call's sources and frequencies are built as []map[string]any on every
+	// ingest path, and only ever become []any after a round trip through the
+	// database. Without this case they reached plugins as the live slice, whose
+	// element maps core is still reading — a concurrent map write, which is a
+	// fatal error rather than something the server can recover from. Two
+	// plugins observing the same point was enough.
+	case []map[string]any:
+		out := make([]map[string]any, len(v))
+		for i, entry := range v {
+			copied := make(map[string]any, len(entry))
+			for key, field := range entry {
+				copied[key] = clonePluginValue(field)
+			}
+			out[i] = copied
+		}
+		return out
+
+	case []string:
+		return append([]string{}, v...)
+
+	case []uint:
+		return append([]uint{}, v...)
 	}
 
 	return value
@@ -252,8 +275,17 @@ func (dispatch *PluginDispatch) Notify(point string, value any) {
 	}
 }
 
-// Filter runs the chain. Each handler receives the current value and may return
-// a replacement, or a veto.
+// Filter runs the chain. Each handler receives the value as it stands and may
+// return the fields it wants changed, or a veto.
+//
+// Two different things are tracked, and conflating them was the original bug.
+// `current` is what handlers see: the full value with every earlier handler's
+// changes overlaid, so the second filter in a chain gets a whole call rather
+// than the first one's fragment. `changed` is what the caller gets back: only
+// the fields a handler actually named. Returning the whole merged value instead
+// would make the caller write every field back onto the object, including ones
+// that lose precision on the round trip — dateTime is handed out as RFC3339,
+// which has no sub-second component.
 //
 // A handler that times out, throws, or returns something unusable is treated as
 // having done nothing. A plugin may degrade the server's behaviour; it must
@@ -265,6 +297,8 @@ func (dispatch *PluginDispatch) Filter(point string, value any, timeout time.Dur
 	}
 
 	current := value
+
+	var changed map[string]any
 
 	for _, handler := range handlers {
 		result, err := dispatch.invoke(handler, point, timeout, current)
@@ -289,10 +323,54 @@ func (dispatch *PluginDispatch) Filter(point string, value any, timeout time.Dur
 			return current, false
 		}
 
-		current = m
+		// Overlay, never replace. A filter returns only the fields it wants
+		// changed — that is the documented contract and the only workable one,
+		// since the alternative makes every filter responsible for echoing the
+		// whole object back correctly.
+		//
+		// Assigning the partial result straight to `current` broke that in both
+		// directions once a second filter existed: the next handler received an
+		// object holding nothing but the previous handler's fields, and its own
+		// return then dropped that handler's changes on the floor. With one
+		// filter per point it looked correct, which is how it shipped.
+		if changed == nil {
+			changed = map[string]any{}
+		}
+		for key, field := range m {
+			changed[key] = field
+		}
+
+		current = overlayPluginFields(current, m)
 	}
 
-	return current, true
+	// Nothing was changed: hand back exactly what came in, so a point with a
+	// filter registered that stays quiet costs the caller nothing.
+	if changed == nil {
+		return value, true
+	}
+
+	return changed, true
+}
+
+// overlayPluginFields writes a filter's returned fields over a copy of the
+// value it was given, so the chain accumulates rather than overwrites.
+//
+// A copy because `base` may be the map another handler is still holding a
+// reference to, and because the caller writes the result onto a live object.
+func overlayPluginFields(base any, fields map[string]any) map[string]any {
+	merged := map[string]any{}
+
+	if existing, ok := base.(map[string]any); ok {
+		for key, value := range existing {
+			merged[key] = value
+		}
+	}
+
+	for key, value := range fields {
+		merged[key] = value
+	}
+
+	return merged
 }
 
 // Override replaces core's behaviour. Only one plugin can own a point; the

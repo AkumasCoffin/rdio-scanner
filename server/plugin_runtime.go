@@ -548,7 +548,15 @@ func (rt *PluginRuntime) EmitTo(point string, payload any) {
 func (rt *PluginRuntime) CallSync(point string, timeout time.Duration, callable pluginCallable, args ...any) (any, error) {
 	adapter, ok := callable.(*gojaCallable)
 	if !ok {
-		return nil, fmt.Errorf("unknown callable")
+		// A callable that isn't script-backed runs directly. The event loop and
+		// the watchdog exist to contain interpreted code; a host-side callable
+		// has neither to contain. pluginCallable is an interface precisely so
+		// dispatch has no opinion about the engine, and refusing everything
+		// that wasn't goja quietly made that false.
+		if callable == nil {
+			return nil, fmt.Errorf("no callable")
+		}
+		return callable.call(args...)
 	}
 
 	if !rt.enterDispatch() {
