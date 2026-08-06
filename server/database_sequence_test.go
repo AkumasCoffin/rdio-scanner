@@ -16,7 +16,9 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/lib/pq"
@@ -90,5 +92,155 @@ func TestNonUniqueViolationsAreNotRetried(t *testing.T) {
 func TestOtherBackendsErrorsAreHandled(t *testing.T) {
 	if isSequenceCollision(errors.New("UNIQUE constraint failed: rdioScannerConfigs._id"), "rdioScannerConfigs") {
 		t.Error("a sqlite unique violation was treated as a postgres sequence collision")
+	}
+}
+
+// Everything below needs a real Postgres, because it is about Postgres
+// transaction semantics: a failed statement aborts the whole transaction, and
+// no other backend does that.
+
+func newTestPostgresDatabase(t *testing.T) *Database {
+	t.Helper()
+
+	config := testDatabaseConfigFromEnv(t, false)
+	if config == nil || config.DbType != DbTypePostgres {
+		t.Skip("needs RDIO_TEST_DB_TYPE=postgresql pointed at a disposable database")
+	}
+
+	db := NewDatabase(config)
+	emptyTestDatabase(t, db)
+
+	return NewDatabase(config)
+}
+
+// The configuration save runs every section inside one transaction, which is
+// precisely where a skewed sequence used to be unfixable: the collision
+// aborted the transaction, so the realign-and-retry could only come back with
+// "current transaction is aborted". The savepoint is what makes the retry able
+// to run at all — this is the scenario from the field, end to end.
+func TestASkewedSequenceHealsInsideTheSavingTransaction(t *testing.T) {
+	db := newTestPostgresDatabase(t)
+
+	if _, err := db.Exec(
+		"insert into `rdioScannerConfigs` (`_id`, `key`, `val`) values (?, ?, ?)",
+		100, "test.skew", `"x"`,
+	); err != nil {
+		t.Fatalf("cannot plant the explicit-key row: %v", err)
+	}
+
+	// is_called = false makes the next nextval() hand out exactly 100, which
+	// the planted row already holds.
+	if _, err := db.Sql.Exec(
+		`select setval(pg_get_serial_sequence('"rdioScannerConfigs"', '_id'), 100, false)`,
+	); err != nil {
+		t.Fatalf("cannot skew the sequence: %v", err)
+	}
+
+	err := db.WithTx(func(tx *Database) error {
+		return tx.ExecInsert(
+			"rdioScannerConfigs", "_id",
+			"insert into `rdioScannerConfigs` (`key`, `val`) values (?, ?)",
+			"test.new", `"y"`,
+		)
+	})
+	if err != nil {
+		t.Fatalf("the insert did not survive a skewed sequence inside a transaction: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(
+		"select count(*) from `rdioScannerConfigs` where `key` = ?", "test.new",
+	).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("the retried insert never committed (count %d, err %v)", count, err)
+	}
+}
+
+// A genuine duplicate — here, two rows claiming the same option name — must
+// come back as itself, and must not leave the caller's transaction aborted so
+// that every later statement drowns it in "current transaction is aborted".
+func TestAGenuineDuplicateSurvivesTheTransactionIntact(t *testing.T) {
+	db := newTestPostgresDatabase(t)
+
+	if _, err := db.Exec(
+		"insert into `rdioScannerConfigs` (`key`, `val`) values (?, ?)",
+		"test.dup", `"x"`,
+	); err != nil {
+		t.Fatalf("cannot plant the original row: %v", err)
+	}
+
+	err := db.WithTx(func(tx *Database) error {
+		dupErr := tx.ExecInsert(
+			"rdioScannerConfigs", "_id",
+			"insert into `rdioScannerConfigs` (`key`, `val`) values (?, ?)",
+			"test.dup", `"y"`,
+		)
+		if dupErr == nil {
+			t.Error("a duplicate option name was accepted")
+		} else if !strings.Contains(dupErr.Error(), "rdioScannerConfigs_key_key") {
+			t.Errorf("the duplicate surfaced as %q; want the key constraint by name", dupErr)
+		}
+
+		// The transaction has to still be usable after the failure.
+		_, err := tx.Exec(
+			"update `rdioScannerConfigs` set `val` = ? where `key` = ?", `"z"`, "test.dup",
+		)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("the transaction did not survive the duplicate: %v", err)
+	}
+}
+
+// A schema that came through an external migration tool often has the column
+// default drawing from a sequence that ownership never got attached to.
+// pg_get_serial_sequence returns NULL there, and setval(NULL) succeeds while
+// touching nothing — so the repair has to find the sequence through the
+// default expression instead.
+func TestAnUnownedSequenceIsStillRealigned(t *testing.T) {
+	db := newTestPostgresDatabase(t)
+
+	for _, q := range []string{
+		`drop table if exists "testUnowned"`,
+		`drop sequence if exists "testUnownedSeq"`,
+		`create sequence "testUnownedSeq"`,
+		`create table "testUnowned" ("_id" integer primary key default nextval('"testUnownedSeq"'::regclass), "val" text)`,
+	} {
+		if _, err := db.Sql.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	t.Cleanup(func() {
+		db.Sql.Exec(`drop table if exists "testUnowned"`)
+		db.Sql.Exec(`drop sequence if exists "testUnownedSeq"`)
+	})
+
+	// The premise: this really is the ownership gap, not a serial in disguise.
+	var owned sql.NullString
+	if err := db.Sql.QueryRow(
+		`select pg_get_serial_sequence('"testUnowned"', '_id')`,
+	).Scan(&owned); err != nil || owned.Valid {
+		t.Fatalf("expected no owned sequence (got %v, err %v)", owned, err)
+	}
+
+	if _, err := db.Sql.Exec(`insert into "testUnowned" ("_id", "val") values (5, 'x')`); err != nil {
+		t.Fatalf("cannot plant the explicit-key row: %v", err)
+	}
+
+	moved, err := db.repairSequence("testUnowned", "_id")
+	if err != nil {
+		t.Fatalf("repair failed: %v", err)
+	}
+	if moved == "" {
+		t.Error("the repair reported nothing to do against a skewed unowned sequence")
+	}
+
+	var id int
+	if err := db.Sql.QueryRow(
+		`insert into "testUnowned" ("val") values ('y') returning "_id"`,
+	).Scan(&id); err != nil {
+		t.Fatalf("the default-key insert still collides after repair: %v", err)
+	}
+	if id != 6 {
+		t.Errorf("the realigned sequence handed out %d; want 6", id)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -218,19 +219,26 @@ func (db *Database) repairSequences() error {
 // explicit is_called leaves no such ambiguity, costs one indexed max() per
 // table, and is idempotent.
 func (db *Database) repairSequence(table string, column string) (string, error) {
+	seq, err := db.sequenceFor(table, column)
+	if err != nil {
+		return "", err
+	}
+	if seq == "" {
+		// The table is absent from this schema version — nothing to realign.
+		return "", nil
+	}
+
 	var (
 		maxId sql.NullInt64
 		last  sql.NullInt64
 	)
 
-	// A table absent from this schema version, or a column that never got a
-	// sequence, is not a failure — there is nothing to realign.
 	probe := fmt.Sprintf(
-		`select max("%s"), pg_sequence_last_value(pg_get_serial_sequence('"%s"', '%s'))`,
-		column, table, column,
+		`select max("%s"), pg_sequence_last_value('%s'::regclass)`,
+		column, seq,
 	)
 	if err := db.Sql.QueryRow(probe).Scan(&maxId, &last); err != nil {
-		return "", nil
+		return "", fmt.Errorf("probing %s.%s: %v", table, column, err)
 	}
 
 	// Empty table: leave it alone so the first insert still gets key 1.
@@ -239,8 +247,8 @@ func (db *Database) repairSequence(table string, column string) (string, error) 
 	}
 
 	set := fmt.Sprintf(
-		`select setval(pg_get_serial_sequence('"%s"', '%s'), (select max("%s") from "%s"), true)`,
-		table, column, column, table,
+		`select setval('%s'::regclass, (select max("%s") from "%s"), true)`,
+		seq, column, table,
 	)
 	if _, err := db.Sql.Exec(set); err != nil {
 		return "", err
@@ -259,6 +267,59 @@ func (db *Database) repairSequence(table string, column string) (string, error) 
 	}
 
 	return fmt.Sprintf("%s.%s (%s -> %d)", table, column, from, maxId.Int64), nil
+}
+
+// nextvalPattern picks the sequence out of a column default such as
+// `nextval('"rdioScannerConfigs__id_seq"'::regclass)`.
+var nextvalPattern = regexp.MustCompile(`nextval\('([^']+)'`)
+
+// sequenceFor resolves the sequence that hands out table.column's keys.
+//
+// pg_get_serial_sequence only knows sequences OWNED by their column, and a
+// schema that arrived through an external migration tool or a hand-built
+// restore often has the default drawing from a sequence that ownership never
+// got attached to. Feeding its NULL onward is worse than an error: setval(NULL)
+// returns NULL without complaint, so the repair read as successful while
+// touching nothing, and the collision came back on every save. When ownership
+// is missing the sequence is read out of the column DEFAULT instead, and a
+// column with neither is reported rather than skipped.
+//
+// An empty name with a nil error means the table itself is absent from this
+// schema version, which is not a failure — there is nothing to realign.
+func (db *Database) sequenceFor(table string, column string) (string, error) {
+	var seq sql.NullString
+
+	query := fmt.Sprintf(`select pg_get_serial_sequence('"%s"', '%s')`, table, column)
+	if err := db.Sql.QueryRow(query).Scan(&seq); err != nil {
+		return "", nil
+	}
+
+	if seq.Valid {
+		return seq.String, nil
+	}
+
+	var def sql.NullString
+	err := db.Sql.QueryRow(
+		`select pg_get_expr(d.adbin, d.adrelid)
+		   from pg_attrdef d
+		   join pg_class c on c.oid = d.adrelid
+		   join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum
+		  where c.relname = $1 and a.attname = $2`,
+		table, column,
+	).Scan(&def)
+	if err == sql.ErrNoRows || (err == nil && !def.Valid) {
+		return "", fmt.Errorf("%s.%s has no owned sequence and no column default to realign", table, column)
+	}
+	if err != nil {
+		return "", err
+	}
+
+	match := nextvalPattern.FindStringSubmatch(def.String)
+	if match == nil {
+		return "", fmt.Errorf("%s.%s default %q does not draw from a sequence", table, column, def.String)
+	}
+
+	return match[1], nil
 }
 
 // isSequenceCollision reports whether an error is Postgres refusing an insert
@@ -286,10 +347,46 @@ func isSequenceCollision(err error, table string) bool {
 // about a constraint they have never heard of, which no amount of retrying the
 // save will clear. Repairing at the point of collision means the second attempt
 // succeeds and the cause is gone rather than waiting for the next restart.
+//
+// Inside a transaction the insert has to sit behind a savepoint. Postgres
+// aborts the whole transaction at its first failed statement, so without one
+// the retry could only ever come back with "current transaction is aborted" —
+// which both doomed the retry and buried the duplicate-key error that actually
+// explained the failure. The savepoint is rolled back on any error, retryable
+// or not, so the caller's transaction stays usable and the error that reaches
+// them is the insert's own.
 func (db *Database) ExecInsert(table string, column string, query string, args ...any) error {
+	guarded := db.Config.DbType == DbTypePostgres && db.executor != nil
+	if guarded {
+		if _, err := db.Exec("savepoint rdio_exec_insert"); err != nil {
+			// No savepoint means no safe retry, likely because the transaction
+			// is already aborted; the insert below then reports that state.
+			guarded = false
+		}
+	}
+
 	_, err := db.Exec(query, args...)
 
-	if err == nil || db.Config.DbType != DbTypePostgres || !isSequenceCollision(err, table) {
+	if err == nil {
+		if guarded {
+			_, _ = db.Exec("release savepoint rdio_exec_insert")
+		}
+		return nil
+	}
+
+	if guarded {
+		if _, spErr := db.Exec("rollback to savepoint rdio_exec_insert"); spErr != nil {
+			return err
+		}
+	}
+
+	if db.Config.DbType != DbTypePostgres || !isSequenceCollision(err, table) {
+		return err
+	}
+
+	if db.executor != nil && !guarded {
+		// In a transaction with no savepoint to rewind to, the transaction is
+		// aborted: a retry cannot succeed and its error would mask this one.
 		return err
 	}
 
