@@ -95,8 +95,15 @@ func NewDatabase(config *Config) *Database {
 		// any such parameter from the connection string to the backend at
 		// startup. The server then cancels a statement that overruns it,
 		// instead of the client waiting on it indefinitely.
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable statement_timeout=%d",
-			config.DbHost, config.DbPort, config.DbUsername, config.DbPassword, config.DbName,
+		//
+		// The password is quoted because an EMPTY one otherwise corrupts the
+		// whole string: `password= dbname=x` reads as password swallowing the
+		// next pair, the dbname falls back to the user name, and an operator
+		// on trust auth gets "database <user> does not exist" pointing at
+		// nothing. Quoting needs lib/pq's escapes for backslash and quote.
+		password := strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(config.DbPassword)
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password='%s' dbname=%s sslmode=disable statement_timeout=%d",
+			config.DbHost, config.DbPort, config.DbUsername, password, config.DbName,
 			statementTimeout.Milliseconds())
 
 		if database.Sql, err = sql.Open("postgres", dsn); err != nil {

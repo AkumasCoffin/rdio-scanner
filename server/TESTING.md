@@ -36,6 +36,30 @@ given.
 beginning `rdioScanner` or `plugin_` is dropped. Use a database kept for testing
 and nothing else — never point this at a server holding calls.
 
+**These tests SKIP, silently, when the variables are not set.** A green run on a
+machine with no Postgres proves nothing about Postgres — that is how a probe
+query that no Postgres has ever accepted (`select max("_id")` with no FROM)
+shipped in three consecutive releases while the suite stayed green. If a change
+touches SQL that runs on Postgres, run the suite against one; `go test -v` says
+`SKIP` next to every test that did not really run.
+
+## A disposable Postgres, without an install
+
+The EDB binaries zip runs from any directory, needs no elevation and no
+service. From an empty scratch directory:
+
+```sh
+curl -sLo pg.zip https://get.enterprisedb.com/postgresql/postgresql-16.4-1-windows-x64-binaries.zip
+tar -xf pg.zip 2>/dev/null || powershell -c "Expand-Archive pg.zip ."
+./pgsql/bin/initdb -D pgdata -U rdio -A trust -E UTF8
+./pgsql/bin/pg_ctl -D pgdata -o "-p 5433" -l pglog.txt start
+./pgsql/bin/createdb -p 5433 -U rdio rdio_test
+```
+
+Then run the suite with `RDIO_TEST_DB_PORT=5433` and `RDIO_TEST_DB_PASS=`
+(trust auth ignores it). `pg_ctl -D pgdata stop` and delete the directory when
+done — nothing registers or persists outside it.
+
 ## What to run
 
 `-run 'Migration|Plugin|Transcript|Schema'` covers the parts where the backend
