@@ -51,7 +51,12 @@ func newTestDatabaseWithDrops(t *testing.T, dropLegacy bool) *Database {
 	if config := testDatabaseConfigFromEnv(t, dropLegacy); config != nil {
 		db := NewDatabase(config)
 		emptyTestDatabase(t, db)
-		return db
+		db.Sql.Close()
+		// Emptying dropped every table, but the SQLite path below returns a
+		// database NewDatabase has fully brought up. Run it again over the
+		// now-clean server so both backends hand tests the same starting
+		// point: current schema, seeded, migrations stamped.
+		return NewDatabase(config)
 	}
 
 	dir := t.TempDir()
@@ -175,7 +180,9 @@ func rewindTranscriptMigration(t *testing.T, db *Database) {
 		transcriptMigrationVerify,
 		transcriptMigrationDrop,
 	} {
-		if _, err := db.Sql.Exec("delete from `rdioScannerMeta` where `name` = ?", name); err != nil {
+		// Through db.Exec, not db.Sql.Exec: the raw pool does not rewrite the
+		// backticks or the placeholder, which Postgres rejects outright.
+		if _, err := db.Exec("delete from `rdioScannerMeta` where `name` = ?", name); err != nil {
 			t.Fatalf("cannot rewind %s: %v", name, err)
 		}
 	}
@@ -186,24 +193,26 @@ func rewindTranscriptMigration(t *testing.T, db *Database) {
 		"drop table if exists `plugin_transcripts_talkgroups`",
 		"drop table if exists `plugin_transcripts_config`",
 	} {
-		if _, err := db.Sql.Exec(query); err != nil {
+		if _, err := db.Exec(query); err != nil {
 			t.Fatalf("cannot drop plugin table: %v", err)
 		}
 	}
 
-	// The real migration will have dropped these already.
+	// The real migration will have dropped these already. `default true`
+	// rather than `default 1`: Postgres will not coerce an integer default
+	// onto a boolean column, and the literal reads the same on all three.
 	if !db.columnExists("rdioScannerCalls", "transcript") {
-		if _, err := db.Sql.Exec("alter table `rdioScannerCalls` add column `transcript` text"); err != nil {
+		if _, err := db.Exec("alter table `rdioScannerCalls` add column `transcript` text"); err != nil {
 			t.Fatalf("cannot restore transcript column: %v", err)
 		}
 	}
 	if !db.columnExists("rdioScannerSystems", "transcribe") {
-		if _, err := db.Sql.Exec("alter table `rdioScannerSystems` add column `transcribe` boolean default 1"); err != nil {
+		if _, err := db.Exec("alter table `rdioScannerSystems` add column `transcribe` boolean default true"); err != nil {
 			t.Fatalf("cannot restore systems.transcribe: %v", err)
 		}
 	}
 	if !db.columnExists("rdioScannerTalkgroups", "transcribe") {
-		if _, err := db.Sql.Exec("alter table `rdioScannerTalkgroups` add column `transcribe` boolean default 1"); err != nil {
+		if _, err := db.Exec("alter table `rdioScannerTalkgroups` add column `transcribe` boolean default true"); err != nil {
 			t.Fatalf("cannot restore talkgroups.transcribe: %v", err)
 		}
 	}
@@ -212,7 +221,7 @@ func rewindTranscriptMigration(t *testing.T, db *Database) {
 func seedCallWithTranscript(t *testing.T, db *Database, id int, transcript string) {
 	t.Helper()
 
-	_, err := db.Sql.Exec(
+	_, err := db.Exec(
 		"insert into `rdioScannerCalls` (`id`, `audio`, `dateTime`, `frequencies`, `patches`, `sources`, `system`, `talkgroup`, `transcript`) "+
 			"values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		id, []byte("audio"), time.Now().UTC().Format("2006-01-02 15:04:05.000 -07:00"),
@@ -233,10 +242,10 @@ func seedBulkCalls(t *testing.T, db *Database, firstId int, count int) {
 		t.Fatalf("cannot begin: %v", err)
 	}
 
-	stmt, err := tx.Prepare(
+	stmt, err := tx.Prepare(db.formatQuery(
 		"insert into `rdioScannerCalls` (`id`, `audio`, `dateTime`, `frequencies`, `patches`, `sources`, `system`, `talkgroup`) " +
 			"values (?, ?, ?, ?, ?, ?, ?, ?)",
-	)
+	))
 	if err != nil {
 		t.Fatalf("cannot prepare: %v", err)
 	}
@@ -258,7 +267,7 @@ func countRows(t *testing.T, db *Database, query string) int {
 	t.Helper()
 
 	var count int
-	if err := db.Sql.QueryRow(query).Scan(&count); err != nil {
+	if err := db.QueryRow(query).Scan(&count); err != nil {
 		t.Fatalf("count failed for %q: %v", query, err)
 	}
 	return count
@@ -278,7 +287,7 @@ func TestTranscriptMigrationMovesData(t *testing.T) {
 	// A call with no transcript must not produce a row.
 	seedCallWithTranscript(t, db, 3, "")
 
-	if _, err := db.Sql.Exec(
+	if _, err := db.Exec(
 		"insert into `rdioScannerConfigs` (`key`, `val`) values ('option.transcriptionEnabled', 'true')",
 	); err != nil {
 		t.Fatalf("cannot seed option: %v", err)
@@ -293,7 +302,7 @@ func TestTranscriptMigrationMovesData(t *testing.T) {
 	}
 
 	var transcript string
-	if err := db.Sql.QueryRow(
+	if err := db.QueryRow(
 		"select `transcript` from `plugin_transcripts_calls` where `callId` = 1",
 	).Scan(&transcript); err != nil {
 		t.Fatalf("cannot read migrated transcript: %v", err)
@@ -304,7 +313,7 @@ func TestTranscriptMigrationMovesData(t *testing.T) {
 
 	// The setting has to arrive under the plugin's own name.
 	var value string
-	if err := db.Sql.QueryRow(
+	if err := db.QueryRow(
 		"select `value` from `plugin_transcripts_config` where `key` = 'enabled'",
 	).Scan(&value); err != nil {
 		t.Fatalf("transcription setting was not migrated: %v", err)
@@ -432,7 +441,9 @@ func TestTranscriptMigrationResumesAfterPartialCopy(t *testing.T) {
 	// re-run. The copy is already recorded, so this exercises resuming into the
 	// verification rather than repeating the copy.
 	for _, name := range []string{transcriptMigrationVerify, transcriptMigrationDrop} {
-		if _, err := db.Sql.Exec("delete from `rdioScannerMeta` where `name` = ?", name); err != nil {
+		// Through db.Exec, not db.Sql.Exec: the raw pool does not rewrite the
+		// backticks or the placeholder, which Postgres rejects outright.
+		if _, err := db.Exec("delete from `rdioScannerMeta` where `name` = ?", name); err != nil {
 			t.Fatalf("cannot rewind %s: %v", name, err)
 		}
 	}

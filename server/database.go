@@ -228,16 +228,10 @@ func (db *Database) repairSequence(table string, column string) (string, error) 
 		return "", nil
 	}
 
-	var (
-		maxId sql.NullInt64
-		last  sql.NullInt64
-	)
+	var maxId sql.NullInt64
 
-	probe := fmt.Sprintf(
-		`select max("%s"), pg_sequence_last_value('%s'::regclass)`,
-		column, seq,
-	)
-	if err := db.Sql.QueryRow(probe).Scan(&maxId, &last); err != nil {
+	probe := fmt.Sprintf(`select max("%s") from "%s"`, column, table)
+	if err := db.Sql.QueryRow(probe).Scan(&maxId); err != nil {
 		return "", fmt.Errorf("probing %s.%s: %v", table, column, err)
 	}
 
@@ -245,6 +239,13 @@ func (db *Database) repairSequence(table string, column string) (string, error) 
 	if !maxId.Valid || maxId.Int64 < 1 {
 		return "", nil
 	}
+
+	// Only consulted for the report at the end, so a failure here must not
+	// stop the realignment — unlike max above, which the repair depends on.
+	var last sql.NullInt64
+	_ = db.Sql.QueryRow(
+		fmt.Sprintf(`select pg_sequence_last_value('%s'::regclass)`, seq),
+	).Scan(&last)
 
 	set := fmt.Sprintf(
 		`select setval('%s'::regclass, (select max("%s") from "%s"), true)`,

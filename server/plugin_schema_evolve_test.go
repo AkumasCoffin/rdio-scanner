@@ -82,7 +82,7 @@ func TestPluginSchemaGainsColumnsOnUpdate(t *testing.T) {
 	}
 
 	var count int
-	if err = db.Sql.QueryRow("select count(*) from `" + table + "`").Scan(&count); err != nil {
+	if err = db.QueryRow("select count(*) from `" + table + "`").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 2 {
@@ -90,7 +90,7 @@ func TestPluginSchemaGainsColumnsOnUpdate(t *testing.T) {
 	}
 
 	var body string
-	if err = db.Sql.QueryRow("select `body` from `" + table + "` where `callId` = 1").Scan(&body); err != nil {
+	if err = db.QueryRow("select `body` from `" + table + "` where `callId` = 1").Scan(&body); err != nil {
 		t.Fatal(err)
 	}
 	if body != "first" {
