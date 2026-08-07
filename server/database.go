@@ -251,7 +251,15 @@ func (db *Database) repairSequence(table string, column string) (string, error) 
 		seq, column, table,
 	)
 	if _, err := db.Sql.Exec(set); err != nil {
-		return "", err
+		// setval needs UPDATE on the sequence, and a role that was handed its
+		// table privileges after someone else built the schema often does not
+		// have it — that role can collide all day yet never repair. It can
+		// still call nextval, though: USAGE is what its inserts already run
+		// on. Walking the sequence forward is slower and burns a key, but it
+		// works with exactly the privileges the failure proves are there.
+		if advErr := db.advanceSequence(seq, maxId.Int64); advErr != nil {
+			return "", fmt.Errorf("setval: %v (nextval fallback: %v)", err, advErr)
+		}
 	}
 
 	// Only worth a line when it actually moved. The is_called case cannot be
@@ -267,6 +275,47 @@ func (db *Database) repairSequence(table string, column string) (string, error) 
 	}
 
 	return fmt.Sprintf("%s.%s (%s -> %d)", table, column, from, maxId.Int64), nil
+}
+
+// advanceCap bounds how far advanceSequence will walk. A sequence behind by
+// more than this is a badly skewed high-traffic table (calls, after a dump
+// restored with explicit keys); at one statement server-side the walk itself
+// stays inside the statement timeout well past this, but burning tens of
+// millions of keys to dodge a missing GRANT is the wrong trade — at that
+// scale the operator is told to fix the privilege instead.
+const advanceCap = 10_000_000
+
+// advanceSequence walks a sequence forward with nextval until its next key
+// clears the table's highest, for roles that can use the sequence but not
+// setval it. The first nextval doubles as the position probe — one key is
+// wasted when the sequence turns out healthy, which never matters here since
+// this only runs after setval was refused. The remaining distance is covered
+// in a single generate_series statement rather than a round trip per key.
+func (db *Database) advanceSequence(seq string, maxId int64) error {
+	var current int64
+	if err := db.Sql.QueryRow(fmt.Sprintf(`select nextval('%s'::regclass)`, seq)).Scan(&current); err != nil {
+		return err
+	}
+
+	if current >= maxId {
+		return nil
+	}
+
+	gap := maxId - current
+	if gap > advanceCap {
+		return fmt.Errorf(
+			"%s is %d keys behind, beyond the nextval walk cap of %d; grant the server's role UPDATE on the sequence (or make it the owner) and restart",
+			seq, gap, advanceCap,
+		)
+	}
+
+	if _, err := db.Sql.Exec(fmt.Sprintf(
+		`select nextval('%s'::regclass) from generate_series(1, %d)`, seq, gap,
+	)); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // nextvalPattern picks the sequence out of a column default such as

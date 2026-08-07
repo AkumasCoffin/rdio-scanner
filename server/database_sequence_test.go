@@ -18,6 +18,7 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -188,6 +189,46 @@ func TestAGenuineDuplicateSurvivesTheTransactionIntact(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("the transaction did not survive the duplicate: %v", err)
+	}
+}
+
+// The nextval walk is the realignment of last resort, for roles that can use
+// a sequence but not setval it. Privileges cannot be arranged from inside the
+// test suite, so this covers the walk's own arithmetic: it must leave the
+// sequence handing out keys past the table's highest, not at it.
+func TestTheNextvalWalkClearsTheTable(t *testing.T) {
+	db := newTestPostgresDatabase(t)
+
+	if _, err := db.Exec(
+		"insert into `rdioScannerConfigs` (`_id`, `key`, `val`) values (?, ?, ?)",
+		50, "test.walk", `"x"`,
+	); err != nil {
+		t.Fatalf("cannot plant the explicit-key row: %v", err)
+	}
+
+	seq, err := db.sequenceFor("rdioScannerConfigs", "_id")
+	if err != nil || seq == "" {
+		t.Fatalf("cannot resolve the sequence (%q, %v)", seq, err)
+	}
+
+	if _, err := db.Sql.Exec(
+		fmt.Sprintf(`select setval('%s'::regclass, 3, true)`, seq),
+	); err != nil {
+		t.Fatalf("cannot skew the sequence: %v", err)
+	}
+
+	if err := db.advanceSequence(seq, 50); err != nil {
+		t.Fatalf("the walk failed: %v", err)
+	}
+
+	var id int
+	if err := db.Sql.QueryRow(
+		`insert into "rdioScannerConfigs" ("key", "val") values ('test.walked', '"y"') returning "_id"`,
+	).Scan(&id); err != nil {
+		t.Fatalf("the insert still collides after the walk: %v", err)
+	}
+	if id != 51 {
+		t.Errorf("the walked sequence handed out %d; want 51", id)
 	}
 }
 
