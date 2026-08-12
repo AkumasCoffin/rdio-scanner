@@ -343,7 +343,17 @@ func (downstream *Downstream) Send(call *Call) error {
 
 		c := http.Client{Timeout: 30 * time.Second}
 
-		if res, err := c.Post(u.String(), mw.FormDataContentType(), &buf); err == nil {
+		// Through NewRequest rather than Post for the User-Agent: the bare
+		// helper sends Go's default, and a receiving server's logs (or its
+		// filtering) should see who is actually uploading.
+		req, err := http.NewRequest(http.MethodPost, u.String(), &buf)
+		if err != nil {
+			return formatError(err)
+		}
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("User-Agent", "Rdio-Scanner")
+
+		if res, err := c.Do(req); err == nil {
 			if res.StatusCode != http.StatusOK {
 				return formatError(fmt.Errorf("bad status: %s", res.Status))
 			}
