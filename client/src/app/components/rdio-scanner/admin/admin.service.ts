@@ -19,7 +19,7 @@
 
 import { HttpClient, HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import { EventEmitter, Injectable, OnDestroy } from '@angular/core';
-import { AbstractControl, FormBuilder, FormGroup, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
+import { AbstractControl, FormArray, FormBuilder, FormGroup, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { firstValueFrom, timer } from 'rxjs';
 import { AppUpdateService } from '../../../shared/update/update.service';
@@ -686,7 +686,7 @@ export class RdioScannerAdminService implements OnDestroy {
             downstreams: this.ngFormBuilder.array(config?.downstreams?.map((downstream) => this.newDownstreamForm(downstream)) || []),
             groups: this.ngFormBuilder.array(config?.groups?.map((group) => this.newGroupForm(group)) || []),
             options: this.newOptionsForm(config?.options),
-            systems: this.ngFormBuilder.array(config?.systems?.map((system) => this.newSystemForm(system)) || []),
+            systems: this.newIdFormArray(config?.systems?.map((system) => this.newSystemForm(system)) || []),
             tags: this.ngFormBuilder.array(config?.tags?.map((tag) => this.newTagForm(tag)) || []),
         });
     }
@@ -738,12 +738,12 @@ export class RdioScannerAdminService implements OnDestroy {
             _id: [system?._id],
             autoPopulate: [system?.autoPopulate],
             blacklists: [system?.blacklists, this.validateBlacklists()],
-            id: [system?.id, [Validators.required, Validators.min(1), this.validateId()]],
+            id: [system?.id, [Validators.required, Validators.min(1)]],
             label: [system?.label, Validators.required],
             led: [system?.led],
             order: [system?.order],
-            talkgroups: this.ngFormBuilder.array(system?.talkgroups?.map((talkgroup) => this.newTalkgroupForm(talkgroup)) || []),
-            units: this.ngFormBuilder.array(system?.units?.map((unit) => this.newUnitForm(unit)) || []),
+            talkgroups: this.newIdFormArray(system?.talkgroups?.map((talkgroup) => this.newTalkgroupForm(talkgroup)) || []),
+            units: this.newIdFormArray(system?.units?.map((unit) => this.newUnitForm(unit)) || []),
             delay: [system?.delay ?? 0, Validators.min(0)],
             alert: [system?.alert ?? null],
         });
@@ -753,7 +753,7 @@ export class RdioScannerAdminService implements OnDestroy {
         return this.ngFormBuilder.group({
             frequency: [talkgroup?.frequency, Validators.min(0)],
             groupId: [talkgroup?.groupId, [Validators.required, this.validateGroup()]],
-            id: [talkgroup?.id, [Validators.required, Validators.min(1), this.validateId()]],
+            id: [talkgroup?.id, [Validators.required, Validators.min(1)]],
             label: [talkgroup?.label, Validators.required],
             led: [talkgroup?.led],
             name: [talkgroup?.name, Validators.required],
@@ -766,7 +766,7 @@ export class RdioScannerAdminService implements OnDestroy {
 
     newUnitForm(unit?: Unit): FormGroup {
         return this.ngFormBuilder.group({
-            id: [unit?.id, [Validators.required, Validators.min(0), this.validateId()]],
+            id: [unit?.id, [Validators.required, Validators.min(0)]],
             label: [unit?.label, Validators.required],
             order: [unit?.order],
         });
@@ -1163,18 +1163,50 @@ export class RdioScannerAdminService implements OnDestroy {
         };
     }
 
-    private validateId(): ValidatorFn {
-        return (control: AbstractControl): ValidationErrors | null => {
-            if (control.value === null || typeof control.value !== 'number') {
-                return null;
+    private newIdFormArray(controls: FormGroup[]): FormArray {
+        const formArray = this.ngFormBuilder.array(controls);
+
+        this.updateDuplicateIdErrors(formArray);
+        formArray.valueChanges.subscribe(() => this.updateDuplicateIdErrors(formArray));
+
+        return formArray;
+    }
+
+    private updateDuplicateIdErrors(formArray: FormArray): void {
+        const counts = new Map<number, number>();
+
+        formArray.controls.forEach((control) => {
+            const id = control.get('id')?.value;
+
+            if (typeof id === 'number') {
+                counts.set(id, (counts.get(id) || 0) + 1);
+            }
+        });
+
+        formArray.controls.forEach((control) => {
+            const idControl = control.get('id');
+            const id = idControl?.value;
+
+            if (!idControl) {
+                return;
             }
 
-            const systems: System[] = control.parent?.parent?.getRawValue() || [];
+            const duplicate = typeof id === 'number' && (counts.get(id) || 0) > 1;
 
-            const count = systems.reduce((c, s) => c += s.id === control.value ? 1 : 0, 0);
+            if (duplicate === idControl.hasError('duplicate')) {
+                return;
+            }
 
-            return count > 1 ? { duplicate: true } : null;
-        };
+            const errors = { ...idControl.errors };
+
+            if (duplicate) {
+                errors['duplicate'] = true;
+            } else {
+                delete errors['duplicate'];
+            }
+
+            idControl.setErrors(Object.keys(errors).length ? errors : null, { emitEvent: false });
+        });
     }
 
     private validateMask(): ValidatorFn {
