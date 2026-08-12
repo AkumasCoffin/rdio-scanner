@@ -16,6 +16,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -326,6 +327,21 @@ func (options *Options) Write(db *Database) error {
 			return err
 		}
 		if n, err := res.RowsAffected(); err == nil && n == 0 {
+			// MySQL and MariaDB report changed rows rather than matched rows by
+			// default. Updating a key to the value it already has therefore
+			// returns zero, even though the row exists. Confirm absence before
+			// inserting or every options save tries to duplicate adminPassword.
+			var exists int
+			err := db.QueryRow(
+				"select 1 from `rdioScannerConfigs` where `key` = ?", key,
+			).Scan(&exists)
+			if err == nil {
+				return nil
+			}
+			if err != sql.ErrNoRows {
+				return err
+			}
+
 			// Through ExecInsert because this is where a skewed Postgres
 			// sequence surfaces: an option that already has a row is only ever
 			// updated, so the sequence is never touched, and the first save
@@ -371,5 +387,4 @@ func (options *Options) Write(db *Database) error {
 
 	return nil
 }
-
 

@@ -17,7 +17,7 @@
  * ****************************************************************************
  */
 
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, OnDestroy, OnInit, QueryList, ViewChildren, ViewEncapsulation } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, OnDestroy, QueryList, ViewChildren, ViewEncapsulation } from '@angular/core';
 import { FormArray, FormControl, FormGroup } from '@angular/forms';
 import { MatExpansionPanel } from '@angular/material/expansion';
 import { AdminEvent, RdioScannerAdminService, Config } from '../admin.service';
@@ -29,7 +29,7 @@ import { AdminEvent, RdioScannerAdminService, Config } from '../admin.service';
     styleUrls: ['./config.component.scss'],
     templateUrl: './config.component.html',
 })
-export class RdioScannerAdminConfigComponent implements OnDestroy, OnInit {
+export class RdioScannerAdminConfigComponent implements OnDestroy {
     docker = false;
 
     form: FormGroup | undefined;
@@ -81,17 +81,21 @@ export class RdioScannerAdminConfigComponent implements OnDestroy, OnInit {
 
     private config: Config | undefined;
 
+    private loaded = false;
+
     private eventSubscription = this.adminService.event.subscribe(async (event: AdminEvent) => {
         if ('authenticated' in event && event.authenticated === true) {
             this.config = await this.adminService.getConfig();
 
-            this.reset();
+            if (this.loaded && this.form?.pristine) {
+                this.reset();
+            }
         }
 
         if ('config' in event) {
             this.config = event.config;
 
-            if (this.form?.pristine) {
+            if (this.loaded && this.form?.pristine) {
                 this.reset();
             }
         }
@@ -112,8 +116,16 @@ export class RdioScannerAdminConfigComponent implements OnDestroy, OnInit {
         this.eventSubscription.unsubscribe();
     }
 
-    async ngOnInit(): Promise<void> {
-        this.config = await this.adminService.getConfig();
+    async load(): Promise<void> {
+        if (this.loaded) {
+            return;
+        }
+
+        this.loaded = true;
+
+        if (!this.config) {
+            this.config = await this.adminService.getConfig();
+        }
 
         this.reset();
     }
@@ -123,6 +135,8 @@ export class RdioScannerAdminConfigComponent implements OnDestroy, OnInit {
     }
 
     reset(config = this.config, options?: { dirty?: boolean }): void {
+        this.loaded = true;
+
         this.form = this.adminService.newConfigForm(config);
 
         this.form.statusChanges.subscribe(() => {

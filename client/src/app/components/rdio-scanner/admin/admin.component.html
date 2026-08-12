@@ -13,7 +13,8 @@
             </mat-expansion-panel-header>
             <rdio-scanner-admin-stats #statsComponent></rdio-scanner-admin-stats>
         </mat-expansion-panel>
-        <mat-expansion-panel #configPanel data-rdio="admin-config" (afterCollapse)="configComponent?.closeAll()">
+        <mat-expansion-panel #configPanel data-rdio="admin-config" (afterExpand)="configComponent.load()"
+            (afterCollapse)="configComponent?.closeAll()">
             <mat-expansion-panel-header>
                 <mat-panel-title>
                     <mat-icon>settings</mat-icon>
