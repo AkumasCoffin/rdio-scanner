@@ -102,29 +102,46 @@
             </mat-expansion-panel-header>
             <ng-template matExpansionPanelContent>
                 <div class="row top">
-                    <p class="mat-caption">System talkgroups, you can drag and drop talkgroups to rearrange them. They
+                    <p class="mat-caption">System talkgroups. Select one to edit it. You can drag and drop talkgroups
+                        when the list is not filtered. They
                         will appear with the same order on the talkgroup selection panel unless the sort talkgroups
                         option is enabled.</p>
                     <button type="button" mat-button color="accent" (click)="addTalkgroup()">New talkgroup</button>
                 </div>
-                <mat-accordion displayMode="flat" cdkDropList [cdkDropListAutoScrollStep]=64 [cdkDropListData]="talkgroups"
-                    (cdkDropListDropped)="drop($event)">
-                    <mat-expansion-panel *ngFor="let talkgroup of talkgroups; index as i" [formGroup]="talkgroup"
-                        cdkDrag>
-                        <mat-expansion-panel-header>
-                            <mat-panel-title>
-                                <mat-icon cdkDragHandle>drag_indicator</mat-icon>
-                                {{ talkgroup.value.label?.trim() || 'NewTalkgroup' }}
-                                <mat-icon *ngIf="talkgroup.invalid" color="warn">error</mat-icon>
-                            </mat-panel-title>
-                        </mat-expansion-panel-header>
-                        <ng-template matExpansionPanelContent>
-                            <rdio-scanner-admin-talkgroup [form]="talkgroup" (blacklist)="blacklistTalkgroup(i)"
-                                (remove)="removeTalkgroup(i)">
-                            </rdio-scanner-admin-talkgroup>
-                        </ng-template>
-                    </mat-expansion-panel>
-                </mat-accordion>
+                <div class="admin-config-list-toolbar">
+                    <mat-form-field floatLabel="never">
+                        <mat-icon matPrefix>search</mat-icon>
+                        <input type="search" matInput placeholder="Search talkgroups by ID or label"
+                            [value]="talkgroupQuery" (input)="filterTalkgroups($event)">
+                    </mat-form-field>
+                    <span class="mat-caption">{{ filteredTalkgroups.length }} of {{ talkgroups.length }}</span>
+                </div>
+                <cdk-virtual-scroll-viewport #talkgroupViewport class="admin-config-virtual-list" itemSize="52"
+                    cdkDropList [cdkDropListData]="filteredTalkgroups" [cdkDropListDisabled]="!!talkgroupQuery"
+                    (cdkDropListDropped)="dropTalkgroup($event)">
+                    <button type="button" class="admin-config-virtual-row"
+                        *cdkVirtualFor="let talkgroup of filteredTalkgroups; trackBy: trackByControl; templateCacheSize: 0"
+                        [class.selected]="selectedTalkgroup === talkgroup" cdkDrag [cdkDragData]="talkgroup"
+                        [cdkDragDisabled]="!!talkgroupQuery" (click)="selectTalkgroup(talkgroup)">
+                        <mat-icon cdkDragHandle (click)="$event.stopPropagation()">drag_indicator</mat-icon>
+                        <span class="admin-config-row-id">{{ talkgroup.value.id ?? '—' }}</span>
+                        <span class="admin-config-row-label">{{ talkgroup.value.label?.trim() || 'NewTalkgroup' }}</span>
+                        <mat-icon *ngIf="talkgroup.invalid" color="warn">error</mat-icon>
+                    </button>
+                </cdk-virtual-scroll-viewport>
+                <div *ngIf="selectedTalkgroup" class="admin-config-selected-editor" [formGroup]="selectedTalkgroup">
+                    <div class="admin-config-editor-title">
+                        <strong>{{ selectedTalkgroup.value.label?.trim() || 'NewTalkgroup' }}</strong>
+                        <button type="button" mat-icon-button aria-label="Close talkgroup editor"
+                            (click)="selectedTalkgroup = undefined">
+                            <mat-icon>close</mat-icon>
+                        </button>
+                    </div>
+                    <rdio-scanner-admin-talkgroup [form]="selectedTalkgroup"
+                        (blacklist)="blacklistTalkgroup(selectedTalkgroup)"
+                        (remove)="removeTalkgroup(selectedTalkgroup)">
+                    </rdio-scanner-admin-talkgroup>
+                </div>
             </ng-template>
         </mat-expansion-panel>
     </mat-accordion>
@@ -139,25 +156,41 @@
             <ng-template matExpansionPanelContent>
                 <div class="row top">
                     <p class="mat-caption">Create units to display the label instead of showing the unit id on the main
-                        screen.<br>You can drag and drop them to rearrange</p>
+                        screen. Select one to edit it.<br>You can drag and drop them when the list is not filtered.</p>
                     <button type="button" mat-button color="accent" (click)="addUnit()">New unit</button>
                 </div>
-                <mat-accordion displayMode="flat" cdkDropList [cdkDropListAutoScrollStep]=64 [cdkDropListData]="units"
-                    (cdkDropListDropped)="drop($event)">
-                    <mat-expansion-panel *ngFor="let unit of units; index as i" [formGroup]="unit" cdkDrag>
-                        <mat-expansion-panel-header>
-                            <mat-panel-title>
-                                <mat-icon cdkDragHandle>drag_indicator</mat-icon>
-                                {{ unit.value.label?.trim() || 'NewUnit' }}
-                                <mat-icon *ngIf="unit.invalid" color="warn">error</mat-icon>
-                            </mat-panel-title>
-                        </mat-expansion-panel-header>
-                        <ng-template matExpansionPanelContent>
-                            <rdio-scanner-admin-unit [form]="unit" (remove)="removeUnit(i)">
-                            </rdio-scanner-admin-unit>
-                        </ng-template>
-                    </mat-expansion-panel>
-                </mat-accordion>
+                <div class="admin-config-list-toolbar">
+                    <mat-form-field floatLabel="never">
+                        <mat-icon matPrefix>search</mat-icon>
+                        <input type="search" matInput placeholder="Search units by ID or label" [value]="unitQuery"
+                            (input)="filterUnits($event)">
+                    </mat-form-field>
+                    <span class="mat-caption">{{ filteredUnits.length }} of {{ units.length }}</span>
+                </div>
+                <cdk-virtual-scroll-viewport #unitViewport class="admin-config-virtual-list" itemSize="52"
+                    cdkDropList [cdkDropListData]="filteredUnits" [cdkDropListDisabled]="!!unitQuery"
+                    (cdkDropListDropped)="dropUnit($event)">
+                    <button type="button" class="admin-config-virtual-row"
+                        *cdkVirtualFor="let unit of filteredUnits; trackBy: trackByControl; templateCacheSize: 0"
+                        [class.selected]="selectedUnit === unit" cdkDrag [cdkDragData]="unit"
+                        [cdkDragDisabled]="!!unitQuery" (click)="selectUnit(unit)">
+                        <mat-icon cdkDragHandle (click)="$event.stopPropagation()">drag_indicator</mat-icon>
+                        <span class="admin-config-row-id">{{ unit.value.id ?? '—' }}</span>
+                        <span class="admin-config-row-label">{{ unit.value.label?.trim() || 'NewUnit' }}</span>
+                        <mat-icon *ngIf="unit.invalid" color="warn">error</mat-icon>
+                    </button>
+                </cdk-virtual-scroll-viewport>
+                <div *ngIf="selectedUnit" class="admin-config-selected-editor" [formGroup]="selectedUnit">
+                    <div class="admin-config-editor-title">
+                        <strong>{{ selectedUnit.value.label?.trim() || 'NewUnit' }}</strong>
+                        <button type="button" mat-icon-button aria-label="Close unit editor"
+                            (click)="selectedUnit = undefined">
+                            <mat-icon>close</mat-icon>
+                        </button>
+                    </div>
+                    <rdio-scanner-admin-unit [form]="selectedUnit" (remove)="removeUnit(selectedUnit)">
+                    </rdio-scanner-admin-unit>
+                </div>
             </ng-template>
         </mat-expansion-panel>
     </mat-accordion>

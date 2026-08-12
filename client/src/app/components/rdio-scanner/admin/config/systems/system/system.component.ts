@@ -18,7 +18,8 @@
  */
 
 import { CdkDragDrop, moveItemInArray } from '@angular/cdk/drag-drop';
-import { Component, EventEmitter, Input, Output, QueryList, ViewChildren } from '@angular/core';
+import { CdkVirtualScrollViewport } from '@angular/cdk/scrolling';
+import { Component, EventEmitter, Input, Output, QueryList, ViewChild, ViewChildren } from '@angular/core';
 import { FormArray, FormControl, FormGroup } from '@angular/forms';
 import { MatExpansionPanel } from '@angular/material/expansion';
 import { RdioScannerAdminService, Group, Tag } from '../../../admin.service';
@@ -28,7 +29,17 @@ import { RdioScannerAdminService, Group, Tag } from '../../../admin.service';
     templateUrl: './system.component.html',
 })
 export class RdioScannerAdminSystemComponent {
-    @Input() form = new FormGroup({});
+    private formValue = new FormGroup({});
+
+    @Input()
+    set form(form: FormGroup) {
+        this.formValue = form;
+        this.refreshLists();
+    }
+
+    get form(): FormGroup {
+        return this.formValue;
+    }
 
     @Input() groups: Group[] = [];
 
@@ -42,43 +53,70 @@ export class RdioScannerAdminSystemComponent {
 
     alerts = ['alert1', 'alert2', 'alert3', 'alert4', 'alert5', 'alert6', 'alert7', 'alert8', 'alert9'];
 
-    get talkgroups(): FormGroup[] {
-        const talkgroups = this.form.get('talkgroups') as FormArray;
+    talkgroups: FormGroup[] = [];
 
-        return talkgroups.controls
-            .sort((a, b) => (a.value.order || 0) - (b.value.order || 0)) as FormGroup[];
-    }
+    filteredTalkgroups: FormGroup[] = [];
 
-    get units(): FormGroup[] {
-        const units = this.form.get('units') as FormArray;
+    selectedTalkgroup: FormGroup | undefined;
 
-        return units.controls
-            .sort((a, b) => (a.value.order || 0) - (b.value.order || 0)) as FormGroup[];
-    }
+    talkgroupQuery = '';
+
+    units: FormGroup[] = [];
+
+    filteredUnits: FormGroup[] = [];
+
+    selectedUnit: FormGroup | undefined;
+
+    unitQuery = '';
+
+    @ViewChild('talkgroupViewport') private talkgroupViewport: CdkVirtualScrollViewport | undefined;
+
+    @ViewChild('unitViewport') private unitViewport: CdkVirtualScrollViewport | undefined;
 
     @ViewChildren(MatExpansionPanel) private panels: QueryList<MatExpansionPanel> | undefined;
+
+    private static filter(controls: FormGroup[], query: string): FormGroup[] {
+        const normalizedQuery = query.trim().toLocaleLowerCase();
+
+        if (!normalizedQuery) {
+            return controls;
+        }
+
+        return controls.filter((control) => {
+            const id = `${control.get('id')?.value ?? ''}`;
+            const label = `${control.get('label')?.value ?? ''}`.toLocaleLowerCase();
+
+            return id.includes(normalizedQuery) || label.includes(normalizedQuery);
+        });
+    }
 
     constructor(private adminService: RdioScannerAdminService) { }
 
     addTalkgroup(): void {
         const talkgroups = this.form.get('talkgroups') as FormArray;
+        const talkgroup = this.adminService.newTalkgroupForm();
 
-        talkgroups.insert(0, this.adminService.newTalkgroupForm());
+        talkgroups.insert(0, talkgroup);
 
         this.form.markAsDirty();
+        this.refreshLists();
+        this.selectedTalkgroup = talkgroup;
+        this.talkgroupViewport?.scrollToIndex(0);
     }
 
     addUnit(): void {
         const units = this.form.get('units') as FormArray;
+        const unit = this.adminService.newUnitForm();
 
-        units.insert(0, this.adminService.newUnitForm());
+        units.insert(0, unit);
 
         this.form.markAsDirty();
+        this.refreshLists();
+        this.selectedUnit = unit;
+        this.unitViewport?.scrollToIndex(0);
     }
 
-    blacklistTalkgroup(index: number): void {
-        const talkgroup = this.talkgroups[index];
-
+    blacklistTalkgroup(talkgroup: FormGroup): void {
         const id = talkgroup.value.id;
 
         if (typeof id !== 'number') {
@@ -89,36 +127,101 @@ export class RdioScannerAdminSystemComponent {
 
         blacklists.setValue(blacklists.value?.trim() ? `${blacklists.value},${id}` : `${id}`);
 
-        this.removeTalkgroup(index);
+        this.removeTalkgroup(talkgroup);
     }
 
     closeAll(): void {
         this.panels?.forEach((panel) => panel.close());
     }
 
-    drop(event: CdkDragDrop<FormGroup[]>): void {
-        if (event.previousIndex !== event.currentIndex) {
-            moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+    dropTalkgroup(event: CdkDragDrop<FormGroup[]>): void {
+        this.drop(event, this.talkgroups, this.talkgroupViewport, this.talkgroupQuery);
+    }
 
-            event.container.data.forEach((dat, idx) => dat.get('order')?.setValue(idx + 1, { emitEvent: false }));
+    dropUnit(event: CdkDragDrop<FormGroup[]>): void {
+        this.drop(event, this.units, this.unitViewport, this.unitQuery);
+    }
 
-            this.form.markAsDirty();
+    filterTalkgroups(event: Event): void {
+        this.talkgroupQuery = (event.target as HTMLInputElement).value;
+        this.filteredTalkgroups = RdioScannerAdminSystemComponent.filter(this.talkgroups, this.talkgroupQuery);
+        this.talkgroupViewport?.scrollToIndex(0);
+    }
+
+    filterUnits(event: Event): void {
+        this.unitQuery = (event.target as HTMLInputElement).value;
+        this.filteredUnits = RdioScannerAdminSystemComponent.filter(this.units, this.unitQuery);
+        this.unitViewport?.scrollToIndex(0);
+    }
+
+    removeTalkgroup(talkgroup: FormGroup): void {
+        this.removeControl('talkgroups', talkgroup);
+        this.selectedTalkgroup = undefined;
+        this.refreshLists();
+    }
+
+    removeUnit(unit: FormGroup): void {
+        this.removeControl('units', unit);
+        this.selectedUnit = undefined;
+        this.refreshLists();
+    }
+
+    selectTalkgroup(talkgroup: FormGroup): void {
+        this.selectedTalkgroup = talkgroup;
+    }
+
+    selectUnit(unit: FormGroup): void {
+        this.selectedUnit = unit;
+    }
+
+    trackByControl(_index: number, control: FormGroup): FormGroup {
+        return control;
+    }
+
+    private drop(
+        event: CdkDragDrop<FormGroup[]>,
+        controls: FormGroup[],
+        viewport: CdkVirtualScrollViewport | undefined,
+        query: string,
+    ): void {
+        if (query || event.previousIndex === event.currentIndex) {
+            return;
         }
+
+        const renderedStart = viewport?.getRenderedRange().start ?? 0;
+        const previousIndex = renderedStart + event.previousIndex;
+        const currentIndex = renderedStart + event.currentIndex;
+
+        moveItemInArray(controls, previousIndex, currentIndex);
+
+        controls.forEach((control, index) => {
+            control.get('order')?.setValue(index + 1, { emitEvent: false });
+        });
+
+        this.form.markAsDirty();
     }
 
-    removeTalkgroup(index: number): void {
-        const talkgroups = this.form.get('talkgroups') as FormArray;
+    private refreshLists(): void {
+        const talkgroups = this.form.get('talkgroups') as FormArray | null;
+        const units = this.form.get('units') as FormArray | null;
 
-        talkgroups.removeAt(index);
-
-        talkgroups.markAsDirty();
+        this.talkgroups = [...talkgroups?.controls ?? []]
+            .sort((a, b) => (a.value.order || 0) - (b.value.order || 0)) as FormGroup[];
+        this.units = [...units?.controls ?? []]
+            .sort((a, b) => (a.value.order || 0) - (b.value.order || 0)) as FormGroup[];
+        this.filteredTalkgroups = RdioScannerAdminSystemComponent.filter(this.talkgroups, this.talkgroupQuery);
+        this.filteredUnits = RdioScannerAdminSystemComponent.filter(this.units, this.unitQuery);
     }
 
-    removeUnit(index: number): void {
-        const units = this.form.get('units') as FormArray;
+    private removeControl(name: 'talkgroups' | 'units', control: FormGroup): void {
+        const controls = this.form.get(name) as FormArray;
+        const index = controls.controls.indexOf(control);
 
-        units.removeAt(index);
+        if (index === -1) {
+            return;
+        }
 
-        units.markAsDirty();
+        controls.removeAt(index);
+        controls.markAsDirty();
     }
 }

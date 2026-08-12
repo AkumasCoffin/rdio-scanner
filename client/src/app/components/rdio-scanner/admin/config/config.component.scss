@@ -49,11 +49,94 @@ rdio-scanner-admin-config {
   .text-center {
     text-align: center;
   }
+
+  .admin-config-list-toolbar {
+    align-items: center;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+
+    .mat-form-field {
+      flex: 1;
+      max-width: 36rem;
+    }
+  }
+
+  .admin-config-virtual-list {
+    border: 1px solid rgba(127, 127, 127, 0.25);
+    box-sizing: border-box;
+    height: 55vh;
+    max-height: 560px;
+    min-height: 320px;
+    width: 100%;
+  }
+
+  .admin-config-virtual-row {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid rgba(127, 127, 127, 0.16);
+    box-sizing: border-box;
+    color: inherit;
+    cursor: pointer;
+    display: flex;
+    font: inherit;
+    gap: 0.75rem;
+    height: 52px;
+    padding: 0 1rem;
+    text-align: left;
+    width: 100%;
+
+    &:hover,
+    &.selected {
+      background: rgba(127, 127, 127, 0.12);
+    }
+
+    &.selected {
+      box-shadow: inset 3px 0 currentColor;
+    }
+
+    > .mat-icon:first-child {
+      cursor: grab;
+      opacity: 0.5;
+    }
+  }
+
+  .admin-config-row-id {
+    flex: 0 0 7rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .admin-config-row-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .admin-config-selected-editor {
+    border: 1px solid rgba(127, 127, 127, 0.25);
+    border-top: 0;
+    padding: 1rem;
+  }
+
+  .admin-config-editor-title {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+  }
 }
 
 @media (max-width: 719px) {
-  rdio-scanner-admin-config .mat-form-field {
-    flex: 100%;
+  rdio-scanner-admin-config {
+    .mat-form-field {
+      flex: 100%;
+    }
+
+    .admin-config-row-id {
+      flex-basis: 5.5rem;
+    }
   }
 }
 

@@ -18,6 +18,7 @@
  */
 
 import { DragDropModule } from '@angular/cdk/drag-drop';
+import { ScrollingModule } from '@angular/cdk/scrolling';
 import { NgModule } from '@angular/core';
 import { MatAutocompleteModule } from '@angular/material/autocomplete';
 import { MatButtonModule } from '@angular/material/button';
@@ -47,6 +48,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 @NgModule({
     exports: [
         DragDropModule,
+        ScrollingModule,
         MatAutocompleteModule,
         MatButtonModule,
         MatButtonToggleModule,
