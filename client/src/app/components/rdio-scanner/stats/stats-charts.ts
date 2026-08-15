@@ -264,12 +264,24 @@ export interface ListenersSeries {
     tension: number;
 }
 
+// listenerBinMs — display bin per range. The tracking grain is 10 minutes,
+// but a week or more of 10-minute points renders as unreadable spiky noise
+// (1,000-13,000 points), so longer windows aggregate into coarser bins:
+// every range lands at a readable 144-360 points.
+function listenerBinMs(range: StatsRange): number {
+    switch (range) {
+        case '1w': return HOUR_MS;          // 168 points
+        case '1m': return 3 * HOUR_MS;      // 240 points
+        case 'all': return 6 * HOUR_MS;     // ≤ 360 points over 90 days
+        default: return SLOT_MS;            // 10-minute tracking grain
+    }
+}
+
 // buildListenersSeries renders the sparse listener buckets on a dense axis
-// with nulls where no bucket exists — an absent slot means the server was
+// with nulls where no bin has data — an absent bin means the server was
 // down, not that nobody was listening, and the null renders as a gap
-// (spanGaps is off). Fixed ranges are 10-minute slots; 'all' covers the
-// full retention decimated to hour bins so tens of thousands of points
-// never hit the canvas.
+// (spanGaps is off). Avg averages the bucket averages in the bin; Peak
+// keeps the bin maximum, so spikes survive the decimation.
 export function buildListenersSeries(range: StatsRange, buckets: ListenerBucketLike[]): ListenersSeries {
     const byMs = new Map<number, { avg: number; peak: number }>();
     let earliest = Number.MAX_SAFE_INTEGER;
@@ -291,44 +303,36 @@ export function buildListenersSeries(range: StatsRange, buckets: ListenerBucketL
         return { title: `Listeners (${rangeTitle(range)})`, labels, avg, peak, tension: 0 };
     }
 
-    if (range === 'all') {
-        // Decimate to hour bins: 90 days of 10-minute slots is ~13k points
-        // per dataset — enough to freeze low-end devices — and hourly over
-        // that window looks identical.
-        const byHour = new Map<number, { sum: number; n: number; peak: number }>();
-        for (const [ms, b] of byMs) {
-            const hour = ms - ms % HOUR_MS;
-            const t = byHour.get(hour) || { sum: 0, n: 0, peak: 0 };
-            t.sum += b.avg;
-            t.n++;
-            if (b.peak > t.peak) t.peak = b.peak;
-            byHour.set(hour, t);
-        }
-        const start = earliest - earliest % HOUR_MS;
-        const end = newest - newest % HOUR_MS;
-        for (let ms = start; ms <= end; ms += HOUR_MS) {
-            const t = byHour.get(ms);
-            labels.push(dateTime(new Date(ms)));
-            avg.push(t ? Math.round(t.sum / t.n * 100) / 100 : null);
-            peak.push(t ? t.peak : null);
-        }
-        return { title: 'Listeners (All Data)', labels, avg, peak, tension: 0 };
+    const binMs = listenerBinMs(range);
+    const byBin = new Map<number, { sum: number; n: number; peak: number }>();
+    for (const [ms, b] of byMs) {
+        const bin = ms - ms % binMs;
+        const t = byBin.get(bin) || { sum: 0, n: 0, peak: 0 };
+        t.sum += b.avg;
+        t.n++;
+        if (b.peak > t.peak) t.peak = b.peak;
+        byBin.set(bin, t);
     }
 
     // Anchor to the newest sample, not the client clock — the response can
     // be a couple of minutes stale, and a clock-anchored axis renders that
-    // staleness as a false "server down" gap on the right edge.
-    const slots = rangeHours(range) * 6;
-    const label = slots <= 144 ? hhmm : dateTime;
-    const tension = slots <= 288 ? 0.3 : 0;
-    for (let i = slots - 1; i >= 0; i--) {
-        const ms = newest - i * SLOT_MS;
-        const b = byMs.get(ms);
+    // staleness as a false "server down" gap on the right edge. 'all'
+    // stretches back to the earliest sample instead of a fixed window.
+    const newestBin = newest - newest % binMs;
+    const start = range === 'all'
+        ? earliest - earliest % binMs
+        : newestBin - rangeHours(range) * HOUR_MS + binMs;
+
+    const windowHours = (newestBin - start + binMs) / HOUR_MS;
+    const label = windowHours <= 24 ? hhmm : dateTime;
+
+    for (let ms = start; ms <= newestBin; ms += binMs) {
+        const t = byBin.get(ms);
         labels.push(label(new Date(ms)));
-        avg.push(b ? b.avg : null);
-        peak.push(b ? b.peak : null);
+        avg.push(t ? Math.round(t.sum / t.n * 100) / 100 : null);
+        peak.push(t ? t.peak : null);
     }
-    return { title: `Listeners (${rangeTitle(range)})`, labels, avg, peak, tension };
+    return { title: `Listeners (${rangeTitle(range)})`, labels, avg, peak, tension: 0.3 };
 }
 
 export function listenersDatasets(series: ListenersSeries): ChartConfiguration<'line'>['data']['datasets'] {
