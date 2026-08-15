@@ -416,6 +416,11 @@ export interface StatsResponse {
      * browser's local timezone — wire format stays pure UTC.
      */
     hourBuckets: StatsHourBucket[];
+    /**
+     * Dense 10-minute call counts for the last 48 hours — used by the
+     * short filter ranges. Zeros mean no calls, same as hourBuckets.
+     */
+    callFineBuckets?: StatsHourBucket[];
     topTalkgroups: StatsTopTalkgroup[];
     topSystems: StatsTopSystem[];
     topUnits: StatsTopUnit[];

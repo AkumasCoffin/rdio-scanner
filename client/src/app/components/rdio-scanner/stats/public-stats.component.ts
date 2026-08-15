@@ -84,6 +84,8 @@ type StatsRange = '1h' | '6h' | '12h' | '24h' | '48h' | '1w' | '1m' | 'all';
 interface StatsResponse {
     overview: StatsOverview;
     hourBuckets: StatsHourBucket[];
+    // Dense 10-minute call counts for the last 48 hours (short ranges).
+    callFineBuckets?: StatsHourBucket[];
     topTalkgroups: StatsTopTalkgroup[];
     topSystems: StatsTopSystem[];
     topUnits: StatsTopUnit[];
@@ -119,11 +121,11 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         maintainAspectRatio: false,
         plugins: {
             legend: { display: false },
-            title: { display: true, text: 'Average Calls Per Hour (Aggregated over Last 7 Days)', color: '#e0e0e0' },
+            title: { display: true, text: 'Average Calls by Hour of Day (Last 7 Days)', color: '#e0e0e0' },
         },
         scales: {
             x: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-            y: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
+            y: { beginAtZero: true, ticks: { color: '#a0a0a0', precision: 0 }, grid: { color: 'rgba(255,255,255,0.1)' } },
         },
     };
 
@@ -323,7 +325,7 @@ export class RdioScannerPublicStatsComponent implements OnInit {
             },
             scales: {
                 x: { ticks: { color: '#a0a0a0', maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.1)' } },
-                y: { beginAtZero: true, ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
+                y: { beginAtZero: true, ticks: { color: '#a0a0a0', precision: 0 }, grid: { color: 'rgba(255,255,255,0.1)' } },
             },
         };
     }
@@ -340,10 +342,33 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const labels: string[] = [];
         const data: number[] = [];
+        const fine = this.stats.callFineBuckets;
+        let pointRadius = 2;
 
-        if (hours <= 48) {
-            // Hour bins with windowed matching — safe for half-hour-offset
-            // timezones where a local hour boundary lands at :30 UTC.
+        if (hours <= 48 && fine?.length) {
+            // 10-minute bins from the dense 48-hour series, keyed by start
+            // instant like the listeners chart. Missing slots are zero —
+            // for calls that genuinely means "no calls".
+            const byMs = new Map<number, number>();
+            for (const b of fine) {
+                const ms = new Date(b.startUtc).getTime();
+                if (!isNaN(ms)) byMs.set(ms, b.count);
+            }
+
+            const SLOT_MS = 600000;
+            const nowSlot = Math.floor(Date.now() / SLOT_MS) * SLOT_MS;
+            const slots = hours * 6;
+            for (let i = slots - 1; i >= 0; i--) {
+                const ms = nowSlot - i * SLOT_MS;
+                const d = new Date(ms);
+                labels.push(`${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`);
+                data.push(byMs.get(ms) || 0);
+            }
+            pointRadius = 0;
+        } else if (hours <= 48) {
+            // Fallback: hour bins with windowed matching — safe for
+            // half-hour-offset timezones where a local hour boundary lands
+            // at :30 UTC.
             const buckets: { ms: number; count: number }[] = [];
             for (const b of this.stats.hourBuckets) {
                 const t = new Date(b.startUtc);
@@ -388,7 +413,7 @@ export class RdioScannerPublicStatsComponent implements OnInit {
                 backgroundColor: 'rgba(255, 152, 0, 0.2)',
                 borderColor: 'rgba(255, 152, 0, 1)',
                 tension: 0.3,
-                pointRadius: 2,
+                pointRadius,
                 pointBackgroundColor: 'rgba(255, 152, 0, 1)',
             }],
         };

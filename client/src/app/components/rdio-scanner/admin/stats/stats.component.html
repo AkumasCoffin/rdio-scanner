@@ -56,6 +56,13 @@
             </mat-card-content>
         </mat-card>
 
+        <!-- Time Range Filter (calls + listeners time series) -->
+        <div class="range-filter">
+            <mat-button-toggle-group [value]="range" (change)="setRange($event.value)">
+                <mat-button-toggle *ngFor="let r of ranges" [value]="r.key">{{ r.label }}</mat-button-toggle>
+            </mat-button-toggle-group>
+        </div>
+
         <!-- Overview Cards -->
         <div class="overview-cards">
             <mat-card *ngFor="let card of overviewCards" class="stat-card" [style.border-left-color]="card.color">
@@ -69,30 +76,14 @@
             </mat-card>
         </div>
 
-        <!-- Time Range Filter (calls + listeners time series) -->
-        <div class="range-filter">
-            <mat-button-toggle-group [value]="range" (change)="setRange($event.value)">
-                <mat-button-toggle *ngFor="let r of ranges" [value]="r.key">{{ r.label }}</mat-button-toggle>
-            </mat-button-toggle-group>
-        </div>
-
         <!-- Calls Time Series -->
         <div class="charts-row">
-            <mat-card class="chart-card wide">
+            <mat-card class="chart-card">
                 <div class="chart-container">
                     <canvas baseChart
                         [type]="callsChartType"
                         [data]="callsChartData"
                         [options]="callsChartOptions">
-                    </canvas>
-                </div>
-            </mat-card>
-            <mat-card class="chart-card narrow">
-                <div class="chart-container doughnut">
-                    <canvas baseChart
-                        [type]="systemsChartType"
-                        [data]="systemsChartData"
-                        [options]="systemsChartOptions">
                     </canvas>
                 </div>
             </mat-card>
@@ -111,14 +102,23 @@
             </mat-card>
         </div>
 
-        <!-- Hour-of-day Rollup -->
+        <!-- Rollups -->
         <div class="charts-row">
-            <mat-card class="chart-card">
+            <mat-card class="chart-card wide">
                 <div class="chart-container">
                     <canvas baseChart
                         [type]="hourlyChartType"
                         [data]="hourlyChartData"
                         [options]="hourlyChartOptions">
+                    </canvas>
+                </div>
+            </mat-card>
+            <mat-card class="chart-card narrow">
+                <div class="chart-container doughnut">
+                    <canvas baseChart
+                        [type]="systemsChartType"
+                        [data]="systemsChartData"
+                        [options]="systemsChartOptions">
                     </canvas>
                 </div>
             </mat-card>

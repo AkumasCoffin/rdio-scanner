@@ -31,6 +31,13 @@
             </div>
         </mat-card>
 
+        <!-- Time Range Filter (calls + listeners time series) -->
+        <div class="range-filter">
+            <mat-button-toggle-group [value]="range" (change)="setRange($event.value)">
+                <mat-button-toggle *ngFor="let r of ranges" [value]="r.key">{{ r.label }}</mat-button-toggle>
+            </mat-button-toggle-group>
+        </div>
+
         <!-- Overview Cards -->
         <div class="overview-cards">
             <div *ngFor="let card of overviewCards" class="stat-card" [style.border-left-color]="card.color">
@@ -42,13 +49,6 @@
                     <span class="stat-label">{{ card.label }}</span>
                 </div>
             </div>
-        </div>
-
-        <!-- Time Range Filter (calls + listeners time series) -->
-        <div class="range-filter">
-            <mat-button-toggle-group [value]="range" (change)="setRange($event.value)">
-                <mat-button-toggle *ngFor="let r of ranges" [value]="r.key">{{ r.label }}</mat-button-toggle>
-            </mat-button-toggle-group>
         </div>
 
         <!-- Calls Time Series -->

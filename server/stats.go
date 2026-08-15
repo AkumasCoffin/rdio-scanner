@@ -33,6 +33,11 @@ const statsCacheTTL = 2 * time.Minute
 // buckets. 30 * 24 = 720 bucket entries ≈ 28 KB JSON, ~5 KB gzipped.
 const statsHourBucketRange = 30 * 24 * time.Hour
 
+// statsFineBucketRange — how far back the 10-minute call buckets cover.
+// Only the short filter ranges (≤ 48 h) render at this grain; anything
+// longer uses the 30-day hourly buckets.
+const statsFineBucketRange = 48 * time.Hour
+
 type Stats struct {
 	Controller *Controller
 
@@ -116,6 +121,10 @@ type StatsListenerBucket struct {
 type StatsResponse struct {
 	Overview           StatsOverview            `json:"overview"`
 	HourBuckets        []StatsHourBucket        `json:"hourBuckets"`
+	// CallFineBuckets — dense 10-minute call counts for the last 48 hours,
+	// for the short filter ranges. Zeros are pre-seeded like HourBuckets: a
+	// zero genuinely means no calls.
+	CallFineBuckets    []StatsHourBucket        `json:"callFineBuckets,omitempty"`
 	TopTalkgroups      []StatsTopTalkgroup      `json:"topTalkgroups"`
 	TopSystems         []StatsTopSystem         `json:"topSystems"`
 	TopUnits           []StatsTopUnit           `json:"topUnits"`
@@ -209,6 +218,49 @@ func (stats *Stats) GetHourBuckets(db *Database) ([]StatsHourBucket, error) {
 	result := make([]StatsHourBucket, 0, hours)
 	for i := 0; i < hours; i++ {
 		t := since.Add(time.Duration(i) * time.Hour)
+		result = append(result, StatsHourBucket{
+			StartUtc: t.Format(time.RFC3339),
+			Count:    tally[t],
+		})
+	}
+	return result, nil
+}
+
+// GetCallFineBuckets returns dense 10-minute call counts for the last 48
+// hours — the same shape and scan as GetHourBuckets, just a finer grain
+// over a shorter window so the 1h–48h filter ranges have real curves
+// instead of one or two hourly points. The seed loop runs one slot past
+// the window so the current in-progress slot is included.
+func (stats *Stats) GetCallFineBuckets(db *Database) ([]StatsHourBucket, error) {
+	now := time.Now().UTC().Truncate(listenerBucketInterval)
+	since := now.Add(-statsFineBucketRange)
+
+	tally := map[time.Time]uint{}
+	rows, err := db.Query(
+		"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
+		since.Format(db.DateTimeFormat),
+	)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("stats.callFineBuckets: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var raw any
+		if err := rows.Scan(&raw); err != nil {
+			continue
+		}
+		t, err := db.ParseDateTime(raw)
+		if err != nil {
+			continue
+		}
+		tally[t.UTC().Truncate(listenerBucketInterval)]++
+	}
+
+	n := int(statsFineBucketRange / listenerBucketInterval)
+	result := make([]StatsHourBucket, 0, n+1)
+	for i := 0; i <= n; i++ {
+		t := since.Add(time.Duration(i) * listenerBucketInterval)
 		result = append(result, StatsHourBucket{
 			StartUtc: t.Format(time.RFC3339),
 			Count:    tally[t],
@@ -650,6 +702,13 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 			logErr(err)
 		} else {
 			resp.LastHourTalkgroups = v
+		}
+	})
+	run(func() {
+		if v, err := stats.GetCallFineBuckets(db); err != nil {
+			logErr(err)
+		} else {
+			resp.CallFineBuckets = v
 		}
 	})
 	run(func() {
