@@ -102,6 +102,17 @@ type StatsTalkgroupUnit struct {
 	LastCall  string `json:"lastCall"`
 }
 
+// StatsListenerBucket — listener samples aggregated over [StartUtc,
+// StartUtc + 1h). Unlike StatsHourBucket the series is NOT pre-seeded with
+// zeros: an absent hour means no samples were taken (server down), a present
+// bucket with Avg == 0 means the server was up with nobody listening. The
+// client builds the dense axis and renders absent hours as gaps.
+type StatsListenerBucket struct {
+	StartUtc string  `json:"startUtc"`
+	Avg      float64 `json:"avg"`
+	Peak     uint    `json:"peak"`
+}
+
 type StatsResponse struct {
 	Overview           StatsOverview            `json:"overview"`
 	HourBuckets        []StatsHourBucket        `json:"hourBuckets"`
@@ -109,6 +120,10 @@ type StatsResponse struct {
 	TopSystems         []StatsTopSystem         `json:"topSystems"`
 	TopUnits           []StatsTopUnit           `json:"topUnits"`
 	LastHourTalkgroups []StatsLastHourTalkgroup `json:"lastHourTalkgroups"`
+	// ListenerBuckets is admin-only unless Options.ShowListenerStats is on;
+	// the public handler strips it from a shallow copy of the cached
+	// response. omitempty also hides it on a fresh install with no samples.
+	ListenerBuckets []StatsListenerBucket `json:"listenerBuckets,omitempty"`
 }
 
 func NewStats(controller *Controller) *Stats {
@@ -200,6 +215,21 @@ func (stats *Stats) GetHourBuckets(db *Database) ([]StatsHourBucket, error) {
 		})
 	}
 	return result, nil
+}
+
+// GetListenerBuckets returns hour-grain listener averages/peaks for the last
+// 30 days, aggregated in Go from the minute-grain samples so the SQL stays
+// backend-agnostic (≤ 43 200 rows for the full window). Same UTC wire format
+// as GetHourBuckets, but sparse — see StatsListenerBucket.
+func (stats *Stats) GetListenerBuckets(db *Database) ([]StatsListenerBucket, error) {
+	since := time.Now().UTC().Truncate(time.Hour).Add(-statsHourBucketRange)
+
+	samples, err := stats.Controller.Listeners.GetSamples(db, since)
+	if err != nil {
+		return nil, fmt.Errorf("stats.listenerBuckets: %v", err)
+	}
+
+	return aggregateListenerSamples(samples), nil
 }
 
 // GetTopTalkgroups: top N talkgroups by call count over the last 7 days.
@@ -620,6 +650,13 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 			resp.LastHourTalkgroups = v
 		}
 	})
+	run(func() {
+		if v, err := stats.GetListenerBuckets(db); err != nil {
+			logErr(err)
+		} else {
+			resp.ListenerBuckets = v
+		}
+	})
 
 	wg.Wait()
 
@@ -654,20 +691,31 @@ func (stats *Stats) Handler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	stats.handleStatsRequest(w, r)
+	stats.handleStatsRequest(w, r, true)
 }
 
 func (stats *Stats) PublicHandler(w http.ResponseWriter, r *http.Request) {
-	stats.handleStatsRequest(w, r)
+	// Gated per request rather than baked into the cache, so flipping the
+	// option takes effect immediately instead of after the cache TTL.
+	stats.handleStatsRequest(w, r, stats.Controller.Options.ShowListenerStats)
 }
 
-func (stats *Stats) handleStatsRequest(w http.ResponseWriter, r *http.Request) {
+func (stats *Stats) handleStatsRequest(w http.ResponseWriter, r *http.Request, includeListeners bool) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
 	resp := stats.cachedBuild(stats.Controller.Database)
+
+	if !includeListeners && resp.ListenerBuckets != nil {
+		// Shallow copy — the cached response is shared by every caller, so
+		// stripping the field in place would hide it from admins too until
+		// the next rebuild.
+		shaped := *resp
+		shaped.ListenerBuckets = nil
+		resp = &shaped
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if b, err := json.Marshal(resp); err == nil {

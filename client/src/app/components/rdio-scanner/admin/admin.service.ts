@@ -300,6 +300,7 @@ export interface Options {
     logPruneDays?: number;
     logPruneCount?: number;
     searchPatchedTalkgroups?: boolean;
+    showListenerStats?: boolean;
     showListenersCount?: boolean;
     sortByGroups?: boolean;
     sortByTags?: boolean;
@@ -400,6 +401,12 @@ export interface StatsTalkgroupUnit {
     lastCall: string;
 }
 
+export interface StatsListenerBucket {
+    startUtc: string;
+    avg: number;
+    peak: number;
+}
+
 export interface StatsResponse {
     overview: StatsOverview;
     /**
@@ -413,6 +420,12 @@ export interface StatsResponse {
     topSystems: StatsTopSystem[];
     topUnits: StatsTopUnit[];
     lastHourTalkgroups: StatsLastHourTalkgroup[];
+    /**
+     * Hour-granular listener averages/peaks, sparse: absent hours mean the
+     * server was down, a present bucket with avg 0 means nobody listening.
+     * Absent entirely on the public endpoint unless showListenerStats is on.
+     */
+    listenerBuckets?: StatsListenerBucket[];
 }
 
 enum url {
@@ -789,6 +802,7 @@ export class RdioScannerAdminService implements OnDestroy {
             logPruneDays: [options?.logPruneDays, [Validators.min(0)]],
             logPruneCount: [options?.logPruneCount, [Validators.min(0)]],
 			searchPatchedTalkgroups: [options?.searchPatchedTalkgroups],
+			showListenerStats: [options?.showListenerStats ?? false],
 			showListenersCount: [options?.showListenersCount],
             sortByGroups: [options?.sortByGroups ?? false],
             sortByTags: [options?.sortByTags ?? false],

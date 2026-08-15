@@ -113,6 +113,41 @@
             </mat-card>
         </div>
 
+        <!-- Listener Statistics -->
+        <ng-container *ngIf="stats.listenerBuckets?.length">
+            <div class="charts-row">
+                <mat-card class="chart-card">
+                    <div class="chart-container">
+                        <canvas baseChart
+                            [type]="listenersChartType"
+                            [data]="listenersChartData"
+                            [options]="listenersChartOptions">
+                        </canvas>
+                    </div>
+                </mat-card>
+            </div>
+            <div class="charts-row">
+                <mat-card class="chart-card">
+                    <div class="chart-container">
+                        <canvas baseChart
+                            [type]="listenersHourChartType"
+                            [data]="listenersHourChartData"
+                            [options]="listenersHourChartOptions">
+                        </canvas>
+                    </div>
+                </mat-card>
+                <mat-card class="chart-card">
+                    <div class="chart-container">
+                        <canvas baseChart
+                            [type]="listenersDayChartType"
+                            [data]="listenersDayChartData"
+                            [options]="listenersDayChartOptions">
+                        </canvas>
+                    </div>
+                </mat-card>
+            </div>
+        </ng-container>
+
         <!-- Top Talkgroups Table -->
         <mat-card class="table-card">
             <mat-card-header>

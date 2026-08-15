@@ -88,6 +88,37 @@
             </div>
         </mat-card>
 
+        <!-- Listener Statistics (present only when enabled by the admin) -->
+        <ng-container *ngIf="stats.listenerBuckets?.length">
+            <mat-card class="chart-card">
+                <div class="chart-container">
+                    <canvas baseChart
+                        [type]="listenersChartType"
+                        [data]="listenersChartData"
+                        [options]="listenersChartOptions">
+                    </canvas>
+                </div>
+            </mat-card>
+            <mat-card class="chart-card">
+                <div class="chart-container small">
+                    <canvas baseChart
+                        [type]="listenersHourChartType"
+                        [data]="listenersHourChartData"
+                        [options]="listenersHourChartOptions">
+                    </canvas>
+                </div>
+            </mat-card>
+            <mat-card class="chart-card">
+                <div class="chart-container small">
+                    <canvas baseChart
+                        [type]="listenersDayChartType"
+                        [data]="listenersDayChartData"
+                        [options]="listenersDayChartOptions">
+                    </canvas>
+                </div>
+            </mat-card>
+        </ng-container>
+
         <!-- Top Talkgroups List -->
         <mat-card class="table-card" *ngIf="stats.topTalkgroups?.length">
             <div class="table-header">
