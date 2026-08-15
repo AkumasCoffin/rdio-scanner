@@ -49,8 +49,11 @@
             <mat-form-field>
                 <mat-label>Import into</mat-label>
                 <mat-select [(ngModel)]="target" (selectionChange)="updateUnknownSystems()">
-                    <mat-optgroup label="Systems">
-                        <mat-option [value]="newSystemTarget">New system&hellip;</mat-option>
+                    <mat-option [value]="newSystemTarget">New system&hellip;</mat-option>
+                    <!-- With Sort By Groups/Tags on, talkgroups import by
+                         that axis INSTEAD of into a specific system; only
+                         the new-system escape hatch stays. -->
+                    <mat-optgroup label="Systems" *ngIf="!(groupTargets.length || tagTargets.length)">
                         <mat-option *ngFor="let t of systemTargets" [value]="t">{{ systemLabel(t.system) }}</mat-option>
                     </mat-optgroup>
                     <mat-optgroup label="Groups" *ngIf="groupTargets.length">
