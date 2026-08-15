@@ -1,0 +1,44 @@
+<section>
+    <p class="mat-body">step 1: select data to export</p>
+    <p class="text-center">
+        <mat-radio-group [(ngModel)]="dataType" (change)="onDataTypeChange()">
+            <mat-radio-button value="talkgroups">Talkgroups</mat-radio-button>
+            <mat-radio-button value="units">Units</mat-radio-button>
+            <mat-radio-button value="config">Config (JSON)</mat-radio-button>
+        </mat-radio-group>
+    </p>
+</section>
+
+<section *ngIf="dataType !== 'config'">
+    <p class="mat-body">step 2: select scope</p>
+    <p class="text-center" *ngIf="hasSystems; else noSystems">
+        <mat-form-field>
+            <mat-label>Scope</mat-label>
+            <mat-select [(ngModel)]="scope">
+                <mat-option [value]="allScope">All systems</mat-option>
+                <mat-optgroup label="Systems">
+                    <mat-option *ngFor="let s of systemScopes" [value]="s">{{ systemLabel(s.system) }}</mat-option>
+                </mat-optgroup>
+                <mat-optgroup label="Groups" *ngIf="dataType === 'talkgroups' && groupScopes.length">
+                    <mat-option *ngFor="let g of groupScopes" [value]="g">{{ g.label }}</mat-option>
+                </mat-optgroup>
+                <mat-optgroup label="Tags" *ngIf="dataType === 'talkgroups' && tagScopes.length">
+                    <mat-option *ngFor="let t of tagScopes" [value]="t">{{ t.label }}</mat-option>
+                </mat-optgroup>
+            </mat-select>
+        </mat-form-field>
+    </p>
+    <ng-template #noSystems>
+        <p class="mat-body text-center">No systems defined</p>
+    </ng-template>
+</section>
+
+<section>
+    <p class="mat-body">step {{ dataType === 'config' ? 2 : 3 }}: export</p>
+    <p class="text-center">
+        <button mat-raised-button [disabled]="!canExport" (click)="export()">Export</button>
+    </p>
+    <p *ngIf="dataType === 'config'" class="mat-caption text-center">
+        Exports the whole configuration as a JSON file, re-importable from the Import panel.
+    </p>
+</section>

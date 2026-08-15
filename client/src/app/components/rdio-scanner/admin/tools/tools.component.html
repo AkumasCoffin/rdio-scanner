@@ -1,21 +1,21 @@
 <mat-accordion displayMode="flat">
-    <mat-expansion-panel>
+    <mat-expansion-panel (opened)="importComponent.refresh()">
         <mat-expansion-panel-header>
             <mat-panel-title>
-                <mat-icon>description</mat-icon>
-                Import Talkgroups
+                <mat-icon>file_upload</mat-icon>
+                Import
             </mat-panel-title>
         </mat-expansion-panel-header>
-        <rdio-scanner-admin-import-talkgroups (config)="config.emit($event)"></rdio-scanner-admin-import-talkgroups>
+        <rdio-scanner-admin-import #importComponent (config)="config.emit($event)"></rdio-scanner-admin-import>
     </mat-expansion-panel>
-    <mat-expansion-panel>
+    <mat-expansion-panel (opened)="exportComponent.refresh()">
         <mat-expansion-panel-header>
             <mat-panel-title>
-                <mat-icon>description</mat-icon>
-                Import Units
+                <mat-icon>file_download</mat-icon>
+                Export
             </mat-panel-title>
         </mat-expansion-panel-header>
-        <rdio-scanner-admin-import-units (config)="config.emit($event)"></rdio-scanner-admin-import-units>
+        <rdio-scanner-admin-export #exportComponent></rdio-scanner-admin-export>
     </mat-expansion-panel>
     <mat-expansion-panel>
         <mat-expansion-panel-header>
@@ -25,15 +25,6 @@
             </mat-panel-title>
         </mat-expansion-panel-header>
         <rdio-scanner-admin-password></rdio-scanner-admin-password>
-    </mat-expansion-panel>
-    <mat-expansion-panel>
-        <mat-expansion-panel-header>
-            <mat-panel-title>
-                <mat-icon>sync_alt</mat-icon>
-                Import/export config
-            </mat-panel-title>
-        </mat-expansion-panel-header>
-        <rdio-scanner-admin-import-export-config (config)="config.emit($event)"></rdio-scanner-admin-import-export-config>
     </mat-expansion-panel>
     <mat-expansion-panel>
         <mat-expansion-panel-header>

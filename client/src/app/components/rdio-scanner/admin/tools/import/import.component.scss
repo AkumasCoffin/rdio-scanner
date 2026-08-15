@@ -2,17 +2,22 @@
   display: flex;
   flex-direction: row;
   justify-content: center;
+  flex-wrap: wrap;
 
   > *:not(:last-child) {
     margin-right: 2rem;
   }
 }
 
+.mat-form-field {
+  min-width: 280px;
+}
+
 .mat-table {
   min-width: 720px;
 }
 
-.mat-cell >  span {
+.mat-cell > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
