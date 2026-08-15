@@ -85,6 +85,23 @@ func NewOptions() *Options {
 	}
 }
 
+// GetShowListenerStats reads the option under the mutex. The admin save
+// rewrites this struct in place (FromMap/Read hold the mutex), so request
+// handlers reading it lock-free would race the save.
+func (options *Options) GetShowListenerStats() bool {
+	options.mutex.Lock()
+	defer options.mutex.Unlock()
+	return options.ShowListenerStats
+}
+
+// GetSortLens returns the SortByGroups/SortByTags pair under the mutex —
+// same reasoning as GetShowListenerStats, read from the stats build path.
+func (options *Options) GetSortLens() (byGroups bool, byTags bool) {
+	options.mutex.Lock()
+	defer options.mutex.Unlock()
+	return options.SortByGroups, options.SortByTags
+}
+
 // FromMap overlays any fields present in m onto the current options.
 // Missing fields are intentionally left alone so a partial payload from
 // the admin UI cannot accidentally reset unrelated settings.

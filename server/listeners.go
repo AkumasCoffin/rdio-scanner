@@ -48,12 +48,24 @@ type listenerSample struct {
 // written on purpose: a gap in the series means the server was down, a zero
 // means the server was up with nobody listening — the charts render them
 // differently.
+//
+// The insert ignores timestamp collisions rather than failing: the epoch
+// second is the primary key, and a crash-loop restart in the same second,
+// an NTP step backwards, or two instances sharing one database would
+// otherwise turn every colliding tick into a lost sample and a false
+// "server down" gap on the chart.
 func (listeners *Listeners) Sample(db *Database, count int) error {
-	_, err := db.Exec(
-		"insert into `rdioScannerListeners` (`timestamp`, `count`) values (?, ?)",
-		time.Now().UTC().Unix(), count,
-	)
-	if err != nil {
+	var query string
+	switch db.Config.DbType {
+	case DbTypeSqlite:
+		query = "insert or ignore into `rdioScannerListeners` (`timestamp`, `count`) values (?, ?)"
+	case DbTypePostgres:
+		query = "insert into `rdioScannerListeners` (`timestamp`, `count`) values (?, ?) on conflict (`timestamp`) do nothing"
+	default:
+		query = "insert ignore into `rdioScannerListeners` (`timestamp`, `count`) values (?, ?)"
+	}
+
+	if _, err := db.Exec(query, time.Now().UTC().Unix(), count); err != nil {
 		return fmt.Errorf("listeners.sample: %v", err)
 	}
 	return nil

@@ -381,41 +381,33 @@ func (stats *Stats) GetTopSystems(db *Database, limit int) ([]StatsTopSystem, er
 	return result, nil
 }
 
-// GetTopCategories returns the "Top ..." ranking for the last 7 days,
-// aggregated by group when SortByGroups is on, by tag when SortByTags is
-// on, and by system otherwise — the same lens the main UI sorts talkgroups
-// by. Group/tag mode tallies per (system, talkgroup) in SQL, then resolves
-// each pair to its label via the systems config; talkgroups without a
-// resolvable group or tag land in "Other".
-func (stats *Stats) GetTopCategories(db *Database, limit int) ([]StatsTopCategory, string, error) {
-	options := stats.Controller.Options
-
-	kind := "systems"
-	if options.SortByGroups {
-		kind = "groups"
-	} else if options.SortByTags {
-		kind = "tags"
+// topCategoriesKind picks the "Top ..." lens from the sort options: groups
+// when SortByGroups is on, tags when SortByTags is on, systems otherwise —
+// the same lens the main UI sorts talkgroups by.
+func (stats *Stats) topCategoriesKind() string {
+	byGroups, byTags := stats.Controller.Options.GetSortLens()
+	if byGroups {
+		return "groups"
 	}
-
-	if kind == "systems" {
-		systems, err := stats.GetTopSystems(db, limit)
-		if err != nil {
-			return nil, kind, err
-		}
-		result := make([]StatsTopCategory, 0, len(systems))
-		for _, s := range systems {
-			result = append(result, StatsTopCategory{Label: s.SystemLabel, Count: s.Count})
-		}
-		return result, kind, nil
+	if byTags {
+		return "tags"
 	}
+	return "systems"
+}
 
+// getTopCategoriesGrouped returns the last 7 days ranked by group or tag:
+// tally per (system, talkgroup) in SQL, then resolve each pair to its label
+// via the systems config; talkgroups without a resolvable group or tag land
+// in "Other". The systems lens never comes here — build() derives it from
+// the TopSystems aggregation it already ran.
+func (stats *Stats) getTopCategoriesGrouped(db *Database, limit int, kind string) ([]StatsTopCategory, error) {
 	since := time.Now().UTC().AddDate(0, 0, -7)
 	rows, err := db.Query(
 		"select `system`, `talkgroup`, count(*) as c from `rdioScannerCalls` where `dateTime` >= ? group by `system`, `talkgroup`",
 		since.Format(db.DateTimeFormat),
 	)
 	if err != nil && err != sql.ErrNoRows {
-		return nil, kind, fmt.Errorf("stats.topCategories: %v", err)
+		return nil, fmt.Errorf("stats.topCategories: %v", err)
 	}
 	defer rows.Close()
 
@@ -445,18 +437,16 @@ func (stats *Stats) GetTopCategories(db *Database, limit int) ([]StatsTopCategor
 	if len(result) > limit {
 		result = result[:limit]
 	}
-	return result, kind, nil
+	return result, nil
 }
 
+// categoryLabel resolves a (system, talkgroup) pair to its group or tag
+// label through the mutex-taking lookup helpers — the admin config save
+// repopulates these lists in place, so walking Systems.List lock-free here
+// would race it.
 func (stats *Stats) categoryLabel(kind string, systemId uint, talkgroupId uint) string {
-	for _, sys := range stats.Controller.Systems.List {
-		if sys.Id != systemId {
-			continue
-		}
-		for _, tg := range sys.Talkgroups.List {
-			if tg.Id != talkgroupId {
-				continue
-			}
+	if sys, ok := stats.Controller.Systems.GetSystem(systemId); ok {
+		if tg, ok := sys.Talkgroups.GetTalkgroup(talkgroupId); ok {
 			if kind == "groups" {
 				if g, ok := stats.Controller.Groups.GetGroup(tg.GroupId); ok && g.Label != "" {
 					return g.Label
@@ -466,9 +456,7 @@ func (stats *Stats) categoryLabel(kind string, systemId uint, talkgroupId uint) 
 					return t.Label
 				}
 			}
-			break
 		}
-		break
 	}
 	return "Other"
 }
@@ -795,14 +783,19 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 			resp.TopSystems = v
 		}
 	})
-	run(func() {
-		if v, kind, err := stats.GetTopCategories(db, 10); err != nil {
-			logErr(err)
-		} else {
-			resp.TopCategories = v
-			resp.TopCategoriesKind = kind
-		}
-	})
+	// The lens is decided once per build; the systems case is filled in
+	// after the wait from the TopSystems aggregation instead of re-running
+	// the identical query.
+	topKind := stats.topCategoriesKind()
+	if topKind != "systems" {
+		run(func() {
+			if v, err := stats.getTopCategoriesGrouped(db, 10, topKind); err != nil {
+				logErr(err)
+			} else {
+				resp.TopCategories = v
+			}
+		})
+	}
 	run(func() {
 		if v, err := stats.GetTopUnits(db, 10); err != nil {
 			logErr(err)
@@ -833,6 +826,15 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 	})
 
 	wg.Wait()
+
+	resp.TopCategoriesKind = topKind
+	if topKind == "systems" {
+		categories := make([]StatsTopCategory, 0, len(resp.TopSystems))
+		for _, s := range resp.TopSystems {
+			categories = append(categories, StatsTopCategory{Label: s.SystemLabel, Count: s.Count})
+		}
+		resp.TopCategories = categories
+	}
 
 	return resp
 }
@@ -871,7 +873,7 @@ func (stats *Stats) Handler(w http.ResponseWriter, r *http.Request) {
 func (stats *Stats) PublicHandler(w http.ResponseWriter, r *http.Request) {
 	// Gated per request rather than baked into the cache, so flipping the
 	// option takes effect immediately instead of after the cache TTL.
-	stats.handleStatsRequest(w, r, stats.Controller.Options.ShowListenerStats)
+	stats.handleStatsRequest(w, r, stats.Controller.Options.GetShowListenerStats())
 }
 
 func (stats *Stats) handleStatsRequest(w http.ResponseWriter, r *http.Request, includeListeners bool) {
