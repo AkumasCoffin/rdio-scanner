@@ -125,15 +125,14 @@
         </div>
 
         <!-- Top Talkgroups Table -->
-        <mat-card class="table-card">
-            <mat-card-header>
-                <mat-card-title>
+        <mat-expansion-panel class="table-panel">
+            <mat-expansion-panel-header>
+                <mat-panel-title>
                     <mat-icon>leaderboard</mat-icon>
                     Top Talkgroups (Last 7 Days)
-                </mat-card-title>
-            </mat-card-header>
-            <mat-card-content>
-                <table mat-table [dataSource]="stats.topTalkgroups" class="talkgroups-table">
+                </mat-panel-title>
+            </mat-expansion-panel-header>
+            <table mat-table [dataSource]="stats.topTalkgroups" class="talkgroups-table">
                     <ng-container matColumnDef="rank">
                         <th mat-header-cell *matHeaderCellDef>#</th>
                         <td mat-cell *matCellDef="let tg; let i = index">{{ i + 1 }}</td>
@@ -159,23 +158,21 @@
                     <tr mat-header-row *matHeaderRowDef="['rank', 'system', 'talkgroup', 'name', 'count']"></tr>
                     <tr mat-row *matRowDef="let row; columns: ['rank', 'system', 'talkgroup', 'name', 'count']"></tr>
                 </table>
-                <div *ngIf="!stats.topTalkgroups?.length" class="no-data">
-                    <mat-icon>info</mat-icon>
-                    <span>No talkgroup data available</span>
-                </div>
-            </mat-card-content>
-        </mat-card>
+            <div *ngIf="!stats.topTalkgroups?.length" class="no-data">
+                <mat-icon>info</mat-icon>
+                <span>No talkgroup data available</span>
+            </div>
+        </mat-expansion-panel>
 
         <!-- Top Units Table -->
-        <mat-card class="table-card" *ngIf="stats.topUnits?.length">
-            <mat-card-header>
-                <mat-card-title>
+        <mat-expansion-panel class="table-panel" *ngIf="stats.topUnits?.length">
+            <mat-expansion-panel-header>
+                <mat-panel-title>
                     <mat-icon>badge</mat-icon>
                     Top Units (Last 7 Days)
-                </mat-card-title>
-            </mat-card-header>
-            <mat-card-content>
-                <table mat-table [dataSource]="stats.topUnits" class="talkgroups-table">
+                </mat-panel-title>
+            </mat-expansion-panel-header>
+            <table mat-table [dataSource]="stats.topUnits" class="talkgroups-table">
                     <ng-container matColumnDef="rank">
                         <th mat-header-cell *matHeaderCellDef>#</th>
                         <td mat-cell *matCellDef="let unit; let i = index">{{ i + 1 }}</td>
@@ -197,8 +194,7 @@
                     <tr mat-header-row *matHeaderRowDef="['rank', 'system', 'unit', 'count']"></tr>
                     <tr mat-row *matRowDef="let row; columns: ['rank', 'system', 'unit', 'count']"></tr>
                 </table>
-            </mat-card-content>
-        </mat-card>
+        </mat-expansion-panel>
     </div>
 
     <!-- Units Dialog Overlay -->

@@ -408,3 +408,35 @@
         }
     }
 }
+
+mat-expansion-panel.table-panel {
+    display: block;
+    color: var(--stats-text);
+    margin-bottom: 16px;
+
+    .mat-expansion-panel-header-title {
+        align-items: center;
+        gap: 8px;
+        color: var(--stats-text);
+        font-weight: 500;
+
+        mat-icon {
+            color: var(--chart-orange);
+            font-size: 20px;
+            width: 20px;
+            height: 20px;
+        }
+
+        span {
+            font-size: 0.875rem;
+        }
+    }
+
+    ::ng-deep .mat-expansion-panel-body {
+        padding: 0;
+    }
+
+    ::ng-deep .mat-expansion-indicator::after {
+        color: var(--stats-text-dim);
+    }
+}

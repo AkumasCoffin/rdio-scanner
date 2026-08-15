@@ -96,11 +96,13 @@
         </mat-card>
 
         <!-- Top Talkgroups List -->
-        <mat-card class="table-card" *ngIf="stats.topTalkgroups?.length">
-            <div class="table-header">
-                <mat-icon>leaderboard</mat-icon>
-                <span>Top Talkgroups (7 Days)</span>
-            </div>
+        <mat-expansion-panel class="table-card table-panel" *ngIf="stats.topTalkgroups?.length">
+            <mat-expansion-panel-header>
+                <mat-panel-title>
+                    <mat-icon>leaderboard</mat-icon>
+                    <span>Top Talkgroups (7 Days)</span>
+                </mat-panel-title>
+            </mat-expansion-panel-header>
             <div class="talkgroups-list">
                 <div *ngFor="let tg of stats.topTalkgroups; let i = index" class="talkgroup-item">
                     <span class="rank">{{ i + 1 }}</span>
@@ -111,14 +113,16 @@
                     <span class="call-count">{{ tg.count }}</span>
                 </div>
             </div>
-        </mat-card>
+        </mat-expansion-panel>
 
         <!-- Top Units List -->
-        <mat-card class="table-card" *ngIf="stats.topUnits?.length">
-            <div class="table-header">
-                <mat-icon>badge</mat-icon>
-                <span>Top Units (7 Days)</span>
-            </div>
+        <mat-expansion-panel class="table-card table-panel" *ngIf="stats.topUnits?.length">
+            <mat-expansion-panel-header>
+                <mat-panel-title>
+                    <mat-icon>badge</mat-icon>
+                    <span>Top Units (7 Days)</span>
+                </mat-panel-title>
+            </mat-expansion-panel-header>
             <div class="talkgroups-list">
                 <div *ngFor="let unit of stats.topUnits; let i = index" class="talkgroup-item">
                     <span class="rank">{{ i + 1 }}</span>
@@ -129,7 +133,7 @@
                     <span class="call-count">{{ unit.count }}</span>
                 </div>
             </div>
-        </mat-card>
+        </mat-expansion-panel>
     </div>
 
     <!-- Units Dialog Overlay -->
