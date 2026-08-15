@@ -26,7 +26,6 @@ import (
 const (
 	listenerSampleInterval = time.Minute
 	listenerBucketInterval = 10 * time.Minute
-	listenerRetention      = 90 * 24 * time.Hour
 )
 
 // Listeners persists periodic samples of the connected-listener count so the
@@ -94,13 +93,16 @@ func (listeners *Listeners) GetSamples(db *Database, since time.Time) ([]listene
 	return samples, nil
 }
 
-// Prune deletes samples older than listenerRetention. Unlike calls and logs
-// this retention is a constant, not an option — the table grows by one small
-// row a minute, so there is nothing worth tuning.
-func (listeners *Listeners) Prune(db *Database) error {
+// Prune deletes samples older than days — the same PruneDays option that
+// bounds call retention, with the same semantics: 0 disables pruning.
+func (listeners *Listeners) Prune(db *Database, days uint) error {
+	if days == 0 {
+		return nil
+	}
+
 	_, err := db.Exec(
 		"delete from `rdioScannerListeners` where `timestamp` < ?",
-		time.Now().Add(-listenerRetention).UTC().Unix(),
+		time.Now().AddDate(0, 0, -int(days)).UTC().Unix(),
 	)
 	if err != nil {
 		return fmt.Errorf("listeners.prune: %v", err)

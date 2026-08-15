@@ -283,15 +283,15 @@ func (stats *Stats) GetCallFineBuckets(db *Database) ([]StatsHourBucket, error) 
 }
 
 // GetListenerBuckets returns 10-minute-grain listener averages/peaks over
-// the whole 90-day retention, aggregated in Go from the minute-grain samples
-// so the SQL stays backend-agnostic (≤ 129 600 rows in, ≤ 12 960 buckets
-// out — a few tens of KB gzipped, and the client's "All" range filter is
-// the reason the full retention ships rather than a 30-day slice). Same UTC
-// wire format as GetHourBuckets, but sparse — see StatsListenerBucket.
+// everything the table holds, aggregated in Go from the minute-grain
+// samples so the SQL stays backend-agnostic. Retention is bounded by the
+// PruneDays option (the prune keeps the table to that window; the client's
+// "All" range renders whatever ships), so no extra time filter is applied
+// here. Default 7-day retention is ~10 080 rows in, ~1 008 buckets out.
+// Same UTC wire format as GetHourBuckets, but sparse — see
+// StatsListenerBucket.
 func (stats *Stats) GetListenerBuckets(db *Database) ([]StatsListenerBucket, error) {
-	since := time.Now().UTC().Truncate(listenerBucketInterval).Add(-listenerRetention)
-
-	samples, err := stats.Controller.Listeners.GetSamples(db, since)
+	samples, err := stats.Controller.Listeners.GetSamples(db, time.Unix(0, 0))
 	if err != nil {
 		return nil, fmt.Errorf("stats.listenerBuckets: %v", err)
 	}

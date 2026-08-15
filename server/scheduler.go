@@ -41,12 +41,12 @@ func (scheduler *Scheduler) pruneDatabase() error {
 	opts := scheduler.Controller.Options
 	db := scheduler.Controller.Database
 
-	// Listener samples have a constant retention, so they prune before the
-	// options guard below — with PruneDays and LogPrune* all zero the guard
-	// returns early and would otherwise let this table grow forever. Log
-	// and continue on failure: returning here would let a broken listeners
-	// table block call and log pruning until the disk fills.
-	if err := scheduler.Controller.Listeners.Prune(db); err != nil {
+	// Listener samples share the PruneDays retention (0 = keep forever,
+	// same as calls) but not the plugin archive filter — samples are not
+	// calls. Log and continue on failure: returning here would let a
+	// broken listeners table block call and log pruning until the disk
+	// fills.
+	if err := scheduler.Controller.Listeners.Prune(db, opts.PruneDays); err != nil {
 		scheduler.Controller.Logs.LogEvent(LogLevelError, err.Error())
 	}
 
