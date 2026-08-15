@@ -84,13 +84,13 @@
             </div>
         </mat-card>
 
-        <!-- Top Systems Chart -->
-        <mat-card class="chart-card" *ngIf="stats.topSystems?.length">
-            <div class="chart-container doughnut">
+        <!-- Top Systems / Groups / Tags Chart -->
+        <mat-card class="chart-card" *ngIf="stats.topCategories?.length || stats.topSystems?.length">
+            <div class="chart-container">
                 <canvas baseChart
-                    [type]="systemsChartType"
-                    [data]="systemsChartData"
-                    [options]="systemsChartOptions">
+                    [type]="topChartType"
+                    [data]="topChartData"
+                    [options]="topChartOptions">
                 </canvas>
             </div>
         </mat-card>

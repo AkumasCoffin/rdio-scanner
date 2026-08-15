@@ -79,6 +79,11 @@ interface StatsListenerBucket {
     peak: number;
 }
 
+interface StatsTopCategory {
+    label: string;
+    count: number;
+}
+
 type StatsRange = '1h' | '6h' | '12h' | '24h' | '48h' | '1w' | '1m' | 'all';
 
 interface StatsResponse {
@@ -88,6 +93,9 @@ interface StatsResponse {
     callFineBuckets?: StatsHourBucket[];
     topTalkgroups: StatsTopTalkgroup[];
     topSystems: StatsTopSystem[];
+    // Option-aware "Top ..." ranking: groups / tags / systems.
+    topCategories?: StatsTopCategory[];
+    topCategoriesKind?: string;
     topUnits: StatsTopUnit[];
     lastHourTalkgroups: StatsLastHourTalkgroup[];
     // Absent unless the administrator enabled Show Listener Statistics —
@@ -147,16 +155,9 @@ export class RdioScannerPublicStatsComponent implements OnInit {
     callsChartData: ChartData<'line'> = { labels: [], datasets: [] };
     callsChartOptions: ChartConfiguration['options'] = this.timeSeriesOptions('Calls (Last 24 Hours)', false);
 
-    systemsChartType: ChartType = 'doughnut';
-    systemsChartData: ChartData<'doughnut'> = { labels: [], datasets: [] };
-    systemsChartOptions: ChartConfiguration['options'] = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { position: 'bottom', labels: { color: '#e0e0e0', boxWidth: 12, padding: 8 } },
-            title: { display: true, text: 'Top Systems', color: '#e0e0e0' },
-        },
-    };
+    topChartType: ChartType = 'bar';
+    topChartData: ChartData<'bar'> = { labels: [], datasets: [] };
+    topChartOptions: ChartConfiguration['options'] = this.topOptions('Top Systems (Last 7 Days)');
 
     listenersChartType: ChartType = 'line';
     listenersChartData: ChartData<'line'> = { labels: [], datasets: [] };
@@ -192,7 +193,7 @@ export class RdioScannerPublicStatsComponent implements OnInit {
             if (this.stats) {
                 this.buildOverviewCards();
                 this.buildHourlyChart();
-                this.buildSystemsChart();
+                this.buildTopChart();
                 this.buildCallsChart();
                 this.buildListenerCharts();
             }
@@ -419,19 +420,46 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         };
     }
 
-    private buildSystemsChart(): void {
-        if (!this.stats?.topSystems) return;
+    private topOptions(title: string): ChartConfiguration['options'] {
+        // Horizontal bars: long system/group/tag labels read far better on
+        // a y axis than crammed into a doughnut legend.
+        return {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                title: { display: true, text: title, color: '#e0e0e0' },
+            },
+            scales: {
+                x: { beginAtZero: true, ticks: { color: '#a0a0a0', precision: 0 }, grid: { color: 'rgba(255,255,255,0.1)' } },
+                y: { ticks: { color: '#e0e0e0' }, grid: { display: false } },
+            },
+        };
+    }
 
-        const labels = this.stats.topSystems.map(s => s.systemLabel);
-        const data = this.stats.topSystems.map(s => s.count);
+    private buildTopChart(): void {
+        // Prefer the option-aware ranking (by group/tag/system, following
+        // Sort By Groups / Sort By Tags); fall back to plain top systems
+        // when talking to a server that predates topCategories.
+        const categories = this.stats?.topCategories?.length
+            ? this.stats.topCategories
+            : (this.stats?.topSystems || []).map(s => ({ label: s.systemLabel, count: s.count }));
+        if (!categories.length) return;
 
-        this.systemsChartData = {
-            labels,
+        const kind = this.stats?.topCategoriesKind === 'groups' ? 'Groups'
+            : this.stats?.topCategoriesKind === 'tags' ? 'Tags'
+                : 'Systems';
+        const truncate = (s: string) => s.length > 22 ? `${s.slice(0, 21)}…` : s;
+
+        this.topChartOptions = this.topOptions(`Top ${kind} (Last 7 Days)`);
+        this.topChartData = {
+            labels: categories.map(c => truncate(c.label)),
             datasets: [{
-                data,
-                backgroundColor: this.colors.slice(0, data.length),
-                borderColor: 'rgba(48, 48, 48, 1)',
-                borderWidth: 2,
+                data: categories.map(c => c.count),
+                backgroundColor: this.colors.slice(0, categories.length),
+                borderWidth: 0,
+                borderRadius: 4,
             }],
         };
     }

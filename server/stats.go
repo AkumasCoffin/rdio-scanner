@@ -82,6 +82,14 @@ type StatsTopSystem struct {
 	Count       uint   `json:"count"`
 }
 
+// StatsTopCategory — one slice of the "Top ..." ranking chart. Which lens
+// the ranking uses (system, group, or tag) follows the SortByGroups /
+// SortByTags options, mirroring how the main UI organizes talkgroups.
+type StatsTopCategory struct {
+	Label string `json:"label"`
+	Count uint   `json:"count"`
+}
+
 type StatsTopUnit struct {
 	SystemId    uint   `json:"systemId"`
 	SystemLabel string `json:"systemLabel"`
@@ -127,6 +135,11 @@ type StatsResponse struct {
 	CallFineBuckets    []StatsHourBucket        `json:"callFineBuckets,omitempty"`
 	TopTalkgroups      []StatsTopTalkgroup      `json:"topTalkgroups"`
 	TopSystems         []StatsTopSystem         `json:"topSystems"`
+	// TopCategories is what the "Top ..." chart renders: by group when
+	// SortByGroups is on, by tag when SortByTags is on, else by system.
+	// TopSystems stays for compatibility.
+	TopCategories     []StatsTopCategory `json:"topCategories,omitempty"`
+	TopCategoriesKind string             `json:"topCategoriesKind,omitempty"`
 	TopUnits           []StatsTopUnit           `json:"topUnits"`
 	LastHourTalkgroups []StatsLastHourTalkgroup `json:"lastHourTalkgroups"`
 	// ListenerBuckets is admin-only unless Options.ShowListenerStats is on;
@@ -366,6 +379,98 @@ func (stats *Stats) GetTopSystems(db *Database, limit int) ([]StatsTopSystem, er
 		result = append(result, item)
 	}
 	return result, nil
+}
+
+// GetTopCategories returns the "Top ..." ranking for the last 7 days,
+// aggregated by group when SortByGroups is on, by tag when SortByTags is
+// on, and by system otherwise — the same lens the main UI sorts talkgroups
+// by. Group/tag mode tallies per (system, talkgroup) in SQL, then resolves
+// each pair to its label via the systems config; talkgroups without a
+// resolvable group or tag land in "Other".
+func (stats *Stats) GetTopCategories(db *Database, limit int) ([]StatsTopCategory, string, error) {
+	options := stats.Controller.Options
+
+	kind := "systems"
+	if options.SortByGroups {
+		kind = "groups"
+	} else if options.SortByTags {
+		kind = "tags"
+	}
+
+	if kind == "systems" {
+		systems, err := stats.GetTopSystems(db, limit)
+		if err != nil {
+			return nil, kind, err
+		}
+		result := make([]StatsTopCategory, 0, len(systems))
+		for _, s := range systems {
+			result = append(result, StatsTopCategory{Label: s.SystemLabel, Count: s.Count})
+		}
+		return result, kind, nil
+	}
+
+	since := time.Now().UTC().AddDate(0, 0, -7)
+	rows, err := db.Query(
+		"select `system`, `talkgroup`, count(*) as c from `rdioScannerCalls` where `dateTime` >= ? group by `system`, `talkgroup`",
+		since.Format(db.DateTimeFormat),
+	)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, kind, fmt.Errorf("stats.topCategories: %v", err)
+	}
+	defer rows.Close()
+
+	tally := map[string]uint{}
+	for rows.Next() {
+		var (
+			systemId    uint
+			talkgroupId uint
+			count       uint
+		)
+		if err := rows.Scan(&systemId, &talkgroupId, &count); err != nil {
+			continue
+		}
+		tally[stats.categoryLabel(kind, systemId, talkgroupId)] += count
+	}
+
+	result := make([]StatsTopCategory, 0, len(tally))
+	for label, count := range tally {
+		result = append(result, StatsTopCategory{Label: label, Count: count})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Count != result[j].Count {
+			return result[i].Count > result[j].Count
+		}
+		return result[i].Label < result[j].Label
+	})
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, kind, nil
+}
+
+func (stats *Stats) categoryLabel(kind string, systemId uint, talkgroupId uint) string {
+	for _, sys := range stats.Controller.Systems.List {
+		if sys.Id != systemId {
+			continue
+		}
+		for _, tg := range sys.Talkgroups.List {
+			if tg.Id != talkgroupId {
+				continue
+			}
+			if kind == "groups" {
+				if g, ok := stats.Controller.Groups.GetGroup(tg.GroupId); ok && g.Label != "" {
+					return g.Label
+				}
+			} else {
+				if t, ok := stats.Controller.Tags.GetTag(tg.TagId); ok && t.Label != "" {
+					return t.Label
+				}
+			}
+			break
+		}
+		break
+	}
+	return "Other"
 }
 
 // extractUnitsFromSources pulls unit IDs out of the per-call `sources` JSON
@@ -688,6 +793,14 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 			logErr(err)
 		} else {
 			resp.TopSystems = v
+		}
+	})
+	run(func() {
+		if v, kind, err := stats.GetTopCategories(db, 10); err != nil {
+			logErr(err)
+		} else {
+			resp.TopCategories = v
+			resp.TopCategoriesKind = kind
 		}
 	})
 	run(func() {

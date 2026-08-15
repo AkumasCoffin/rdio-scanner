@@ -104,7 +104,7 @@
 
         <!-- Rollups -->
         <div class="charts-row">
-            <mat-card class="chart-card wide">
+            <mat-card class="chart-card">
                 <div class="chart-container">
                     <canvas baseChart
                         [type]="hourlyChartType"
@@ -113,12 +113,12 @@
                     </canvas>
                 </div>
             </mat-card>
-            <mat-card class="chart-card narrow">
-                <div class="chart-container doughnut">
+            <mat-card class="chart-card">
+                <div class="chart-container">
                     <canvas baseChart
-                        [type]="systemsChartType"
-                        [data]="systemsChartData"
-                        [options]="systemsChartOptions">
+                        [type]="topChartType"
+                        [data]="topChartData"
+                        [options]="topChartOptions">
                     </canvas>
                 </div>
             </mat-card>

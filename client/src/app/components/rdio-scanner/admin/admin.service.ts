@@ -407,6 +407,11 @@ export interface StatsListenerBucket {
     peak: number;
 }
 
+export interface StatsTopCategory {
+    label: string;
+    count: number;
+}
+
 export interface StatsResponse {
     overview: StatsOverview;
     /**
@@ -423,6 +428,12 @@ export interface StatsResponse {
     callFineBuckets?: StatsHourBucket[];
     topTalkgroups: StatsTopTalkgroup[];
     topSystems: StatsTopSystem[];
+    /**
+     * Option-aware "Top ..." ranking: by group when Sort By Groups is on,
+     * by tag when Sort By Tags is on, else by system.
+     */
+    topCategories?: StatsTopCategory[];
+    topCategoriesKind?: string;
     topUnits: StatsTopUnit[];
     lastHourTalkgroups: StatsLastHourTalkgroup[];
     /**
