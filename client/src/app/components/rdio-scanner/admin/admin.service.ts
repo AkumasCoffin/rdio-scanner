@@ -421,9 +421,10 @@ export interface StatsResponse {
     topUnits: StatsTopUnit[];
     lastHourTalkgroups: StatsLastHourTalkgroup[];
     /**
-     * Hour-granular listener averages/peaks, sparse: absent hours mean the
-     * server was down, a present bucket with avg 0 means nobody listening.
-     * Absent entirely on the public endpoint unless showListenerStats is on.
+     * 10-minute-granular listener averages/peaks, sparse: absent slots mean
+     * the server was down, a present bucket with avg 0 means nobody
+     * listening. Absent entirely on the public endpoint unless
+     * showListenerStats is on.
      */
     listenerBuckets?: StatsListenerBucket[];
 }

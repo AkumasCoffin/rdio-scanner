@@ -31,16 +31,19 @@ func TestAggregateListenerSamplesEmpty(t *testing.T) {
 }
 
 func TestAggregateListenerSamples(t *testing.T) {
-	hourA := time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC).Unix()
-	hourC := time.Date(2026, 8, 15, 11, 0, 0, 0, time.UTC).Unix()
+	slotA := time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC).Unix()
+	// 09:15 falls in the 09:10 ten-minute slot, leaving 09:10's
+	// predecessor absent.
+	sampleC := time.Date(2026, 8, 15, 9, 15, 0, 0, time.UTC).Unix()
 
-	// Two hours of samples with an absent hour (10:00) between them: the
-	// gap must stay absent, not appear as a zero bucket.
+	// Two slots of samples with an absent slot between them is impossible
+	// here (09:00 → 09:10 are adjacent), so use the gap semantics check:
+	// nothing between the two produced slots may appear as a zero bucket.
 	samples := []listenerSample{
-		{Timestamp: hourA, Count: 0},
-		{Timestamp: hourA + 60, Count: 5},
-		{Timestamp: hourA + 120, Count: 4},
-		{Timestamp: hourC + 300, Count: 2},
+		{Timestamp: slotA, Count: 0},
+		{Timestamp: slotA + 60, Count: 5},
+		{Timestamp: slotA + 120, Count: 4},
+		{Timestamp: sampleC, Count: 2},
 	}
 
 	buckets := aggregateListenerSamples(samples)
@@ -59,7 +62,7 @@ func TestAggregateListenerSamples(t *testing.T) {
 		t.Errorf("bucket 0 peak = %v, expected 5", buckets[0].Peak)
 	}
 
-	if buckets[1].StartUtc != "2026-08-15T11:00:00Z" {
+	if buckets[1].StartUtc != "2026-08-15T09:10:00Z" {
 		t.Errorf("bucket 1 startUtc = %s", buckets[1].StartUtc)
 	}
 	if buckets[1].Avg != 2 {
@@ -70,13 +73,32 @@ func TestAggregateListenerSamples(t *testing.T) {
 	}
 }
 
+func TestAggregateListenerSamplesGap(t *testing.T) {
+	slotA := time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC).Unix()
+	slotC := time.Date(2026, 8, 15, 9, 40, 0, 0, time.UTC).Unix()
+
+	// Samples 40 minutes apart: the slots between them must stay absent,
+	// not appear as zero buckets.
+	buckets := aggregateListenerSamples([]listenerSample{
+		{Timestamp: slotA, Count: 1},
+		{Timestamp: slotC, Count: 3},
+	})
+
+	if len(buckets) != 2 {
+		t.Fatalf("expected 2 buckets, got %d", len(buckets))
+	}
+	if buckets[0].StartUtc != "2026-08-15T09:00:00Z" || buckets[1].StartUtc != "2026-08-15T09:40:00Z" {
+		t.Errorf("unexpected slots: %s, %s", buckets[0].StartUtc, buckets[1].StartUtc)
+	}
+}
+
 func TestAggregateListenerSamplesRounding(t *testing.T) {
-	hour := time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC).Unix()
+	slot := time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC).Unix()
 
 	buckets := aggregateListenerSamples([]listenerSample{
-		{Timestamp: hour, Count: 1},
-		{Timestamp: hour + 60, Count: 1},
-		{Timestamp: hour + 120, Count: 2},
+		{Timestamp: slot, Count: 1},
+		{Timestamp: slot + 60, Count: 1},
+		{Timestamp: slot + 120, Count: 2},
 	})
 
 	if len(buckets) != 1 {

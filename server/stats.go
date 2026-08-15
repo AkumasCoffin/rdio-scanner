@@ -103,10 +103,10 @@ type StatsTalkgroupUnit struct {
 }
 
 // StatsListenerBucket — listener samples aggregated over [StartUtc,
-// StartUtc + 1h). Unlike StatsHourBucket the series is NOT pre-seeded with
-// zeros: an absent hour means no samples were taken (server down), a present
+// StartUtc + 10m). Unlike StatsHourBucket the series is NOT pre-seeded with
+// zeros: an absent slot means no samples were taken (server down), a present
 // bucket with Avg == 0 means the server was up with nobody listening. The
-// client builds the dense axis and renders absent hours as gaps.
+// client builds the dense axis and renders absent slots as gaps.
 type StatsListenerBucket struct {
 	StartUtc string  `json:"startUtc"`
 	Avg      float64 `json:"avg"`
@@ -217,12 +217,13 @@ func (stats *Stats) GetHourBuckets(db *Database) ([]StatsHourBucket, error) {
 	return result, nil
 }
 
-// GetListenerBuckets returns hour-grain listener averages/peaks for the last
-// 30 days, aggregated in Go from the minute-grain samples so the SQL stays
-// backend-agnostic (≤ 43 200 rows for the full window). Same UTC wire format
-// as GetHourBuckets, but sparse — see StatsListenerBucket.
+// GetListenerBuckets returns 10-minute-grain listener averages/peaks for the
+// last 30 days, aggregated in Go from the minute-grain samples so the SQL
+// stays backend-agnostic (≤ 43 200 rows for the full window, ≤ 4 320
+// buckets out, a few tens of KB gzipped). Same UTC wire format as
+// GetHourBuckets, but sparse — see StatsListenerBucket.
 func (stats *Stats) GetListenerBuckets(db *Database) ([]StatsListenerBucket, error) {
-	since := time.Now().UTC().Truncate(time.Hour).Add(-statsHourBucketRange)
+	since := time.Now().UTC().Truncate(listenerBucketInterval).Add(-statsHourBucketRange)
 
 	samples, err := stats.Controller.Listeners.GetSamples(db, since)
 	if err != nil {

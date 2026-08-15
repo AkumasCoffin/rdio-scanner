@@ -119,9 +119,9 @@
                 <mat-card class="chart-card">
                     <div class="chart-container">
                         <canvas baseChart
-                            [type]="listenersChartType"
-                            [data]="listenersChartData"
-                            [options]="listenersChartOptions">
+                            [type]="listenersRecentChartType"
+                            [data]="listenersRecentChartData"
+                            [options]="listenersRecentChartOptions">
                         </canvas>
                     </div>
                 </mat-card>
@@ -130,18 +130,9 @@
                 <mat-card class="chart-card">
                     <div class="chart-container">
                         <canvas baseChart
-                            [type]="listenersHourChartType"
-                            [data]="listenersHourChartData"
-                            [options]="listenersHourChartOptions">
-                        </canvas>
-                    </div>
-                </mat-card>
-                <mat-card class="chart-card">
-                    <div class="chart-container">
-                        <canvas baseChart
-                            [type]="listenersDayChartType"
-                            [data]="listenersDayChartData"
-                            [options]="listenersDayChartOptions">
+                            [type]="listenersChartType"
+                            [data]="listenersChartData"
+                            [options]="listenersChartOptions">
                         </canvas>
                     </div>
                 </mat-card>

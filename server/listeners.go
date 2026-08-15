@@ -25,6 +25,7 @@ import (
 
 const (
 	listenerSampleInterval = time.Minute
+	listenerBucketInterval = 10 * time.Minute
 	listenerRetention      = 90 * 24 * time.Hour
 )
 
@@ -95,24 +96,26 @@ func (listeners *Listeners) Prune(db *Database) error {
 	return nil
 }
 
-// aggregateListenerSamples buckets raw samples into hour-grain UTC averages
-// and peaks, sorted ascending. Hours with no samples are ABSENT from the
-// result — the client renders them as gaps (server down), distinct from a
-// present bucket whose Avg is zero (server up, nobody listening).
+// aggregateListenerSamples buckets raw samples into 10-minute-grain UTC
+// averages and peaks, sorted ascending. Slots with no samples are ABSENT
+// from the result — the client renders them as gaps (server down), distinct
+// from a present bucket whose Avg is zero (server up, nobody listening).
 func aggregateListenerSamples(samples []listenerSample) []StatsListenerBucket {
-	type hourTally struct {
+	type slotTally struct {
 		sum  uint64
 		n    uint64
 		peak uint
 	}
 
-	tally := map[int64]*hourTally{}
+	bucketSec := int64(listenerBucketInterval / time.Second)
+
+	tally := map[int64]*slotTally{}
 	for _, s := range samples {
-		hour := s.Timestamp - s.Timestamp%3600
-		t := tally[hour]
+		slot := s.Timestamp - s.Timestamp%bucketSec
+		t := tally[slot]
 		if t == nil {
-			t = &hourTally{}
-			tally[hour] = t
+			t = &slotTally{}
+			tally[slot] = t
 		}
 		t.sum += uint64(s.Count)
 		t.n++
@@ -121,17 +124,17 @@ func aggregateListenerSamples(samples []listenerSample) []StatsListenerBucket {
 		}
 	}
 
-	hours := make([]int64, 0, len(tally))
-	for hour := range tally {
-		hours = append(hours, hour)
+	slots := make([]int64, 0, len(tally))
+	for slot := range tally {
+		slots = append(slots, slot)
 	}
-	sort.Slice(hours, func(i, j int) bool { return hours[i] < hours[j] })
+	sort.Slice(slots, func(i, j int) bool { return slots[i] < slots[j] })
 
-	result := make([]StatsListenerBucket, 0, len(hours))
-	for _, hour := range hours {
-		t := tally[hour]
+	result := make([]StatsListenerBucket, 0, len(slots))
+	for _, slot := range slots {
+		t := tally[slot]
 		result = append(result, StatsListenerBucket{
-			StartUtc: time.Unix(hour, 0).UTC().Format(time.RFC3339),
+			StartUtc: time.Unix(slot, 0).UTC().Format(time.RFC3339),
 			Avg:      math.Round(float64(t.sum)/float64(t.n)*100) / 100,
 			Peak:     t.peak,
 		})
