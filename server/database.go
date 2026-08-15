@@ -669,6 +669,9 @@ func (db *Database) migrate() error {
 		err = db.migration20260803090000(verbose)
 	}
 	if err == nil {
+		err = db.migration20260815090000(verbose)
+	}
+	if err == nil {
 		err = db.migrationTranscriptsToPlugin(verbose)
 	}
 
@@ -1506,6 +1509,39 @@ var pluginRegistryColumns = []string{
 // to drop when the manifest is no longer readable.
 func (db *Database) migration20260801120000(verbose bool) error {
 	return db.migrateWithSchema("20260801120000-create-plugins-table", pluginsTableSql(db.Config.DbType), verbose)
+}
+
+// listenersTableSql — one row per listener-count sample, written once a
+// minute by the Controller's sampler. `timestamp` is epoch seconds and the
+// primary key: it doubles as the range/prune index, and an epoch integer
+// sidesteps the per-backend datetime formats entirely. No serial column, so
+// this table stays out of postgresSerialColumns on purpose.
+//
+// Split out of the migration for the same reason as pluginsTableSql: the
+// parity test can compare all three backends without a live server of each.
+func listenersTableSql(dbType string) []string {
+	switch dbType {
+	case DbTypeSqlite:
+		return []string{
+			"create table if not exists `rdioScannerListeners` (`timestamp` integer primary key, `count` integer not null)",
+		}
+
+	case DbTypePostgres:
+		return []string{
+			`create table if not exists "rdioScannerListeners" ("timestamp" bigint primary key, "count" integer not null)`,
+		}
+
+	default:
+		return []string{
+			"create table if not exists `rdioScannerListeners` (`timestamp` bigint primary key, `count` integer not null)",
+		}
+	}
+}
+
+// migration20260815090000 creates the listener-count history table for the
+// stats charts (issue #8).
+func (db *Database) migration20260815090000(verbose bool) error {
+	return db.migrateWithSchema("20260815090000-create-listeners-table", listenersTableSql(db.Config.DbType), verbose)
 }
 
 // migration20260615120000 adds indexes that make the admin logs page filters

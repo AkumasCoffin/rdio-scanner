@@ -21,6 +21,14 @@ import { HttpClient } from '@angular/common/http';
 import { Component, OnInit } from '@angular/core';
 import { ChartConfiguration, ChartData, ChartType } from 'chart.js';
 import { firstValueFrom } from 'rxjs';
+import {
+    STATS_RANGES, StatsChartCosmetics, StatsRange,
+    buildCallsSeries, buildListenersSeries, buildTopSeries,
+    callsDatasets, listenersDatasets, topDatasets,
+    timeSeriesOptions, topSeriesOptions,
+} from './stats-charts';
+
+const COSMETICS: StatsChartCosmetics = { maxTicksLimit: 8, truncateLabels: 22, legendBoxWidth: 12 };
 
 interface StatsOverview {
     totalCalls: number;
@@ -73,13 +81,32 @@ interface StatsTalkgroupUnit {
     lastCall: string;
 }
 
+interface StatsListenerBucket {
+    startUtc: string;
+    avg: number;
+    peak: number;
+}
+
+interface StatsTopCategory {
+    label: string;
+    count: number;
+}
+
 interface StatsResponse {
     overview: StatsOverview;
     hourBuckets: StatsHourBucket[];
+    // Dense 10-minute call counts for the last 48 hours (short ranges).
+    callFineBuckets?: StatsHourBucket[];
     topTalkgroups: StatsTopTalkgroup[];
     topSystems: StatsTopSystem[];
+    // Option-aware "Top ..." ranking: groups / tags / systems.
+    topCategories?: StatsTopCategory[];
+    topCategoriesKind?: string;
     topUnits: StatsTopUnit[];
     lastHourTalkgroups: StatsLastHourTalkgroup[];
+    // Absent unless the administrator enabled Show Listener Statistics —
+    // the server strips the field, so its presence is the feature gate.
+    listenerBuckets?: StatsListenerBucket[];
 }
 
 @Component({
@@ -108,68 +135,30 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         maintainAspectRatio: false,
         plugins: {
             legend: { display: false },
-            title: { display: true, text: 'Average Calls Per Hour (Aggregated over Last 7 Days)', color: '#e0e0e0' },
+            title: { display: true, text: 'Average Calls by Hour of Day (Last 7 Days)', color: '#e0e0e0' },
         },
         scales: {
             x: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-            y: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
+            y: { beginAtZero: true, ticks: { color: '#a0a0a0', precision: 0 }, grid: { color: 'rgba(255,255,255,0.1)' } },
         },
     };
 
-    dailyChartType: ChartType = 'line';
-    dailyChartData: ChartData<'line'> = { labels: [], datasets: [] };
-    dailyChartOptions: ChartConfiguration['options'] = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { display: false },
-            title: { display: true, text: 'Calls Per Day (Last 30 Days)', color: '#e0e0e0' },
-        },
-        scales: {
-            x: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-            y: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-        },
-    };
+    // Time-range filter applied to the calls and listeners time-series
+    // charts below. The rollup charts keep their fixed windows.
+    range: StatsRange = '24h';
+    ranges = STATS_RANGES;
 
-    systemsChartType: ChartType = 'doughnut';
-    systemsChartData: ChartData<'doughnut'> = { labels: [], datasets: [] };
-    systemsChartOptions: ChartConfiguration['options'] = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { position: 'bottom', labels: { color: '#e0e0e0', boxWidth: 12, padding: 8 } },
-            title: { display: true, text: 'Top Systems', color: '#e0e0e0' },
-        },
-    };
+    callsChartType: ChartType = 'line';
+    callsChartData: ChartData<'line'> = { labels: [], datasets: [] };
+    callsChartOptions: ChartConfiguration['options'] = timeSeriesOptions('Calls (Last 24 Hours)', false, COSMETICS);
 
-    recentChartType: ChartType = 'line';
-    recentChartData: ChartData<'line'> = { labels: [], datasets: [] };
-    recentChartOptions: ChartConfiguration['options'] = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { display: false },
-            title: { display: true, text: 'Calls Per Hour (Last 24 Hours)', color: '#e0e0e0' },
-        },
-        scales: {
-            x: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-            y: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-        },
-    };
+    topChartType: ChartType = 'bar';
+    topChartData: ChartData<'bar'> = { labels: [], datasets: [] };
+    topChartOptions: ChartConfiguration['options'] = topSeriesOptions('Top Systems (Last 7 Days)');
 
-    // Chart color palette
-    private colors = [
-        'rgba(0, 188, 212, 0.8)',
-        'rgba(76, 175, 80, 0.8)',
-        'rgba(255, 152, 0, 0.8)',
-        'rgba(156, 39, 176, 0.8)',
-        'rgba(244, 67, 54, 0.8)',
-        'rgba(33, 150, 243, 0.8)',
-        'rgba(255, 235, 59, 0.8)',
-        'rgba(121, 85, 72, 0.8)',
-        'rgba(96, 125, 139, 0.8)',
-        'rgba(233, 30, 99, 0.8)',
-    ];
+    listenersChartType: ChartType = 'line';
+    listenersChartData: ChartData<'line'> = { labels: [], datasets: [] };
+    listenersChartOptions: ChartConfiguration['options'] = timeSeriesOptions('Listeners (Last 24 Hours)', true, COSMETICS);
 
     constructor(private http: HttpClient) {}
 
@@ -187,9 +176,9 @@ export class RdioScannerPublicStatsComponent implements OnInit {
             if (this.stats) {
                 this.buildOverviewCards();
                 this.buildHourlyChart();
-                this.buildDailyChart();
-                this.buildSystemsChart();
-                this.buildRecentChart();
+                this.buildTopChart();
+                this.buildCallsChart();
+                this.buildListenerCharts();
             }
         } catch (e) {
             console.error('Error loading stats:', e);
@@ -276,96 +265,46 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         };
     }
 
-    private buildDailyChart(): void {
-        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        const today = new Date();
-        const labels: string[] = [];
-        const data: number[] = [];
-        for (let i = 29; i >= 0; i--) {
-            const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
-            const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
-            labels.push(`${months[d.getMonth()]} ${d.getDate()} (${days[d.getDay()]})`);
-            data.push(this._dayCountsLast30d.get(key) || 0);
+    setRange(range: StatsRange): void {
+        if (this.range === range) {
+            return;
         }
-
-        this.dailyChartData = {
-            labels,
-            datasets: [{
-                data,
-                fill: true,
-                backgroundColor: 'rgba(76, 175, 80, 0.2)',
-                borderColor: 'rgba(76, 175, 80, 1)',
-                tension: 0.4,
-                pointRadius: 3,
-                pointBackgroundColor: 'rgba(76, 175, 80, 1)',
-            }],
-        };
+        this.range = range;
+        this.buildCallsChart();
+        this.buildListenerCharts();
     }
 
-    private buildSystemsChart(): void {
-        if (!this.stats?.topSystems) return;
-
-        const labels = this.stats.topSystems.map(s => s.systemLabel);
-        const data = this.stats.topSystems.map(s => s.count);
-
-        this.systemsChartData = {
-            labels,
-            datasets: [{
-                data,
-                backgroundColor: this.colors.slice(0, data.length),
-                borderColor: 'rgba(48, 48, 48, 1)',
-                borderWidth: 2,
-            }],
-        };
-    }
-
-    private buildRecentChart(): void {
+    private buildCallsChart(): void {
         if (!this.stats?.hourBuckets) return;
 
-        // Pre-parse buckets to {ms, count}. We sum any UTC-hour bucket whose
-        // start instant falls within each local hour's [start, start+1h)
-        // window — point-matching a derived UTC-hour key breaks for
-        // half-hour-offset zones (IST, NST, Nepal, parts of AU) where a
-        // local hour boundary lands at :30 UTC.
-        const buckets: { ms: number; count: number }[] = [];
-        for (const b of this.stats.hourBuckets) {
-            const t = new Date(b.startUtc);
-            if (!isNaN(t.getTime())) buckets.push({ ms: t.getTime(), count: b.count });
-        }
-
-        const now = new Date();
-        const currentLocalHour = new Date(
-            now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(),
+        const series = buildCallsSeries(
+            this.range, this.stats.hourBuckets, this.stats.callFineBuckets, this._dayCountsLast30d,
         );
+        this.callsChartOptions = timeSeriesOptions(series.title, false, COSMETICS);
+        this.callsChartData = { labels: series.labels, datasets: callsDatasets(series) };
+    }
 
-        const HOUR_MS = 3600000;
-        const labels: string[] = [];
-        const data: number[] = [];
-        for (let i = 23; i >= 0; i--) {
-            const slot = new Date(currentLocalHour);
-            slot.setHours(slot.getHours() - i);
-            const slotMs = slot.getTime();
-            let count = 0;
-            for (const b of buckets) {
-                if (b.ms >= slotMs && b.ms < slotMs + HOUR_MS) count += b.count;
-            }
-            labels.push(`${slot.getHours().toString().padStart(2, '0')}:00`);
-            data.push(count);
-        }
+    private buildTopChart(): void {
+        // Prefer the option-aware ranking (by group/tag/system, following
+        // Sort By Groups / Sort By Tags); fall back to plain top systems
+        // when talking to a server that predates topCategories.
+        const categories = this.stats?.topCategories?.length
+            ? this.stats.topCategories
+            : (this.stats?.topSystems || []).map(s => ({ label: s.systemLabel, count: s.count }));
+        if (!categories.length) return;
 
-        this.recentChartData = {
-            labels,
-            datasets: [{
-                data,
-                fill: true,
-                backgroundColor: 'rgba(255, 152, 0, 0.2)',
-                borderColor: 'rgba(255, 152, 0, 1)',
-                tension: 0.3,
-                pointRadius: 2,
-                pointBackgroundColor: 'rgba(255, 152, 0, 1)',
-            }],
-        };
+        const series = buildTopSeries(categories, this.stats?.topCategoriesKind, COSMETICS);
+        this.topChartOptions = topSeriesOptions(series.title);
+        this.topChartData = { labels: series.labels, datasets: topDatasets(series) };
+    }
+
+    private buildListenerCharts(): void {
+        const raw = this.stats?.listenerBuckets;
+        if (!raw?.length) return;
+
+        const series = buildListenersSeries(this.range, raw);
+        this.listenersChartOptions = timeSeriesOptions(series.title, true, COSMETICS);
+        this.listenersChartData = { labels: series.labels, datasets: listenersDatasets(series) };
     }
 
     private formatNumber(num: number): string {

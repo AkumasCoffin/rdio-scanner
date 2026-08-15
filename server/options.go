@@ -41,6 +41,10 @@ type Options struct {
 	LogPruneDays                uint   `json:"logPruneDays"`
 	LogPruneCount               uint   `json:"logPruneCount"`
 	SearchPatchedTalkgroups     bool   `json:"searchPatchedTalkgroups"`
+	// ShowListenerStats exposes the listener-count history charts on the
+	// public stats endpoint. Off by default — admins always see them via
+	// /api/admin/stats regardless.
+	ShowListenerStats           bool   `json:"showListenerStats"`
 	ShowListenersCount          bool   `json:"showListenersCount"`
 	SortByGroups               bool   `json:"sortByGroups"`
 	SortByTags                 bool   `json:"sortByTags"`
@@ -79,6 +83,23 @@ func NewOptions() *Options {
 	return &Options{
 		mutex: sync.Mutex{},
 	}
+}
+
+// GetShowListenerStats reads the option under the mutex. The admin save
+// rewrites this struct in place (FromMap/Read hold the mutex), so request
+// handlers reading it lock-free would race the save.
+func (options *Options) GetShowListenerStats() bool {
+	options.mutex.Lock()
+	defer options.mutex.Unlock()
+	return options.ShowListenerStats
+}
+
+// GetSortLens returns the SortByGroups/SortByTags pair under the mutex —
+// same reasoning as GetShowListenerStats, read from the stats build path.
+func (options *Options) GetSortLens() (byGroups bool, byTags bool) {
+	options.mutex.Lock()
+	defer options.mutex.Unlock()
+	return options.SortByGroups, options.SortByTags
 }
 
 // FromMap overlays any fields present in m onto the current options.
@@ -129,6 +150,7 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	setUint("logPruneDays", &options.LogPruneDays)
 	setUint("logPruneCount", &options.LogPruneCount)
 	setBool("searchPatchedTalkgroups", &options.SearchPatchedTalkgroups)
+	setBool("showListenerStats", &options.ShowListenerStats)
 	setBool("showListenersCount", &options.ShowListenersCount)
 	setBool("sortByGroups", &options.SortByGroups)
 	setBool("sortByTags", &options.SortByTags)
@@ -173,6 +195,7 @@ func (options *Options) optionKeyValuePairs() []struct {
 		{"logPruneDays", options.LogPruneDays},
 		{"logPruneCount", options.LogPruneCount},
 		{"searchPatchedTalkgroups", options.SearchPatchedTalkgroups},
+		{"showListenerStats", options.ShowListenerStats},
 		{"showListenersCount", options.ShowListenersCount},
 		{"sortByGroups", options.SortByGroups},
 		{"sortByTags", options.SortByTags},
@@ -213,6 +236,7 @@ func (options *Options) Read(db *Database) error {
 	options.LogPruneDays = defaults.options.logPruneDays
 	options.LogPruneCount = defaults.options.logPruneCount
 	options.SearchPatchedTalkgroups = defaults.options.searchPatchedTalkgroups
+	options.ShowListenerStats = defaults.options.showListenerStats
 	options.ShowListenersCount = defaults.options.showListenersCount
 	options.SortByGroups = defaults.options.sortByGroups
 	options.SortByTags = defaults.options.sortByTags
@@ -287,6 +311,7 @@ func (options *Options) Read(db *Database) error {
 		applyUint("logPruneDays", &options.LogPruneDays)
 		applyUint("logPruneCount", &options.LogPruneCount)
 		applyBool("searchPatchedTalkgroups", &options.SearchPatchedTalkgroups)
+		applyBool("showListenerStats", &options.ShowListenerStats)
 		applyBool("showListenersCount", &options.ShowListenersCount)
 		applyBool("sortByGroups", &options.SortByGroups)
 		applyBool("sortByTags", &options.SortByTags)

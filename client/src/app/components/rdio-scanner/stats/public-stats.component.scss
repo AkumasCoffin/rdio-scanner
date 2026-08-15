@@ -385,3 +385,58 @@
     }
 }
 
+
+.range-filter {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 12px;
+
+    mat-button-toggle-group {
+        flex-wrap: wrap;
+        background: transparent;
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    mat-button-toggle {
+        background: transparent;
+        color: #a0a0a0;
+        font-size: 11px;
+
+        &.mat-button-toggle-checked {
+            background: rgba(0, 188, 212, 0.25);
+            color: #e0e0e0;
+        }
+    }
+}
+
+mat-expansion-panel.table-panel {
+    display: block;
+    color: var(--stats-text);
+    margin-bottom: 16px;
+
+    .mat-expansion-panel-header-title {
+        align-items: center;
+        gap: 8px;
+        color: var(--stats-text);
+        font-weight: 500;
+
+        mat-icon {
+            color: var(--chart-orange);
+            font-size: 20px;
+            width: 20px;
+            height: 20px;
+        }
+
+        span {
+            font-size: 0.875rem;
+        }
+    }
+
+    ::ng-deep .mat-expansion-panel-body {
+        padding: 0;
+    }
+
+    ::ng-deep .mat-expansion-indicator::after {
+        color: var(--stats-text-dim);
+    }
+}

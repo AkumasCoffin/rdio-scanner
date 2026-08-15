@@ -62,6 +62,7 @@ type DefaultOptions struct {
 	logPruneDays                uint
 	logPruneCount               uint
 	searchPatchedTalkgroups     bool
+	showListenerStats           bool
 	showListenersCount          bool
 	sortByGroups               bool
 	sortByTags                 bool
@@ -111,6 +112,7 @@ var defaults Defaults = Defaults{
 		logPruneDays:                7,
 		logPruneCount:               250000,
 		searchPatchedTalkgroups:     false,
+		showListenerStats:           false,
 		showListenersCount:          false,
 		sortByGroups:               false,
 		sortByTags:                 false,

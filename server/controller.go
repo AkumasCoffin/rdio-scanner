@@ -44,6 +44,7 @@ type Controller struct {
 	Downstreams *Downstreams
 	FFMpeg      *FFMpeg
 	Groups      *Groups
+	Listeners   *Listeners
 	Logs        *Logs
 	Options        *Options
 	Plugins        *Plugins
@@ -109,6 +110,7 @@ func NewController(config *Config) *Controller {
 		Downstreams: NewDownstreams(),
 		FFMpeg:      NewFFMpeg(),
 		Groups:      NewGroups(),
+		Listeners:   NewListeners(),
 		Logs:        NewLogs(),
 		Options:     NewOptions(),
 		Plugins:     NewPlugins(),
@@ -1075,6 +1077,24 @@ func (controller *Controller) Start() error {
 		defer ticker.Stop()
 		for range ticker.C {
 			controller.Calls.WarmSearchMeta(controller.Database)
+		}
+	}()
+
+	// Sample the listener count once a minute for the stats charts. The count
+	// is read before the insert so the Clients lock is never held across a
+	// database call. No stop channel: Terminate exits the process, same as
+	// every other background goroutine here.
+	go func() {
+		sample := func() {
+			if err := controller.Listeners.Sample(controller.Database, controller.Clients.CountListeners()); err != nil {
+				controller.Logs.LogEvent(LogLevelError, err.Error())
+			}
+		}
+		sample()
+		ticker := time.NewTicker(listenerSampleInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			sample()
 		}
 	}()
 

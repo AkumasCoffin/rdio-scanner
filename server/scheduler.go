@@ -41,6 +41,15 @@ func (scheduler *Scheduler) pruneDatabase() error {
 	opts := scheduler.Controller.Options
 	db := scheduler.Controller.Database
 
+	// Listener samples have a constant retention, so they prune before the
+	// options guard below — with PruneDays and LogPrune* all zero the guard
+	// returns early and would otherwise let this table grow forever. Log
+	// and continue on failure: returning here would let a broken listeners
+	// table block call and log pruning until the disk fills.
+	if err := scheduler.Controller.Listeners.Prune(db); err != nil {
+		scheduler.Controller.Logs.LogEvent(LogLevelError, err.Error())
+	}
+
 	// Calls and logs prune independently. LogPruneDays lets logs be purged on
 	// their own (default 7-day) schedule even when call retention is long or
 	// disabled (PruneDays == 0) — otherwise a long call-retention setting would

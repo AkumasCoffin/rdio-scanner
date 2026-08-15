@@ -31,6 +31,13 @@
             </div>
         </mat-card>
 
+        <!-- Time Range Filter (calls + listeners time series) -->
+        <div class="range-filter">
+            <mat-button-toggle-group [value]="range" (change)="setRange($event.value)">
+                <mat-button-toggle *ngFor="let r of ranges" [value]="r.key">{{ r.label }}</mat-button-toggle>
+            </mat-button-toggle-group>
+        </div>
+
         <!-- Overview Cards -->
         <div class="overview-cards">
             <div *ngFor="let card of overviewCards" class="stat-card" [style.border-left-color]="card.color">
@@ -44,13 +51,24 @@
             </div>
         </div>
 
-        <!-- Recent Activity Chart -->
+        <!-- Calls Time Series -->
         <mat-card class="chart-card">
-            <div class="chart-container small">
+            <div class="chart-container">
                 <canvas baseChart
-                    [type]="recentChartType"
-                    [data]="recentChartData"
-                    [options]="recentChartOptions">
+                    [type]="callsChartType"
+                    [data]="callsChartData"
+                    [options]="callsChartOptions">
+                </canvas>
+            </div>
+        </mat-card>
+
+        <!-- Listeners Time Series (present only when enabled by the admin) -->
+        <mat-card class="chart-card" *ngIf="stats.listenerBuckets?.length">
+            <div class="chart-container">
+                <canvas baseChart
+                    [type]="listenersChartType"
+                    [data]="listenersChartData"
+                    [options]="listenersChartOptions">
                 </canvas>
             </div>
         </mat-card>
@@ -66,34 +84,25 @@
             </div>
         </mat-card>
 
-        <!-- Daily Volume Chart -->
-        <mat-card class="chart-card">
+        <!-- Top Systems / Groups / Tags Chart -->
+        <mat-card class="chart-card" *ngIf="stats.topCategories?.length || stats.topSystems?.length">
             <div class="chart-container">
                 <canvas baseChart
-                    [type]="dailyChartType"
-                    [data]="dailyChartData"
-                    [options]="dailyChartOptions">
-                </canvas>
-            </div>
-        </mat-card>
-
-        <!-- Top Systems Chart -->
-        <mat-card class="chart-card" *ngIf="stats.topSystems?.length">
-            <div class="chart-container doughnut">
-                <canvas baseChart
-                    [type]="systemsChartType"
-                    [data]="systemsChartData"
-                    [options]="systemsChartOptions">
+                    [type]="topChartType"
+                    [data]="topChartData"
+                    [options]="topChartOptions">
                 </canvas>
             </div>
         </mat-card>
 
         <!-- Top Talkgroups List -->
-        <mat-card class="table-card" *ngIf="stats.topTalkgroups?.length">
-            <div class="table-header">
-                <mat-icon>leaderboard</mat-icon>
-                <span>Top Talkgroups (7 Days)</span>
-            </div>
+        <mat-expansion-panel class="table-card table-panel" *ngIf="stats.topTalkgroups?.length">
+            <mat-expansion-panel-header>
+                <mat-panel-title>
+                    <mat-icon>leaderboard</mat-icon>
+                    <span>Top Talkgroups (7 Days)</span>
+                </mat-panel-title>
+            </mat-expansion-panel-header>
             <div class="talkgroups-list">
                 <div *ngFor="let tg of stats.topTalkgroups; let i = index" class="talkgroup-item">
                     <span class="rank">{{ i + 1 }}</span>
@@ -104,14 +113,16 @@
                     <span class="call-count">{{ tg.count }}</span>
                 </div>
             </div>
-        </mat-card>
+        </mat-expansion-panel>
 
         <!-- Top Units List -->
-        <mat-card class="table-card" *ngIf="stats.topUnits?.length">
-            <div class="table-header">
-                <mat-icon>badge</mat-icon>
-                <span>Top Units (7 Days)</span>
-            </div>
+        <mat-expansion-panel class="table-card table-panel" *ngIf="stats.topUnits?.length">
+            <mat-expansion-panel-header>
+                <mat-panel-title>
+                    <mat-icon>badge</mat-icon>
+                    <span>Top Units (7 Days)</span>
+                </mat-panel-title>
+            </mat-expansion-panel-header>
             <div class="talkgroups-list">
                 <div *ngFor="let unit of stats.topUnits; let i = index" class="talkgroup-item">
                     <span class="rank">{{ i + 1 }}</span>
@@ -122,7 +133,7 @@
                     <span class="call-count">{{ unit.count }}</span>
                 </div>
             </div>
-        </mat-card>
+        </mat-expansion-panel>
     </div>
 
     <!-- Units Dialog Overlay -->

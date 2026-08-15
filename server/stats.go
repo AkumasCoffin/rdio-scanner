@@ -33,6 +33,11 @@ const statsCacheTTL = 2 * time.Minute
 // buckets. 30 * 24 = 720 bucket entries ≈ 28 KB JSON, ~5 KB gzipped.
 const statsHourBucketRange = 30 * 24 * time.Hour
 
+// statsFineBucketRange — how far back the 10-minute call buckets cover.
+// Only the short filter ranges (≤ 48 h) render at this grain; anything
+// longer uses the 30-day hourly buckets.
+const statsFineBucketRange = 48 * time.Hour
+
 type Stats struct {
 	Controller *Controller
 
@@ -77,6 +82,14 @@ type StatsTopSystem struct {
 	Count       uint   `json:"count"`
 }
 
+// StatsTopCategory — one slice of the "Top ..." ranking chart. Which lens
+// the ranking uses (system, group, or tag) follows the SortByGroups /
+// SortByTags options, mirroring how the main UI organizes talkgroups.
+type StatsTopCategory struct {
+	Label string `json:"label"`
+	Count uint   `json:"count"`
+}
+
 type StatsTopUnit struct {
 	SystemId    uint   `json:"systemId"`
 	SystemLabel string `json:"systemLabel"`
@@ -102,13 +115,37 @@ type StatsTalkgroupUnit struct {
 	LastCall  string `json:"lastCall"`
 }
 
+// StatsListenerBucket — listener samples aggregated over [StartUtc,
+// StartUtc + 10m). Unlike StatsHourBucket the series is NOT pre-seeded with
+// zeros: an absent slot means no samples were taken (server down), a present
+// bucket with Avg == 0 means the server was up with nobody listening. The
+// client builds the dense axis and renders absent slots as gaps.
+type StatsListenerBucket struct {
+	StartUtc string  `json:"startUtc"`
+	Avg      float64 `json:"avg"`
+	Peak     uint    `json:"peak"`
+}
+
 type StatsResponse struct {
 	Overview           StatsOverview            `json:"overview"`
 	HourBuckets        []StatsHourBucket        `json:"hourBuckets"`
+	// CallFineBuckets — dense 10-minute call counts for the last 48 hours,
+	// for the short filter ranges. Zeros are pre-seeded like HourBuckets: a
+	// zero genuinely means no calls.
+	CallFineBuckets    []StatsHourBucket        `json:"callFineBuckets,omitempty"`
 	TopTalkgroups      []StatsTopTalkgroup      `json:"topTalkgroups"`
 	TopSystems         []StatsTopSystem         `json:"topSystems"`
+	// TopCategories is what the "Top ..." chart renders: by group when
+	// SortByGroups is on, by tag when SortByTags is on, else by system.
+	// TopSystems stays for compatibility.
+	TopCategories     []StatsTopCategory `json:"topCategories,omitempty"`
+	TopCategoriesKind string             `json:"topCategoriesKind,omitempty"`
 	TopUnits           []StatsTopUnit           `json:"topUnits"`
 	LastHourTalkgroups []StatsLastHourTalkgroup `json:"lastHourTalkgroups"`
+	// ListenerBuckets is admin-only unless Options.ShowListenerStats is on;
+	// the public handler strips it from a shallow copy of the cached
+	// response. omitempty also hides it on a fresh install with no samples.
+	ListenerBuckets []StatsListenerBucket `json:"listenerBuckets,omitempty"`
 }
 
 func NewStats(controller *Controller) *Stats {
@@ -202,6 +239,66 @@ func (stats *Stats) GetHourBuckets(db *Database) ([]StatsHourBucket, error) {
 	return result, nil
 }
 
+// GetCallFineBuckets returns dense 10-minute call counts for the last 48
+// hours — the same shape and scan as GetHourBuckets, just a finer grain
+// over a shorter window so the 1h–48h filter ranges have real curves
+// instead of one or two hourly points. The seed loop runs one slot past
+// the window so the current in-progress slot is included.
+func (stats *Stats) GetCallFineBuckets(db *Database) ([]StatsHourBucket, error) {
+	now := time.Now().UTC().Truncate(listenerBucketInterval)
+	since := now.Add(-statsFineBucketRange)
+
+	tally := map[time.Time]uint{}
+	rows, err := db.Query(
+		"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
+		since.Format(db.DateTimeFormat),
+	)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("stats.callFineBuckets: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var raw any
+		if err := rows.Scan(&raw); err != nil {
+			continue
+		}
+		t, err := db.ParseDateTime(raw)
+		if err != nil {
+			continue
+		}
+		tally[t.UTC().Truncate(listenerBucketInterval)]++
+	}
+
+	n := int(statsFineBucketRange / listenerBucketInterval)
+	result := make([]StatsHourBucket, 0, n+1)
+	for i := 0; i <= n; i++ {
+		t := since.Add(time.Duration(i) * listenerBucketInterval)
+		result = append(result, StatsHourBucket{
+			StartUtc: t.Format(time.RFC3339),
+			Count:    tally[t],
+		})
+	}
+	return result, nil
+}
+
+// GetListenerBuckets returns 10-minute-grain listener averages/peaks over
+// the whole 90-day retention, aggregated in Go from the minute-grain samples
+// so the SQL stays backend-agnostic (≤ 129 600 rows in, ≤ 12 960 buckets
+// out — a few tens of KB gzipped, and the client's "All" range filter is
+// the reason the full retention ships rather than a 30-day slice). Same UTC
+// wire format as GetHourBuckets, but sparse — see StatsListenerBucket.
+func (stats *Stats) GetListenerBuckets(db *Database) ([]StatsListenerBucket, error) {
+	since := time.Now().UTC().Truncate(listenerBucketInterval).Add(-listenerRetention)
+
+	samples, err := stats.Controller.Listeners.GetSamples(db, since)
+	if err != nil {
+		return nil, fmt.Errorf("stats.listenerBuckets: %v", err)
+	}
+
+	return aggregateListenerSamples(samples), nil
+}
+
 // GetTopTalkgroups: top N talkgroups by call count over the last 7 days.
 func (stats *Stats) GetTopTalkgroups(db *Database, limit int) ([]StatsTopTalkgroup, error) {
 	result := []StatsTopTalkgroup{}
@@ -282,6 +379,86 @@ func (stats *Stats) GetTopSystems(db *Database, limit int) ([]StatsTopSystem, er
 		result = append(result, item)
 	}
 	return result, nil
+}
+
+// topCategoriesKind picks the "Top ..." lens from the sort options: groups
+// when SortByGroups is on, tags when SortByTags is on, systems otherwise —
+// the same lens the main UI sorts talkgroups by.
+func (stats *Stats) topCategoriesKind() string {
+	byGroups, byTags := stats.Controller.Options.GetSortLens()
+	if byGroups {
+		return "groups"
+	}
+	if byTags {
+		return "tags"
+	}
+	return "systems"
+}
+
+// getTopCategoriesGrouped returns the last 7 days ranked by group or tag:
+// tally per (system, talkgroup) in SQL, then resolve each pair to its label
+// via the systems config; talkgroups without a resolvable group or tag land
+// in "Other". The systems lens never comes here — build() derives it from
+// the TopSystems aggregation it already ran.
+func (stats *Stats) getTopCategoriesGrouped(db *Database, limit int, kind string) ([]StatsTopCategory, error) {
+	since := time.Now().UTC().AddDate(0, 0, -7)
+	rows, err := db.Query(
+		"select `system`, `talkgroup`, count(*) as c from `rdioScannerCalls` where `dateTime` >= ? group by `system`, `talkgroup`",
+		since.Format(db.DateTimeFormat),
+	)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("stats.topCategories: %v", err)
+	}
+	defer rows.Close()
+
+	tally := map[string]uint{}
+	for rows.Next() {
+		var (
+			systemId    uint
+			talkgroupId uint
+			count       uint
+		)
+		if err := rows.Scan(&systemId, &talkgroupId, &count); err != nil {
+			continue
+		}
+		tally[stats.categoryLabel(kind, systemId, talkgroupId)] += count
+	}
+
+	result := make([]StatsTopCategory, 0, len(tally))
+	for label, count := range tally {
+		result = append(result, StatsTopCategory{Label: label, Count: count})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Count != result[j].Count {
+			return result[i].Count > result[j].Count
+		}
+		return result[i].Label < result[j].Label
+	})
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+// categoryLabel resolves a (system, talkgroup) pair to its group or tag
+// label through the mutex-taking lookup helpers — the admin config save
+// repopulates these lists in place, so walking Systems.List lock-free here
+// would race it.
+func (stats *Stats) categoryLabel(kind string, systemId uint, talkgroupId uint) string {
+	if sys, ok := stats.Controller.Systems.GetSystem(systemId); ok {
+		if tg, ok := sys.Talkgroups.GetTalkgroup(talkgroupId); ok {
+			if kind == "groups" {
+				if g, ok := stats.Controller.Groups.GetGroup(tg.GroupId); ok && g.Label != "" {
+					return g.Label
+				}
+			} else {
+				if t, ok := stats.Controller.Tags.GetTag(tg.TagId); ok && t.Label != "" {
+					return t.Label
+				}
+			}
+		}
+	}
+	return "Other"
 }
 
 // extractUnitsFromSources pulls unit IDs out of the per-call `sources` JSON
@@ -606,6 +783,19 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 			resp.TopSystems = v
 		}
 	})
+	// The lens is decided once per build; the systems case is filled in
+	// after the wait from the TopSystems aggregation instead of re-running
+	// the identical query.
+	topKind := stats.topCategoriesKind()
+	if topKind != "systems" {
+		run(func() {
+			if v, err := stats.getTopCategoriesGrouped(db, 10, topKind); err != nil {
+				logErr(err)
+			} else {
+				resp.TopCategories = v
+			}
+		})
+	}
 	run(func() {
 		if v, err := stats.GetTopUnits(db, 10); err != nil {
 			logErr(err)
@@ -620,8 +810,31 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 			resp.LastHourTalkgroups = v
 		}
 	})
+	run(func() {
+		if v, err := stats.GetCallFineBuckets(db); err != nil {
+			logErr(err)
+		} else {
+			resp.CallFineBuckets = v
+		}
+	})
+	run(func() {
+		if v, err := stats.GetListenerBuckets(db); err != nil {
+			logErr(err)
+		} else {
+			resp.ListenerBuckets = v
+		}
+	})
 
 	wg.Wait()
+
+	resp.TopCategoriesKind = topKind
+	if topKind == "systems" {
+		categories := make([]StatsTopCategory, 0, len(resp.TopSystems))
+		for _, s := range resp.TopSystems {
+			categories = append(categories, StatsTopCategory{Label: s.SystemLabel, Count: s.Count})
+		}
+		resp.TopCategories = categories
+	}
 
 	return resp
 }
@@ -654,20 +867,31 @@ func (stats *Stats) Handler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	stats.handleStatsRequest(w, r)
+	stats.handleStatsRequest(w, r, true)
 }
 
 func (stats *Stats) PublicHandler(w http.ResponseWriter, r *http.Request) {
-	stats.handleStatsRequest(w, r)
+	// Gated per request rather than baked into the cache, so flipping the
+	// option takes effect immediately instead of after the cache TTL.
+	stats.handleStatsRequest(w, r, stats.Controller.Options.GetShowListenerStats())
 }
 
-func (stats *Stats) handleStatsRequest(w http.ResponseWriter, r *http.Request) {
+func (stats *Stats) handleStatsRequest(w http.ResponseWriter, r *http.Request, includeListeners bool) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
 	resp := stats.cachedBuild(stats.Controller.Database)
+
+	if !includeListeners && resp.ListenerBuckets != nil {
+		// Shallow copy — the cached response is shared by every caller, so
+		// stripping the field in place would hide it from admins too until
+		// the next rebuild.
+		shaped := *resp
+		shaped.ListenerBuckets = nil
+		resp = &shaped
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if b, err := json.Marshal(resp); err == nil {

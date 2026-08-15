@@ -300,6 +300,7 @@ export interface Options {
     logPruneDays?: number;
     logPruneCount?: number;
     searchPatchedTalkgroups?: boolean;
+    showListenerStats?: boolean;
     showListenersCount?: boolean;
     sortByGroups?: boolean;
     sortByTags?: boolean;
@@ -400,6 +401,17 @@ export interface StatsTalkgroupUnit {
     lastCall: string;
 }
 
+export interface StatsListenerBucket {
+    startUtc: string;
+    avg: number;
+    peak: number;
+}
+
+export interface StatsTopCategory {
+    label: string;
+    count: number;
+}
+
 export interface StatsResponse {
     overview: StatsOverview;
     /**
@@ -409,10 +421,28 @@ export interface StatsResponse {
      * browser's local timezone — wire format stays pure UTC.
      */
     hourBuckets: StatsHourBucket[];
+    /**
+     * Dense 10-minute call counts for the last 48 hours — used by the
+     * short filter ranges. Zeros mean no calls, same as hourBuckets.
+     */
+    callFineBuckets?: StatsHourBucket[];
     topTalkgroups: StatsTopTalkgroup[];
     topSystems: StatsTopSystem[];
+    /**
+     * Option-aware "Top ..." ranking: by group when Sort By Groups is on,
+     * by tag when Sort By Tags is on, else by system.
+     */
+    topCategories?: StatsTopCategory[];
+    topCategoriesKind?: string;
     topUnits: StatsTopUnit[];
     lastHourTalkgroups: StatsLastHourTalkgroup[];
+    /**
+     * 10-minute-granular listener averages/peaks, sparse: absent slots mean
+     * the server was down, a present bucket with avg 0 means nobody
+     * listening. Absent entirely on the public endpoint unless
+     * showListenerStats is on.
+     */
+    listenerBuckets?: StatsListenerBucket[];
 }
 
 enum url {
@@ -789,6 +819,7 @@ export class RdioScannerAdminService implements OnDestroy {
             logPruneDays: [options?.logPruneDays, [Validators.min(0)]],
             logPruneCount: [options?.logPruneCount, [Validators.min(0)]],
 			searchPatchedTalkgroups: [options?.searchPatchedTalkgroups],
+			showListenerStats: [options?.showListenerStats ?? false],
 			showListenersCount: [options?.showListenersCount],
             sortByGroups: [options?.sortByGroups ?? false],
             sortByTags: [options?.sortByTags ?? false],
