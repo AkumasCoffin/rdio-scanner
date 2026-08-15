@@ -217,13 +217,14 @@ func (stats *Stats) GetHourBuckets(db *Database) ([]StatsHourBucket, error) {
 	return result, nil
 }
 
-// GetListenerBuckets returns 10-minute-grain listener averages/peaks for the
-// last 30 days, aggregated in Go from the minute-grain samples so the SQL
-// stays backend-agnostic (≤ 43 200 rows for the full window, ≤ 4 320
-// buckets out, a few tens of KB gzipped). Same UTC wire format as
-// GetHourBuckets, but sparse — see StatsListenerBucket.
+// GetListenerBuckets returns 10-minute-grain listener averages/peaks over
+// the whole 90-day retention, aggregated in Go from the minute-grain samples
+// so the SQL stays backend-agnostic (≤ 129 600 rows in, ≤ 12 960 buckets
+// out — a few tens of KB gzipped, and the client's "All" range filter is
+// the reason the full retention ships rather than a 30-day slice). Same UTC
+// wire format as GetHourBuckets, but sparse — see StatsListenerBucket.
 func (stats *Stats) GetListenerBuckets(db *Database) ([]StatsListenerBucket, error) {
-	since := time.Now().UTC().Truncate(listenerBucketInterval).Add(-statsHourBucketRange)
+	since := time.Now().UTC().Truncate(listenerBucketInterval).Add(-listenerRetention)
 
 	samples, err := stats.Controller.Listeners.GetSamples(db, since)
 	if err != nil {

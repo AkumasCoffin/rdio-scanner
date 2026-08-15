@@ -79,6 +79,8 @@ interface StatsListenerBucket {
     peak: number;
 }
 
+type StatsRange = '1h' | '6h' | '12h' | '24h' | '48h' | '1w' | '1m' | 'all';
+
 interface StatsResponse {
     overview: StatsOverview;
     hourBuckets: StatsHourBucket[];
@@ -125,20 +127,23 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         },
     };
 
-    dailyChartType: ChartType = 'line';
-    dailyChartData: ChartData<'line'> = { labels: [], datasets: [] };
-    dailyChartOptions: ChartConfiguration['options'] = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { display: false },
-            title: { display: true, text: 'Calls Per Day (Last 30 Days)', color: '#e0e0e0' },
-        },
-        scales: {
-            x: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-            y: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-        },
-    };
+    // Time-range filter applied to the calls and listeners time-series
+    // charts below. The rollup charts keep their fixed windows.
+    range: StatsRange = '24h';
+    ranges: { key: StatsRange; label: string }[] = [
+        { key: '1h', label: '1H' },
+        { key: '6h', label: '6H' },
+        { key: '12h', label: '12H' },
+        { key: '24h', label: '24H' },
+        { key: '48h', label: '48H' },
+        { key: '1w', label: '1W' },
+        { key: '1m', label: '1M' },
+        { key: 'all', label: 'ALL' },
+    ];
+
+    callsChartType: ChartType = 'line';
+    callsChartData: ChartData<'line'> = { labels: [], datasets: [] };
+    callsChartOptions: ChartConfiguration['options'] = this.timeSeriesOptions('Calls (Last 24 Hours)', false);
 
     systemsChartType: ChartType = 'doughnut';
     systemsChartData: ChartData<'doughnut'> = { labels: [], datasets: [] };
@@ -151,50 +156,9 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         },
     };
 
-    recentChartType: ChartType = 'line';
-    recentChartData: ChartData<'line'> = { labels: [], datasets: [] };
-    recentChartOptions: ChartConfiguration['options'] = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { display: false },
-            title: { display: true, text: 'Calls Per Hour (Last 24 Hours)', color: '#e0e0e0' },
-        },
-        scales: {
-            x: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-            y: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-        },
-    };
-
-    listenersRecentChartType: ChartType = 'line';
-    listenersRecentChartData: ChartData<'line'> = { labels: [], datasets: [] };
-    listenersRecentChartOptions: ChartConfiguration['options'] = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { display: true, labels: { color: '#e0e0e0', boxWidth: 12, padding: 8 } },
-            title: { display: true, text: 'Listeners (Last 24 Hours)', color: '#e0e0e0' },
-        },
-        scales: {
-            x: { ticks: { color: '#a0a0a0', maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.1)' } },
-            y: { beginAtZero: true, ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-        },
-    };
-
     listenersChartType: ChartType = 'line';
     listenersChartData: ChartData<'line'> = { labels: [], datasets: [] };
-    listenersChartOptions: ChartConfiguration['options'] = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { display: true, labels: { color: '#e0e0e0', boxWidth: 12, padding: 8 } },
-            title: { display: true, text: 'Listeners (Last 30 Days)', color: '#e0e0e0' },
-        },
-        scales: {
-            x: { ticks: { color: '#a0a0a0', maxTicksLimit: 10 }, grid: { color: 'rgba(255,255,255,0.1)' } },
-            y: { beginAtZero: true, ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
-        },
-    };
+    listenersChartOptions: ChartConfiguration['options'] = this.timeSeriesOptions('Listeners (Last 24 Hours)', true);
 
     // Chart color palette
     private colors = [
@@ -226,9 +190,8 @@ export class RdioScannerPublicStatsComponent implements OnInit {
             if (this.stats) {
                 this.buildOverviewCards();
                 this.buildHourlyChart();
-                this.buildDailyChart();
                 this.buildSystemsChart();
-                this.buildRecentChart();
+                this.buildCallsChart();
                 this.buildListenerCharts();
             }
         } catch (e) {
@@ -316,29 +279,117 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         };
     }
 
-    private buildDailyChart(): void {
+    setRange(range: StatsRange): void {
+        if (this.range === range) {
+            return;
+        }
+        this.range = range;
+        this.buildCallsChart();
+        this.buildListenerCharts();
+    }
+
+    private rangeHours(): number {
+        switch (this.range) {
+            case '1h': return 1;
+            case '6h': return 6;
+            case '12h': return 12;
+            case '24h': return 24;
+            case '48h': return 48;
+            case '1w': return 168;
+            default: return 720;
+        }
+    }
+
+    private rangeTitle(): string {
+        switch (this.range) {
+            case '1h': return 'Last Hour';
+            case '6h': return 'Last 6 Hours';
+            case '12h': return 'Last 12 Hours';
+            case '24h': return 'Last 24 Hours';
+            case '48h': return 'Last 48 Hours';
+            case '1w': return 'Last 7 Days';
+            case '1m': return 'Last 30 Days';
+            default: return 'All Data';
+        }
+    }
+
+    private timeSeriesOptions(title: string, legend: boolean): ChartConfiguration['options'] {
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: legend, labels: { color: '#e0e0e0', boxWidth: 12, padding: 8 } },
+                title: { display: true, text: title, color: '#e0e0e0' },
+            },
+            scales: {
+                x: { ticks: { color: '#a0a0a0', maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.1)' } },
+                y: { beginAtZero: true, ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255,255,255,0.1)' } },
+            },
+        };
+    }
+
+    private buildCallsChart(): void {
+        if (!this.stats?.hourBuckets) return;
+
+        // Calls ship as hourly UTC buckets covering 30 days, so 'all' and
+        // '1m' both render the full shipped window. Hour bins up to 48h,
+        // day bins beyond — a month of hourly points is noise and an hour
+        // of daily points is nothing.
+        const hours = Math.min(this.rangeHours(), 720);
         const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        const today = new Date();
         const labels: string[] = [];
         const data: number[] = [];
-        for (let i = 29; i >= 0; i--) {
-            const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
-            const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
-            labels.push(`${months[d.getMonth()]} ${d.getDate()} (${days[d.getDay()]})`);
-            data.push(this._dayCountsLast30d.get(key) || 0);
+
+        if (hours <= 48) {
+            // Hour bins with windowed matching — safe for half-hour-offset
+            // timezones where a local hour boundary lands at :30 UTC.
+            const buckets: { ms: number; count: number }[] = [];
+            for (const b of this.stats.hourBuckets) {
+                const t = new Date(b.startUtc);
+                if (!isNaN(t.getTime())) buckets.push({ ms: t.getTime(), count: b.count });
+            }
+
+            const now = new Date();
+            const currentLocalHour = new Date(
+                now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(),
+            );
+
+            const HOUR_MS = 3600000;
+            for (let i = hours - 1; i >= 0; i--) {
+                const slot = new Date(currentLocalHour);
+                slot.setHours(slot.getHours() - i);
+                const slotMs = slot.getTime();
+                let count = 0;
+                for (const b of buckets) {
+                    if (b.ms >= slotMs && b.ms < slotMs + HOUR_MS) count += b.count;
+                }
+                labels.push(`${slot.getHours().toString().padStart(2, '0')}:00`);
+                data.push(count);
+            }
+        } else {
+            const today = new Date();
+            const dayCount = Math.min(Math.round(hours / 24), 30);
+            for (let i = dayCount - 1; i >= 0; i--) {
+                const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+                const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+                labels.push(`${months[d.getMonth()]} ${d.getDate()} (${days[d.getDay()]})`);
+                data.push(this._dayCountsLast30d.get(key) || 0);
+            }
         }
 
-        this.dailyChartData = {
+        const title = this.range === 'all' ? 'Last 30 Days' : this.rangeTitle();
+        this.callsChartOptions = this.timeSeriesOptions(`Calls (${title})`, false);
+        this.callsChartData = {
             labels,
             datasets: [{
                 data,
                 fill: true,
-                backgroundColor: 'rgba(76, 175, 80, 0.2)',
-                borderColor: 'rgba(76, 175, 80, 1)',
-                tension: 0.4,
-                pointRadius: 3,
-                pointBackgroundColor: 'rgba(76, 175, 80, 1)',
+                backgroundColor: 'rgba(255, 152, 0, 0.2)',
+                borderColor: 'rgba(255, 152, 0, 1)',
+                tension: 0.3,
+                pointRadius: 2,
+                pointBackgroundColor: 'rgba(255, 152, 0, 1)',
             }],
         };
     }
@@ -360,59 +411,11 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         };
     }
 
-    private buildRecentChart(): void {
-        if (!this.stats?.hourBuckets) return;
-
-        // Pre-parse buckets to {ms, count}. We sum any UTC-hour bucket whose
-        // start instant falls within each local hour's [start, start+1h)
-        // window — point-matching a derived UTC-hour key breaks for
-        // half-hour-offset zones (IST, NST, Nepal, parts of AU) where a
-        // local hour boundary lands at :30 UTC.
-        const buckets: { ms: number; count: number }[] = [];
-        for (const b of this.stats.hourBuckets) {
-            const t = new Date(b.startUtc);
-            if (!isNaN(t.getTime())) buckets.push({ ms: t.getTime(), count: b.count });
-        }
-
-        const now = new Date();
-        const currentLocalHour = new Date(
-            now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(),
-        );
-
-        const HOUR_MS = 3600000;
-        const labels: string[] = [];
-        const data: number[] = [];
-        for (let i = 23; i >= 0; i--) {
-            const slot = new Date(currentLocalHour);
-            slot.setHours(slot.getHours() - i);
-            const slotMs = slot.getTime();
-            let count = 0;
-            for (const b of buckets) {
-                if (b.ms >= slotMs && b.ms < slotMs + HOUR_MS) count += b.count;
-            }
-            labels.push(`${slot.getHours().toString().padStart(2, '0')}:00`);
-            data.push(count);
-        }
-
-        this.recentChartData = {
-            labels,
-            datasets: [{
-                data,
-                fill: true,
-                backgroundColor: 'rgba(255, 152, 0, 0.2)',
-                borderColor: 'rgba(255, 152, 0, 1)',
-                tension: 0.3,
-                pointRadius: 2,
-                pointBackgroundColor: 'rgba(255, 152, 0, 1)',
-            }],
-        };
-    }
-
     private buildListenerCharts(): void {
         // Listener buckets are sparse on purpose: an absent slot means the
         // server was down, not that nobody was listening. The dense axis is
-        // built here, with nulls where no bucket exists so the line charts
-        // show gaps (spanGaps is off).
+        // built here, with nulls where no bucket exists so the line chart
+        // shows gaps (spanGaps is off).
         const raw = this.stats?.listenerBuckets;
         if (!raw?.length) return;
 
@@ -420,60 +423,72 @@ export class RdioScannerPublicStatsComponent implements OnInit {
         // instant renders the same in every timezone, so a direct map lookup
         // replaces local binning entirely — only the labels are local.
         const byMs = new Map<number, { avg: number; peak: number }>();
+        let earliest = Number.MAX_SAFE_INTEGER;
         for (const b of raw) {
             const ms = new Date(b.startUtc).getTime();
-            if (!isNaN(ms)) byMs.set(ms, { avg: b.avg, peak: b.peak });
+            if (!isNaN(ms)) {
+                byMs.set(ms, { avg: b.avg, peak: b.peak });
+                if (ms < earliest) earliest = ms;
+            }
         }
 
         const SLOT_MS = 600000;
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const nowSlot = Math.floor(Date.now() / SLOT_MS) * SLOT_MS;
+
+        // 'all' stretches back to the earliest recorded sample (the server
+        // ships its full 90-day retention); the other ranges are fixed
+        // windows. Always 10-minute slots — that is the tracking grain.
+        const slots = this.range === 'all'
+            ? Math.max(1, Math.floor((nowSlot - earliest) / SLOT_MS) + 1)
+            : this.rangeHours() * 6;
+
         const hhmm = (d: Date) =>
             `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+        const label = slots <= 288
+            ? hhmm
+            : (d: Date) => `${months[d.getMonth()]} ${d.getDate()} ${hhmm(d)}`;
+        // Straight segments past 48h — bezier over thousands of points is
+        // wasted work.
+        const tension = slots <= 288 ? 0.3 : 0;
 
-        const series = (slots: number, label: (d: Date) => string) => {
-            const labels: string[] = [];
-            const avgData: (number | null)[] = [];
-            const peakData: (number | null)[] = [];
-            for (let i = slots - 1; i >= 0; i--) {
-                const ms = nowSlot - i * SLOT_MS;
-                const b = byMs.get(ms);
-                labels.push(label(new Date(ms)));
-                avgData.push(b ? b.avg : null);
-                peakData.push(b ? b.peak : null);
-            }
-            return { labels, avgData, peakData };
+        const labels: string[] = [];
+        const avgData: (number | null)[] = [];
+        const peakData: (number | null)[] = [];
+        for (let i = slots - 1; i >= 0; i--) {
+            const ms = nowSlot - i * SLOT_MS;
+            const b = byMs.get(ms);
+            labels.push(label(new Date(ms)));
+            avgData.push(b ? b.avg : null);
+            peakData.push(b ? b.peak : null);
+        }
+
+        this.listenersChartOptions = this.timeSeriesOptions(`Listeners (${this.rangeTitle()})`, true);
+        this.listenersChartData = {
+            labels,
+            datasets: [
+                {
+                    label: 'Average',
+                    data: avgData,
+                    fill: true,
+                    backgroundColor: 'rgba(0, 188, 212, 0.2)',
+                    borderColor: 'rgba(0, 188, 212, 1)',
+                    tension,
+                    pointRadius: 0,
+                    spanGaps: false,
+                },
+                {
+                    label: 'Peak',
+                    data: peakData,
+                    fill: false,
+                    borderColor: 'rgba(255, 152, 0, 1)',
+                    borderWidth: 1,
+                    tension,
+                    pointRadius: 0,
+                    spanGaps: false,
+                },
+            ],
         };
-
-        const datasets = (s: { avgData: (number | null)[]; peakData: (number | null)[] }, tension: number) => [
-            {
-                label: 'Average',
-                data: s.avgData,
-                fill: true,
-                backgroundColor: 'rgba(0, 188, 212, 0.2)',
-                borderColor: 'rgba(0, 188, 212, 1)',
-                tension,
-                pointRadius: 0,
-                spanGaps: false,
-            },
-            {
-                label: 'Peak',
-                data: s.peakData,
-                fill: false,
-                borderColor: 'rgba(255, 152, 0, 1)',
-                borderWidth: 1,
-                tension,
-                pointRadius: 0,
-                spanGaps: false,
-            },
-        ];
-
-        const recent = series(144, hhmm);
-        this.listenersRecentChartData = { labels: recent.labels, datasets: datasets(recent, 0.3) };
-
-        // 4 320 points — straight segments keep the render cheap.
-        const month = series(4320, (d) => `${months[d.getMonth()]} ${d.getDate()} ${hhmm(d)}`);
-        this.listenersChartData = { labels: month.labels, datasets: datasets(month, 0) };
     }
 
     private formatNumber(num: number): string {

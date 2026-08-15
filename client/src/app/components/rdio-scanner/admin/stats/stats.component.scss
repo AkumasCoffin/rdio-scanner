@@ -380,3 +380,26 @@
     }
 }
 
+
+.range-filter {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 16px;
+
+    mat-button-toggle-group {
+        flex-wrap: wrap;
+        background: transparent;
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    mat-button-toggle {
+        background: transparent;
+        color: #a0a0a0;
+        font-size: 12px;
+
+        &.mat-button-toggle-checked {
+            background: rgba(0, 188, 212, 0.25);
+            color: #e0e0e0;
+        }
+    }
+}

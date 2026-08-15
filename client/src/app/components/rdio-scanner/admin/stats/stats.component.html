@@ -69,36 +69,21 @@
             </mat-card>
         </div>
 
-        <!-- Charts Row 1 -->
-        <div class="charts-row">
-            <mat-card class="chart-card">
-                <div class="chart-container">
-                    <canvas baseChart
-                        [type]="hourlyChartType"
-                        [data]="hourlyChartData"
-                        [options]="hourlyChartOptions">
-                    </canvas>
-                </div>
-            </mat-card>
-            <mat-card class="chart-card">
-                <div class="chart-container">
-                    <canvas baseChart
-                        [type]="recentChartType"
-                        [data]="recentChartData"
-                        [options]="recentChartOptions">
-                    </canvas>
-                </div>
-            </mat-card>
+        <!-- Time Range Filter (calls + listeners time series) -->
+        <div class="range-filter">
+            <mat-button-toggle-group [value]="range" (change)="setRange($event.value)">
+                <mat-button-toggle *ngFor="let r of ranges" [value]="r.key">{{ r.label }}</mat-button-toggle>
+            </mat-button-toggle-group>
         </div>
 
-        <!-- Charts Row 2 -->
+        <!-- Calls Time Series -->
         <div class="charts-row">
             <mat-card class="chart-card wide">
                 <div class="chart-container">
                     <canvas baseChart
-                        [type]="dailyChartType"
-                        [data]="dailyChartData"
-                        [options]="dailyChartOptions">
+                        [type]="callsChartType"
+                        [data]="callsChartData"
+                        [options]="callsChartOptions">
                     </canvas>
                 </div>
             </mat-card>
@@ -113,31 +98,31 @@
             </mat-card>
         </div>
 
-        <!-- Listener Statistics -->
-        <ng-container *ngIf="stats.listenerBuckets?.length">
-            <div class="charts-row">
-                <mat-card class="chart-card">
-                    <div class="chart-container">
-                        <canvas baseChart
-                            [type]="listenersRecentChartType"
-                            [data]="listenersRecentChartData"
-                            [options]="listenersRecentChartOptions">
-                        </canvas>
-                    </div>
-                </mat-card>
-            </div>
-            <div class="charts-row">
-                <mat-card class="chart-card">
-                    <div class="chart-container">
-                        <canvas baseChart
-                            [type]="listenersChartType"
-                            [data]="listenersChartData"
-                            [options]="listenersChartOptions">
-                        </canvas>
-                    </div>
-                </mat-card>
-            </div>
-        </ng-container>
+        <!-- Listeners Time Series -->
+        <div class="charts-row" *ngIf="stats.listenerBuckets?.length">
+            <mat-card class="chart-card">
+                <div class="chart-container">
+                    <canvas baseChart
+                        [type]="listenersChartType"
+                        [data]="listenersChartData"
+                        [options]="listenersChartOptions">
+                    </canvas>
+                </div>
+            </mat-card>
+        </div>
+
+        <!-- Hour-of-day Rollup -->
+        <div class="charts-row">
+            <mat-card class="chart-card">
+                <div class="chart-container">
+                    <canvas baseChart
+                        [type]="hourlyChartType"
+                        [data]="hourlyChartData"
+                        [options]="hourlyChartOptions">
+                    </canvas>
+                </div>
+            </mat-card>
+        </div>
 
         <!-- Top Talkgroups Table -->
         <mat-card class="table-card">

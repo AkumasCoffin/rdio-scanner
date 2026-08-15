@@ -44,13 +44,31 @@
             </div>
         </div>
 
-        <!-- Recent Activity Chart -->
+        <!-- Time Range Filter (calls + listeners time series) -->
+        <div class="range-filter">
+            <mat-button-toggle-group [value]="range" (change)="setRange($event.value)">
+                <mat-button-toggle *ngFor="let r of ranges" [value]="r.key">{{ r.label }}</mat-button-toggle>
+            </mat-button-toggle-group>
+        </div>
+
+        <!-- Calls Time Series -->
         <mat-card class="chart-card">
-            <div class="chart-container small">
+            <div class="chart-container">
                 <canvas baseChart
-                    [type]="recentChartType"
-                    [data]="recentChartData"
-                    [options]="recentChartOptions">
+                    [type]="callsChartType"
+                    [data]="callsChartData"
+                    [options]="callsChartOptions">
+                </canvas>
+            </div>
+        </mat-card>
+
+        <!-- Listeners Time Series (present only when enabled by the admin) -->
+        <mat-card class="chart-card" *ngIf="stats.listenerBuckets?.length">
+            <div class="chart-container">
+                <canvas baseChart
+                    [type]="listenersChartType"
+                    [data]="listenersChartData"
+                    [options]="listenersChartOptions">
                 </canvas>
             </div>
         </mat-card>
@@ -66,17 +84,6 @@
             </div>
         </mat-card>
 
-        <!-- Daily Volume Chart -->
-        <mat-card class="chart-card">
-            <div class="chart-container">
-                <canvas baseChart
-                    [type]="dailyChartType"
-                    [data]="dailyChartData"
-                    [options]="dailyChartOptions">
-                </canvas>
-            </div>
-        </mat-card>
-
         <!-- Top Systems Chart -->
         <mat-card class="chart-card" *ngIf="stats.topSystems?.length">
             <div class="chart-container doughnut">
@@ -87,28 +94,6 @@
                 </canvas>
             </div>
         </mat-card>
-
-        <!-- Listener Statistics (present only when enabled by the admin) -->
-        <ng-container *ngIf="stats.listenerBuckets?.length">
-            <mat-card class="chart-card">
-                <div class="chart-container">
-                    <canvas baseChart
-                        [type]="listenersRecentChartType"
-                        [data]="listenersRecentChartData"
-                        [options]="listenersRecentChartOptions">
-                    </canvas>
-                </div>
-            </mat-card>
-            <mat-card class="chart-card">
-                <div class="chart-container">
-                    <canvas baseChart
-                        [type]="listenersChartType"
-                        [data]="listenersChartData"
-                        [options]="listenersChartOptions">
-                    </canvas>
-                </div>
-            </mat-card>
-        </ng-container>
 
         <!-- Top Talkgroups List -->
         <mat-card class="table-card" *ngIf="stats.topTalkgroups?.length">
