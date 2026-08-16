@@ -111,23 +111,6 @@ test('new-system target prefills the next free system id', () => {
     assert.equal(config.systems[0].talkgroups.length, 1);
 });
 
-test('group target routes rows by system label and forces the group', () => {
-    const config = baseConfig();
-    config.systems.push({ id: 2, label: 'Rural', talkgroups: [] });
-
-    importTalkgroups(config, [
-        row({ id: 101, system: 'Metro', label: 'Renamed', tag: 'Tac' }),
-        row({ id: 500, system: 'Rural', label: 'Rural TG' }),
-    ], { kind: 'group', group: { _id: 9, label: 'Interop' } });
-
-    const interop = config.groups.find((g) => g.label === 'Interop');
-    assert.ok(interop, 'target group auto-created');
-    // Forced axis wins on both merge and insert; the other axis honors the CSV.
-    assert.equal(config.systems[0].talkgroups[0].groupId, interop._id);
-    assert.equal(config.systems[0].talkgroups[0].tagId, config.tags.find((t) => t.label === 'Tac')._id);
-    assert.equal(config.systems[1].talkgroups[0].groupId, interop._id);
-});
-
 test('unit merge updates labels in place and appends with continuing order', () => {
     const config = baseConfig();
     const err = importUnits(config, [

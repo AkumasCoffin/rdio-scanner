@@ -22,7 +22,7 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { Config, RdioScannerAdminService, System } from '../../admin.service';
 import { decodeCsvBuffer, parseCsv } from '../csv';
 import {
-    GroupTarget, ImportTarget, SystemTarget, TagTarget, TalkgroupRow, UnitRow,
+    ImportTarget, SystemTarget, TalkgroupRow, UnitRow,
     importTalkgroups, importUnits,
 } from '../import-merge';
 
@@ -86,10 +86,6 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     systemTargets: SystemTarget[] = [];
 
-    groupTargets: GroupTarget[] = [];
-
-    tagTargets: TagTarget[] = [];
-
     unknownSystems: string[] = [];
 
     previewLimit = PREVIEW_LIMIT;
@@ -108,15 +104,11 @@ export class RdioScannerAdminImportComponent implements OnInit {
     async refresh(): Promise<void> {
         this.baseConfig = await this.adminService.getConfig();
 
+        // Targets are systems only — talkgroup group/tag assignments come
+        // from the CSV columns. Targeting by group/tag was removed: it hid
+        // the systems list and left users unable to import into an
+        // existing system (issue #6 feedback).
         this.systemTargets = (this.baseConfig.systems ?? []).map((system) => ({ kind: 'system' as const, system }));
-        // Group/tag targets follow the same sort options as the rest of
-        // the UI (mutually exclusive, so at most one optgroup shows).
-        this.groupTargets = this.baseConfig.options?.sortByGroups
-            ? (this.baseConfig.groups ?? []).map((group) => ({ kind: 'group' as const, group }))
-            : [];
-        this.tagTargets = this.baseConfig.options?.sortByTags
-            ? (this.baseConfig.tags ?? []).map((tag) => ({ kind: 'tag' as const, tag }))
-            : [];
 
         this.reconcileTarget();
     }
@@ -137,11 +129,10 @@ export class RdioScannerAdminImportComponent implements OnInit {
         return this.hasHeader && 'system' in this.headerMap;
     }
 
-    // Routed / group / tag targets need the CSV to say which system each
-    // row belongs to — only the exported Rdio Scanner format carries that
-    // column.
+    // The routed target needs the CSV to say which system each row belongs
+    // to — only the exported Rdio Scanner format carries that column.
     get routingError(): boolean {
-        if (!(this.target.kind === 'routed' || this.target.kind === 'group' || this.target.kind === 'tag')) {
+        if (this.target.kind !== 'routed') {
             return false;
         }
         if (this.dataType === 'talkgroups' && this.style !== 'rdio') {
@@ -197,12 +188,6 @@ export class RdioScannerAdminImportComponent implements OnInit {
         const target = this.target;
         if (target.kind === 'system') {
             const match = this.systemTargets.find((t) => t.system.id === target.system.id);
-            this.target = match ?? this.defaultTarget();
-        } else if (target.kind === 'group') {
-            const match = this.groupTargets.find((t) => t.group._id === target.group._id);
-            this.target = match ?? this.defaultTarget();
-        } else if (target.kind === 'tag') {
-            const match = this.tagTargets.find((t) => t.tag._id === target.tag._id);
             this.target = match ?? this.defaultTarget();
         } else if (this.dataType === 'units' && target.kind === 'newSystem') {
             this.target = this.defaultTarget();
@@ -372,7 +357,7 @@ export class RdioScannerAdminImportComponent implements OnInit {
     }
 
     updateUnknownSystems(): void {
-        if (!(this.target.kind === 'routed' || this.target.kind === 'group' || this.target.kind === 'tag')) {
+        if (this.target.kind !== 'routed') {
             this.unknownSystems = [];
             return;
         }

@@ -24,10 +24,11 @@ import { downloadFile, slugify, toCsv } from '../csv';
 
 type ExportDataType = 'talkgroups' | 'units' | 'config';
 
+// Scopes are systems only — the CSV's group/tag columns carry that axis.
+// Scoping by group/tag was removed: it hid the systems list (issue #6
+// feedback).
 interface SystemScope { kind: 'system'; system: System; }
-interface GroupScope { kind: 'group'; id: number; label: string; }
-interface TagScope { kind: 'tag'; id: number; label: string; }
-type ExportScope = { kind: 'all' } | SystemScope | GroupScope | TagScope;
+type ExportScope = { kind: 'all' } | SystemScope;
 
 @Component({
     selector: 'rdio-scanner-admin-export',
@@ -45,10 +46,6 @@ export class RdioScannerAdminExportComponent implements OnInit {
 
     systemScopes: SystemScope[] = [];
 
-    groupScopes: GroupScope[] = [];
-
-    tagScopes: TagScope[] = [];
-
     constructor(
         private adminService: RdioScannerAdminService,
         @Inject(DOCUMENT) private document: Document,
@@ -62,19 +59,6 @@ export class RdioScannerAdminExportComponent implements OnInit {
         this.baseConfig = await this.adminService.getConfig();
 
         this.systemScopes = (this.baseConfig.systems ?? []).map((system) => ({ kind: 'system' as const, system }));
-        // Group/tag scopes only show when the corresponding sort option is
-        // on — the same lens the rest of the UI uses. The options are
-        // mutually exclusive, so at most one extra optgroup appears.
-        this.groupScopes = this.baseConfig.options?.sortByGroups
-            ? (this.baseConfig.groups ?? [])
-                .filter((g) => typeof g._id === 'number')
-                .map((g) => ({ kind: 'group' as const, id: g._id as number, label: g.label ?? '' }))
-            : [];
-        this.tagScopes = this.baseConfig.options?.sortByTags
-            ? (this.baseConfig.tags ?? [])
-                .filter((t) => typeof t._id === 'number')
-                .map((t) => ({ kind: 'tag' as const, id: t._id as number, label: t.label ?? '' }))
-            : [];
 
         this.scope = this.allScope;
     }
@@ -85,13 +69,6 @@ export class RdioScannerAdminExportComponent implements OnInit {
 
     get canExport(): boolean {
         return this.dataType === 'config' || this.hasSystems;
-    }
-
-    onDataTypeChange(): void {
-        // Units have no group/tag axis; drop such a scope when switching.
-        if (this.dataType !== 'talkgroups' && (this.scope.kind === 'group' || this.scope.kind === 'tag')) {
-            this.scope = this.allScope;
-        }
     }
 
     systemLabel(system: System): string {
@@ -131,8 +108,6 @@ export class RdioScannerAdminExportComponent implements OnInit {
             for (const system of scopedSystems) {
                 const talkgroups = [...(system.talkgroups ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
                 for (const tg of talkgroups) {
-                    if (scope.kind === 'group' && tg.groupId !== scope.id) continue;
-                    if (scope.kind === 'tag' && tg.tagId !== scope.id) continue;
                     rows.push([
                         system.label, tg.id, tg.label, tg.name,
                         groupLabel(tg.groupId), tagLabel(tg.tagId),
@@ -156,11 +131,9 @@ export class RdioScannerAdminExportComponent implements OnInit {
     }
 
     private scopeSlug(): string {
-        switch (this.scope.kind) {
-            case 'all': return 'all-systems';
-            case 'system': return slugify(this.systemLabel(this.scope.system));
-            default: return slugify(this.scope.label);
-        }
+        return this.scope.kind === 'all'
+            ? 'all-systems'
+            : slugify(this.systemLabel(this.scope.system));
     }
 
     // The whole-config JSON export, moved verbatim from the retired

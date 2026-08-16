@@ -34,6 +34,11 @@
 
 import type { Config, Group, System, Tag, Talkgroup, Unit } from '../admin.service';
 
+// Group/Tag typed here only for the label-resolver signature — talkgroups
+// always import/export with their group/tag columns, but targeting BY
+// group/tag was removed: it hid the systems list and left users unable to
+// import into an existing system (issue #6 feedback).
+
 export interface TalkgroupRow {
     system: string;
     id: number;
@@ -54,13 +59,11 @@ export interface UnitRow {
 }
 
 export interface SystemTarget { kind: 'system'; system: System; }
-export interface GroupTarget { kind: 'group'; group: Group; }
-export interface TagTarget { kind: 'tag'; tag: Tag; }
 // 'routed' sends each row to the system named by its CSV `system` column —
 // the round-trip complement of the "All systems" export. Without it, a
 // multi-system export imported into a single target silently merged every
 // system's rows into one.
-export type ImportTarget = { kind: 'newSystem' } | { kind: 'routed' } | SystemTarget | GroupTarget | TagTarget;
+export type ImportTarget = { kind: 'newSystem' } | { kind: 'routed' } | SystemTarget;
 
 export type UnitsImportTarget = { kind: 'system'; systemId: number | undefined } | { kind: 'routed' };
 
@@ -117,7 +120,7 @@ export function importTalkgroups(config: Config, rows: TalkgroupRow[], target: I
     const groupId = labelIdResolver(config.groups);
     const tagId = labelIdResolver(config.tags);
 
-    const mergeInto = (system: System, systemRows: TalkgroupRow[], forced?: { groupId?: number; tagId?: number }) => {
+    const mergeInto = (system: System, systemRows: TalkgroupRow[]) => {
         system.talkgroups = system.talkgroups ?? [];
         const byId = new Map<number, Talkgroup>();
         let nextOrder = system.talkgroups.length;
@@ -127,8 +130,8 @@ export function importTalkgroups(config: Config, rows: TalkgroupRow[], target: I
         }
 
         for (const row of systemRows) {
-            const rowGroupId = forced?.groupId ?? groupId(row.group);
-            const rowTagId = forced?.tagId ?? tagId(row.tag);
+            const rowGroupId = groupId(row.group);
+            const rowTagId = tagId(row.tag);
             const existing = byId.get(row.id);
             if (existing) {
                 // Every field keeps its existing value when the CSV cell is
@@ -181,18 +184,12 @@ export function importTalkgroups(config: Config, rows: TalkgroupRow[], target: I
         return null;
     }
 
-    // Routed / group / tag targets: rows go to the system named by their
-    // CSV system column. Group/tag additionally force that axis; the other
-    // axis still honors the CSV.
-    const forced = target.kind === 'group'
-        ? { groupId: groupId(target.group.label ?? '') }
-        : target.kind === 'tag'
-            ? { tagId: tagId(target.tag.label ?? '') }
-            : undefined;
+    // Routed target: rows go to the system named by their CSV system
+    // column.
     const rowsBySystem = groupRowsBySystem(rows);
     for (const system of config.systems) {
         const systemRows = system.label !== undefined ? rowsBySystem.get(system.label) : undefined;
-        if (systemRows?.length) mergeInto(system, systemRows, forced);
+        if (systemRows?.length) mergeInto(system, systemRows);
     }
     return null;
 }

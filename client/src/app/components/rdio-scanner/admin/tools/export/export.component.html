@@ -1,7 +1,7 @@
 <section>
     <p class="mat-body">step 1: select data to export</p>
     <p class="text-center">
-        <mat-radio-group [(ngModel)]="dataType" (change)="onDataTypeChange()">
+        <mat-radio-group [(ngModel)]="dataType">
             <mat-radio-button value="talkgroups">Talkgroups</mat-radio-button>
             <mat-radio-button value="units">Units</mat-radio-button>
             <mat-radio-button value="config">Config (JSON)</mat-radio-button>
@@ -16,17 +16,8 @@
             <mat-label>Scope</mat-label>
             <mat-select [(ngModel)]="scope">
                 <mat-option [value]="allScope">All systems</mat-option>
-                <!-- With Sort By Groups/Tags on, talkgroups scope by that
-                     axis INSTEAD of by system; units always scope by
-                     system since they carry no group/tag. -->
-                <mat-optgroup label="Systems" *ngIf="dataType === 'units' || !(groupScopes.length || tagScopes.length)">
+                <mat-optgroup label="Systems">
                     <mat-option *ngFor="let s of systemScopes" [value]="s">{{ systemLabel(s.system) }}</mat-option>
-                </mat-optgroup>
-                <mat-optgroup label="Groups" *ngIf="dataType === 'talkgroups' && groupScopes.length">
-                    <mat-option *ngFor="let g of groupScopes" [value]="g">{{ g.label }}</mat-option>
-                </mat-optgroup>
-                <mat-optgroup label="Tags" *ngIf="dataType === 'talkgroups' && tagScopes.length">
-                    <mat-option *ngFor="let t of tagScopes" [value]="t">{{ t.label }}</mat-option>
                 </mat-optgroup>
             </mat-select>
         </mat-form-field>

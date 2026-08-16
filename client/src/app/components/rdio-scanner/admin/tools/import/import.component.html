@@ -51,16 +51,8 @@
                 <mat-select [(ngModel)]="target" (selectionChange)="updateUnknownSystems()">
                     <mat-option [value]="newSystemTarget">New system&hellip;</mat-option>
                     <mat-option [value]="routedTarget">Matching systems (from CSV)</mat-option>
-                    <!-- With Sort By Groups/Tags on, talkgroups import by
-                         that axis INSTEAD of into a specific system. -->
-                    <mat-optgroup label="Systems" *ngIf="!(groupTargets.length || tagTargets.length)">
+                    <mat-optgroup label="Systems">
                         <mat-option *ngFor="let t of systemTargets" [value]="t">{{ systemLabel(t.system) }}</mat-option>
-                    </mat-optgroup>
-                    <mat-optgroup label="Groups" *ngIf="groupTargets.length">
-                        <mat-option *ngFor="let t of groupTargets" [value]="t">{{ t.group.label }}</mat-option>
-                    </mat-optgroup>
-                    <mat-optgroup label="Tags" *ngIf="tagTargets.length">
-                        <mat-option *ngFor="let t of tagTargets" [value]="t">{{ t.tag.label }}</mat-option>
                     </mat-optgroup>
                 </mat-select>
             </mat-form-field>
@@ -87,7 +79,7 @@
 
     <section *ngIf="rowCount">
         <p *ngIf="routingError" class="mat-caption mat-error text-center">
-            Matching-systems, group, and tag targets require a CSV exported by Rdio Scanner (with a "system" column).
+            The matching-systems target requires a CSV exported by Rdio Scanner (with a "system" column).
         </p>
         <p *ngIf="unknownSystems.length" class="mat-caption mat-error text-center">
             Unknown systems in the CSV: {{ unknownSystems.join(', ') }}. Remove those rows to import.
