@@ -1,0 +1,220 @@
+<section>
+    <p class="mat-body">step 1: select data to import</p>
+    <p class="text-center">
+        <mat-radio-group [(ngModel)]="dataType" (change)="onDataTypeChange()">
+            <mat-radio-button value="talkgroups">Talkgroups</mat-radio-button>
+            <mat-radio-button value="units">Units</mat-radio-button>
+            <mat-radio-button value="config">Config (JSON)</mat-radio-button>
+        </mat-radio-group>
+    </p>
+</section>
+
+<ng-container *ngIf="dataType === 'config'">
+    <section>
+        <p class="mat-body">step 2: import a configuration file</p>
+        <p class="text-center">
+            <button mat-raised-button (click)="cfginput.click()">Import configuration</button>
+            <input #cfginput type="file" accept=".json" style="display: none" (change)="read($event)">
+        </p>
+        <p class="mat-caption text-center">
+            Importing a configuration file replaces the whole configuration once saved.
+        </p>
+    </section>
+</ng-container>
+
+<ng-container *ngIf="dataType !== 'config'">
+    <section>
+        <p class="mat-body">step 2: read the CSV file</p>
+        <p class="text-center">
+            <ng-container *ngIf="!rowCount">
+                <button mat-raised-button (click)="input.click()">Read the CSV file</button>
+                <input #input type="file" accept=".csv" style="display: none" (change)="read($event)">
+            </ng-container>
+            <ng-container *ngIf="rowCount">
+                <button mat-raised-button (click)="reset()">Reset</button>
+            </ng-container>
+        </p>
+    </section>
+
+    <section *ngIf="dataType === 'talkgroups'">
+        <p class="mat-body">step 3: select CSV style and target</p>
+        <p class="text-center">
+            <mat-radio-group [(ngModel)]="style" (change)="remap()">
+                <mat-radio-button value="rdio">Rdio Scanner</mat-radio-button>
+                <mat-radio-button value="trunkRecorder">Trunk Recorder</mat-radio-button>
+                <mat-radio-button value="radioReference">Radio Reference</mat-radio-button>
+            </mat-radio-group>
+        </p>
+        <p class="text-center">
+            <mat-form-field>
+                <mat-label>Import into</mat-label>
+                <mat-select [(ngModel)]="target" (selectionChange)="updateUnknownSystems()">
+                    <mat-option [value]="newSystemTarget">New system&hellip;</mat-option>
+                    <mat-option [value]="routedTarget">Matching systems (from CSV)</mat-option>
+                    <!-- With Sort By Groups/Tags on, talkgroups import by
+                         that axis INSTEAD of into a specific system. -->
+                    <mat-optgroup label="Systems" *ngIf="!(groupTargets.length || tagTargets.length)">
+                        <mat-option *ngFor="let t of systemTargets" [value]="t">{{ systemLabel(t.system) }}</mat-option>
+                    </mat-optgroup>
+                    <mat-optgroup label="Groups" *ngIf="groupTargets.length">
+                        <mat-option *ngFor="let t of groupTargets" [value]="t">{{ t.group.label }}</mat-option>
+                    </mat-optgroup>
+                    <mat-optgroup label="Tags" *ngIf="tagTargets.length">
+                        <mat-option *ngFor="let t of tagTargets" [value]="t">{{ t.tag.label }}</mat-option>
+                    </mat-optgroup>
+                </mat-select>
+            </mat-form-field>
+        </p>
+    </section>
+
+    <section *ngIf="dataType === 'units'">
+        <p class="mat-body">step 3: select target system</p>
+        <p class="text-center" *ngIf="systemTargets.length; else noSystems">
+            <mat-form-field>
+                <mat-label>Import into</mat-label>
+                <mat-select [(ngModel)]="target" (selectionChange)="updateUnknownSystems()">
+                    <mat-option [value]="routedTarget">Matching systems (from CSV)</mat-option>
+                    <mat-optgroup label="Systems">
+                        <mat-option *ngFor="let t of systemTargets" [value]="t">{{ systemLabel(t.system) }}</mat-option>
+                    </mat-optgroup>
+                </mat-select>
+            </mat-form-field>
+        </p>
+        <ng-template #noSystems>
+            <p class="mat-body text-center">No systems defined &mdash; create a system first</p>
+        </ng-template>
+    </section>
+
+    <section *ngIf="rowCount">
+        <p *ngIf="routingError" class="mat-caption mat-error text-center">
+            Matching-systems, group, and tag targets require a CSV exported by Rdio Scanner (with a "system" column).
+        </p>
+        <p *ngIf="unknownSystems.length" class="mat-caption mat-error text-center">
+            Unknown systems in the CSV: {{ unknownSystems.join(', ') }}. Remove those rows to import.
+        </p>
+        <p *ngIf="multiSystemWarning" class="mat-caption text-center">
+            This CSV contains rows from several systems; they will all be imported into the selected target.
+            Choose "Matching systems (from CSV)" to send each row back to its own system.
+        </p>
+    </section>
+
+    <section>
+        <p class="mat-body">step 4: review rows to import</p>
+        <div class="scroll" *ngIf="dataType === 'talkgroups'">
+            <mat-table #tgTable [dataSource]="talkgroupPreview" [trackBy]="trackByIndex">
+                <ng-container matColumnDef="system">
+                    <mat-header-cell *matHeaderCellDef>
+                        <span>System</span>
+                    </mat-header-cell>
+                    <mat-cell *matCellDef="let row">
+                        <span>{{ row.system }}</span>
+                    </mat-cell>
+                </ng-container>
+                <ng-container matColumnDef="id">
+                    <mat-header-cell *matHeaderCellDef>
+                        <span>Id</span>
+                    </mat-header-cell>
+                    <mat-cell *matCellDef="let row">
+                        <span>{{ row.id }}</span>
+                    </mat-cell>
+                </ng-container>
+                <ng-container matColumnDef="label">
+                    <mat-header-cell *matHeaderCellDef>
+                        <span>Label</span>
+                    </mat-header-cell>
+                    <mat-cell *matCellDef="let row">
+                        <span>{{ row.label }}</span>
+                    </mat-cell>
+                </ng-container>
+                <ng-container matColumnDef="name">
+                    <mat-header-cell *matHeaderCellDef>
+                        <span>Name</span>
+                    </mat-header-cell>
+                    <mat-cell *matCellDef="let row">
+                        <span>{{ row.name }}</span>
+                    </mat-cell>
+                </ng-container>
+                <ng-container matColumnDef="group">
+                    <mat-header-cell *matHeaderCellDef>
+                        <span>Group</span>
+                    </mat-header-cell>
+                    <mat-cell *matCellDef="let row">
+                        <span>{{ row.group }}</span>
+                    </mat-cell>
+                </ng-container>
+                <ng-container matColumnDef="tag">
+                    <mat-header-cell *matHeaderCellDef>
+                        <span>Tag</span>
+                    </mat-header-cell>
+                    <mat-cell *matCellDef="let row">
+                        <span>{{ row.tag }}</span>
+                    </mat-cell>
+                </ng-container>
+                <ng-container matColumnDef="action">
+                    <mat-header-cell *matHeaderCellDef></mat-header-cell>
+                    <mat-cell *matCellDef="let row; index as i">
+                        <button mat-icon-button (click)="removeTalkgroupRow(i); tgTable.renderRows()">
+                            <mat-icon>clear</mat-icon>
+                        </button>
+                    </mat-cell>
+                </ng-container>
+                <mat-header-row *matHeaderRowDef="talkgroupColumns"></mat-header-row>
+                <mat-row *matRowDef="let row; columns: talkgroupColumns"></mat-row>
+            </mat-table>
+        </div>
+        <div class="scroll" *ngIf="dataType === 'units'">
+            <mat-table #unitTable [dataSource]="unitPreview" [trackBy]="trackByIndex">
+                <ng-container matColumnDef="system">
+                    <mat-header-cell *matHeaderCellDef>
+                        <span>System</span>
+                    </mat-header-cell>
+                    <mat-cell *matCellDef="let row">
+                        <span>{{ row.system }}</span>
+                    </mat-cell>
+                </ng-container>
+                <ng-container matColumnDef="id">
+                    <mat-header-cell *matHeaderCellDef>
+                        <span>Id</span>
+                    </mat-header-cell>
+                    <mat-cell *matCellDef="let row">
+                        <span>{{ row.id }}</span>
+                    </mat-cell>
+                </ng-container>
+                <ng-container matColumnDef="label">
+                    <mat-header-cell *matHeaderCellDef>
+                        <span>Label</span>
+                    </mat-header-cell>
+                    <mat-cell *matCellDef="let row">
+                        <span>{{ row.label }}</span>
+                    </mat-cell>
+                </ng-container>
+                <ng-container matColumnDef="action">
+                    <mat-header-cell *matHeaderCellDef></mat-header-cell>
+                    <mat-cell *matCellDef="let row; index as i">
+                        <button mat-icon-button (click)="removeUnitRow(i); unitTable.renderRows()">
+                            <mat-icon>clear</mat-icon>
+                        </button>
+                    </mat-cell>
+                </ng-container>
+                <mat-header-row *matHeaderRowDef="unitColumns"></mat-header-row>
+                <mat-row *matRowDef="let row; columns: unitColumns"></mat-row>
+            </mat-table>
+        </div>
+        <p *ngIf="rowCount > previewLimit" class="mat-caption text-center">
+            Showing the first {{ previewLimit }} of {{ rowCount }} rows; all {{ rowCount }} will be imported.
+        </p>
+        <p *ngIf="!rowCount" class="mat-body text-center">No CSV data yet</p>
+    </section>
+
+    <section>
+        <p class="mat-body">step 5: import to configuration</p>
+        <p class="text-center">
+            <button mat-raised-button [disabled]="!canImport" (click)="import()">
+                Import to configuration
+            </button>
+        </p>
+        <p *ngIf="talkgroupRows.length > 800" class="mat-caption mat-error text-center text-uppercase">
+            Warning, you are trying to import more than 800 talkgroups, {{ talkgroupRows.length }} in this case. The graphic interface has not designed for this number of talkgroups. You can continue, but expect Rdio Scanner to be quite slow, if not unusable.
+        </p>
+    </section>
+</ng-container>

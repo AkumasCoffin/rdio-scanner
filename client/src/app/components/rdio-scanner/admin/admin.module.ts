@@ -42,9 +42,8 @@ import { RdioScannerAdminPluginsComponent } from './plugins/plugins.component';
 import { RdioScannerAdminStatsComponent } from './stats/stats.component';
 import { RdioScannerAdminTodosComponent } from './todos/todos.component';
 import { RdioScannerAdminToolsComponent } from './tools/tools.component';
-import { RdioScannerAdminImportExportConfigComponent } from './tools/import-export-config/import-export-config.component';
-import { RdioScannerAdminImportTalkgroupsComponent } from './tools/import-talkgroups/import-talkgroups.component';
-import { RdioScannerAdminImportUnitsComponent } from './tools/import-units/import-units.component';
+import { RdioScannerAdminExportComponent } from './tools/export/export.component';
+import { RdioScannerAdminImportComponent } from './tools/import/import.component';
 import { RdioScannerAdminPasswordComponent } from './tools/password/password.component';
 import { RdioScannerAdminUpdatesComponent } from './tools/updates/updates.component';
 
@@ -57,9 +56,8 @@ import { RdioScannerAdminUpdatesComponent } from './tools/updates/updates.compon
         RdioScannerAdminDirWatchComponent,
         RdioScannerAdminDownstreamsComponent,
         RdioScannerAdminGroupsComponent,
-        RdioScannerAdminImportExportConfigComponent,
-        RdioScannerAdminImportTalkgroupsComponent,
-        RdioScannerAdminImportUnitsComponent,
+        RdioScannerAdminExportComponent,
+        RdioScannerAdminImportComponent,
         RdioScannerAdminLoginComponent,
         RdioScannerAdminLogsComponent,
         RdioScannerAdminOptionsComponent,

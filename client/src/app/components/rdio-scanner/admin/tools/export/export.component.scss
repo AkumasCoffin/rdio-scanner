@@ -1,0 +1,17 @@
+.mat-radio-group {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+
+  > *:not(:last-child) {
+    margin-right: 2rem;
+  }
+}
+
+.mat-form-field {
+  min-width: 280px;
+}
+
+.text-center {
+  text-align: center;
+}

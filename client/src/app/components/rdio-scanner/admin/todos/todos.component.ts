@@ -76,7 +76,7 @@ export class RdioScannerAdminTodosComponent implements OnDestroy, OnInit {
         if (!this.config?.systems?.length) {
             todos.push({
                 level: 'info',
-                message: 'No systems defined. You can define one from the systems menu, or import one from a CSV file from the tools menu, or turn on the global auto populate option from the options menu.',
+                message: 'No systems defined. You can define one from the systems menu, or import one from a CSV file from the tools / import menu, or turn on the global auto populate option from the options menu.',
             });
         }
 
