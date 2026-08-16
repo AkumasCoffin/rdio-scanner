@@ -66,3 +66,7 @@ test('slugify produces filename-safe scope names', () => {
     assert.equal(slugify('Sûreté (QC)!'), 's-ret-qc');
     assert.equal(slugify('---'), 'export');
 });
+
+test('a stray quote mid-field stays literal instead of cascading', () => {
+    assert.deepEqual(parseCsv('a,5" RADIO,b\nc,d,e'), [['a', '5" RADIO', 'b'], ['c', 'd', 'e']]);
+});

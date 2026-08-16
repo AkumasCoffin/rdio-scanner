@@ -111,8 +111,12 @@ export class RdioScannerAdminExportComponent implements OnInit {
         const groups = config.groups ?? [];
         const tags = config.tags ?? [];
 
-        const groupLabel = (id?: number) => groups.find((g) => g._id === id)?.label ?? '';
-        const tagLabel = (id?: number) => tags.find((t) => t._id === id)?.label ?? '';
+        // Maps, not per-row find() — a large export otherwise rescans the
+        // whole groups/tags lists for every row.
+        const groupLabels = new Map(groups.map((g) => [g._id, g.label ?? '']));
+        const tagLabels = new Map(tags.map((t) => [t._id, t.label ?? '']));
+        const groupLabel = (id?: number) => (id !== undefined ? groupLabels.get(id) : undefined) ?? '';
+        const tagLabel = (id?: number) => (id !== undefined ? tagLabels.get(id) : undefined) ?? '';
 
         const scope = this.scope;
         const scopedSystems = scope.kind === 'system'

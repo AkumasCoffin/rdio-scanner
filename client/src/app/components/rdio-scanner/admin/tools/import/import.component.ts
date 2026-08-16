@@ -20,7 +20,7 @@
 import { Component, EventEmitter, OnInit, Output } from '@angular/core';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { Config, RdioScannerAdminService, System } from '../../admin.service';
-import { parseCsv } from '../csv';
+import { decodeCsvBuffer, parseCsv } from '../csv';
 import {
     GroupTarget, ImportTarget, SystemTarget, TagTarget, TalkgroupRow, UnitRow,
     importTalkgroups, importUnits,
@@ -28,6 +28,16 @@ import {
 
 type ImportDataType = 'talkgroups' | 'units' | 'config';
 type ImportStyle = 'rdio' | 'trunkRecorder' | 'radioReference';
+
+// Rendering thousands of preview rows froze the tab (same class of issue
+// as the c47cf21 admin-list freeze); the import itself still processes
+// every parsed row.
+const PREVIEW_LIMIT = 100;
+
+const TALKGROUP_COLUMNS = ['id', 'label', 'name', 'group', 'tag', 'action'];
+const TALKGROUP_COLUMNS_WITH_SYSTEM = ['system', ...TALKGROUP_COLUMNS];
+const UNIT_COLUMNS = ['id', 'label', 'action'];
+const UNIT_COLUMNS_WITH_SYSTEM = ['system', ...UNIT_COLUMNS];
 
 @Component({
     selector: 'rdio-scanner-admin-import',
@@ -58,9 +68,19 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     talkgroupRows: TalkgroupRow[] = [];
 
+    talkgroupPreview: TalkgroupRow[] = [];
+
     unitRows: UnitRow[] = [];
 
+    unitPreview: UnitRow[] = [];
+
+    // Distinct non-empty system labels in the parsed rows — drives the
+    // multi-system warning without re-scanning rows every change detection.
+    private distinctSystems = 0;
+
     newSystemTarget: ImportTarget = { kind: 'newSystem' };
+
+    routedTarget: ImportTarget = { kind: 'routed' };
 
     target: ImportTarget = this.newSystemTarget;
 
@@ -72,7 +92,9 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     unknownSystems: string[] = [];
 
-    unitColumns = ['id', 'label', 'action'];
+    previewLimit = PREVIEW_LIMIT;
+
+    trackByIndex = (index: number): number => index;
 
     constructor(
         private adminService: RdioScannerAdminService,
@@ -96,32 +118,54 @@ export class RdioScannerAdminImportComponent implements OnInit {
             ? (this.baseConfig.tags ?? []).map((tag) => ({ kind: 'tag' as const, tag }))
             : [];
 
-        this.resetTarget();
+        this.reconcileTarget();
     }
 
     get talkgroupColumns(): string[] {
-        return this.style === 'rdio'
-            ? ['system', 'id', 'label', 'name', 'group', 'tag', 'action']
-            : ['id', 'label', 'name', 'group', 'tag', 'action'];
+        return this.style === 'rdio' ? TALKGROUP_COLUMNS_WITH_SYSTEM : TALKGROUP_COLUMNS;
+    }
+
+    get unitColumns(): string[] {
+        return this.csvHasSystemColumn ? UNIT_COLUMNS_WITH_SYSTEM : UNIT_COLUMNS;
     }
 
     get rowCount(): number {
         return this.dataType === 'units' ? this.unitRows.length : this.talkgroupRows.length;
     }
 
-    // Group/tag targets need the CSV to say which system each row belongs
-    // to — only the exported Rdio Scanner format carries that column.
+    get csvHasSystemColumn(): boolean {
+        return this.hasHeader && 'system' in this.headerMap;
+    }
+
+    // Routed / group / tag targets need the CSV to say which system each
+    // row belongs to — only the exported Rdio Scanner format carries that
+    // column.
     get routingError(): boolean {
-        return this.dataType === 'talkgroups'
-            && (this.target.kind === 'group' || this.target.kind === 'tag')
-            && !(this.style === 'rdio' && this.hasHeader && 'system' in this.headerMap);
+        if (!(this.target.kind === 'routed' || this.target.kind === 'group' || this.target.kind === 'tag')) {
+            return false;
+        }
+        if (this.dataType === 'talkgroups' && this.style !== 'rdio') {
+            return true;
+        }
+        return !this.csvHasSystemColumn;
+    }
+
+    // A multi-system CSV pointed at a single target imports every row into
+    // that one target — legal, but easy to do by accident with an
+    // "All systems" export, so it gets a warning steering toward routed.
+    get multiSystemWarning(): boolean {
+        return this.distinctSystems > 1
+            && (this.target.kind === 'system' || this.target.kind === 'newSystem');
     }
 
     get canImport(): boolean {
-        if (this.dataType === 'units') {
-            return this.unitRows.length > 0 && this.target.kind === 'system';
+        if (!this.rowCount || this.routingError || this.unknownSystems.length > 0) {
+            return false;
         }
-        return this.talkgroupRows.length > 0 && !this.routingError && this.unknownSystems.length === 0;
+        if (this.dataType === 'units') {
+            return this.target.kind === 'system' || this.target.kind === 'routed';
+        }
+        return true;
     }
 
     systemLabel(system: System): string {
@@ -130,19 +174,44 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     onDataTypeChange(): void {
         this.reset();
-        this.resetTarget();
+        this.target = this.dataType === 'units'
+            ? (this.systemTargets[0] ?? this.routedTarget)
+            : this.newSystemTarget;
     }
 
     reset(): void {
         this.rawRows = [];
         this.talkgroupRows = [];
+        this.talkgroupPreview = [];
         this.unitRows = [];
+        this.unitPreview = [];
         this.unknownSystems = [];
+        this.distinctSystems = 0;
     }
 
-    private resetTarget(): void {
-        this.target = this.dataType === 'units'
-            ? (this.systemTargets[0] ?? this.newSystemTarget)
+    // reconcileTarget re-points the selected target at the freshly fetched
+    // lists — resetting to the default here silently discarded a target the
+    // user had already chosen whenever the panel reopened or a file was
+    // read.
+    private reconcileTarget(): void {
+        const target = this.target;
+        if (target.kind === 'system') {
+            const match = this.systemTargets.find((t) => t.system.id === target.system.id);
+            this.target = match ?? this.defaultTarget();
+        } else if (target.kind === 'group') {
+            const match = this.groupTargets.find((t) => t.group._id === target.group._id);
+            this.target = match ?? this.defaultTarget();
+        } else if (target.kind === 'tag') {
+            const match = this.tagTargets.find((t) => t.tag._id === target.tag._id);
+            this.target = match ?? this.defaultTarget();
+        } else if (this.dataType === 'units' && target.kind === 'newSystem') {
+            this.target = this.defaultTarget();
+        }
+    }
+
+    private defaultTarget(): ImportTarget {
+        return this.dataType === 'units'
+            ? (this.systemTargets[0] ?? this.routedTarget)
             : this.newSystemTarget;
     }
 
@@ -167,14 +236,14 @@ export class RdioScannerAdminImportComponent implements OnInit {
         reader.onloadend = () => {
             target.value = '';
 
-            if (typeof reader.result !== 'string') return;
+            if (!(reader.result instanceof ArrayBuffer)) return;
 
-            this.rawRows = parseCsv(reader.result);
+            this.rawRows = parseCsv(decodeCsvBuffer(reader.result));
             this.detectHeader();
             this.remap();
         };
 
-        reader.readAsText(file);
+        reader.readAsArrayBuffer(file);
     }
 
     private detectHeader(): void {
@@ -201,31 +270,31 @@ export class RdioScannerAdminImportComponent implements OnInit {
         this.updateUnknownSystems();
     }
 
+    private headerCell(row: string[], name: string): string {
+        const idx = this.headerMap[name];
+        return idx === undefined ? '' : (row[idx] ?? '').trim();
+    }
+
     private remapTalkgroups(): void {
         interface RawTalkgroup extends Omit<TalkgroupRow, 'id'> { idStr: string; }
         let rows: RawTalkgroup[];
 
         if (this.style === 'rdio') {
             if (!this.hasHeader) {
-                this.talkgroupRows = [];
+                this.setTalkgroupRows([]);
                 return;
             }
-            const h = this.headerMap;
-            const cell = (r: string[], name: string) => {
-                const i = h[name];
-                return i === undefined ? '' : (r[i] ?? '').trim();
-            };
             rows = this.rawRows.slice(1).map((r) => ({
-                system: cell(r, 'system'),
-                idStr: cell(r, 'id'),
-                label: cell(r, 'label'),
-                name: cell(r, 'name'),
-                group: cell(r, 'group'),
-                tag: cell(r, 'tag'),
-                frequency: cell(r, 'frequency'),
-                led: cell(r, 'led'),
-                delay: cell(r, 'delay'),
-                alert: cell(r, 'alert'),
+                system: this.headerCell(r, 'system'),
+                idStr: this.headerCell(r, 'id'),
+                label: this.headerCell(r, 'label'),
+                name: this.headerCell(r, 'name'),
+                group: this.headerCell(r, 'group'),
+                tag: this.headerCell(r, 'tag'),
+                frequency: this.headerCell(r, 'frequency'),
+                led: this.headerCell(r, 'led'),
+                delay: this.headerCell(r, 'delay'),
+                alert: this.headerCell(r, 'alert'),
             }));
         } else {
             const f = this.fields[this.style];
@@ -247,7 +316,7 @@ export class RdioScannerAdminImportComponent implements OnInit {
         // systems, so dedupe per (system, id); the positional presets are
         // single-system, plain id.
         const seen = new Set<string>();
-        this.talkgroupRows = rows
+        this.setTalkgroupRows(rows
             .filter((r) => /^[0-9]+$/.test(r.idStr))
             .filter((r) => {
                 const key = this.style === 'rdio' ? `${r.system} ${r.idStr}` : r.idStr;
@@ -255,22 +324,17 @@ export class RdioScannerAdminImportComponent implements OnInit {
                 seen.add(key);
                 return true;
             })
-            .map(({ idStr, ...rest }) => ({ ...rest, id: +idStr }));
+            .map(({ idStr, ...rest }) => ({ ...rest, id: +idStr })));
     }
 
     private remapUnits(): void {
         let rows: { system: string; idStr: string; label: string }[];
 
         if (this.hasHeader) {
-            const h = this.headerMap;
-            const cell = (r: string[], name: string) => {
-                const i = h[name];
-                return i === undefined ? '' : (r[i] ?? '').trim();
-            };
             rows = this.rawRows.slice(1).map((r) => ({
-                system: cell(r, 'system'),
-                idStr: cell(r, 'id'),
-                label: cell(r, 'label'),
+                system: this.headerCell(r, 'system'),
+                idStr: this.headerCell(r, 'id'),
+                label: this.headerCell(r, 'label'),
             }));
         } else {
             rows = this.rawRows.map((r) => ({
@@ -280,30 +344,56 @@ export class RdioScannerAdminImportComponent implements OnInit {
             }));
         }
 
+        // Same (system, id) dedupe as talkgroups — a plain id key dropped
+        // legitimate same-id units from different systems in an
+        // "All systems" export.
         const seen = new Set<string>();
-        this.unitRows = rows
+        this.setUnitRows(rows
             .filter((r) => /^[0-9]+$/.test(r.idStr))
             .filter((r) => {
-                if (seen.has(r.idStr)) return false;
-                seen.add(r.idStr);
+                const key = this.hasHeader ? `${r.system} ${r.idStr}` : r.idStr;
+                if (seen.has(key)) return false;
+                seen.add(key);
                 return true;
             })
-            .map((r) => ({ system: r.system, id: +r.idStr, label: r.label }));
+            .map((r) => ({ system: r.system, id: +r.idStr, label: r.label })));
+    }
+
+    private setTalkgroupRows(rows: TalkgroupRow[]): void {
+        this.talkgroupRows = rows;
+        this.talkgroupPreview = rows.slice(0, PREVIEW_LIMIT);
+        this.distinctSystems = new Set(rows.map((r) => r.system).filter((s) => s)).size;
+    }
+
+    private setUnitRows(rows: UnitRow[]): void {
+        this.unitRows = rows;
+        this.unitPreview = rows.slice(0, PREVIEW_LIMIT);
+        this.distinctSystems = new Set(rows.map((r) => r.system).filter((s) => s)).size;
     }
 
     updateUnknownSystems(): void {
-        if (this.dataType === 'talkgroups' && (this.target.kind === 'group' || this.target.kind === 'tag')) {
-            const known = new Set((this.baseConfig.systems ?? []).map((s) => s.label));
-            this.unknownSystems = [...new Set(
-                this.talkgroupRows.filter((r) => !known.has(r.system)).map((r) => r.system || '(empty)'),
-            )];
-        } else {
+        if (!(this.target.kind === 'routed' || this.target.kind === 'group' || this.target.kind === 'tag')) {
             this.unknownSystems = [];
+            return;
         }
+        const known = new Set((this.baseConfig.systems ?? []).map((s) => s.label));
+        const rows: { system: string }[] = this.dataType === 'units' ? this.unitRows : this.talkgroupRows;
+        this.unknownSystems = [...new Set(
+            rows.filter((r) => !known.has(r.system)).map((r) => r.system || '(empty)'),
+        )];
     }
 
     removeTalkgroupRow(index: number): void {
+        // Preview is the first PREVIEW_LIMIT rows, so a preview index is
+        // the same index in the full list.
         this.talkgroupRows.splice(index, 1);
+        this.setTalkgroupRows(this.talkgroupRows);
+        this.updateUnknownSystems();
+    }
+
+    removeUnitRow(index: number): void {
+        this.unitRows.splice(index, 1);
+        this.setUnitRows(this.unitRows);
         this.updateUnknownSystems();
     }
 
@@ -314,7 +404,9 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
         const error = this.dataType === 'talkgroups'
             ? importTalkgroups(config, this.talkgroupRows, this.target)
-            : importUnits(config, this.unitRows, this.target.kind === 'system' ? this.target.system.id : undefined);
+            : importUnits(config, this.unitRows, this.target.kind === 'routed'
+                ? { kind: 'routed' }
+                : { kind: 'system', systemId: this.target.kind === 'system' ? this.target.system.id : undefined });
 
         if (error) {
             this.matSnackBar.open(error, '', { duration: 5000 });

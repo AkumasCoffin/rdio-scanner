@@ -60,7 +60,11 @@ export function parseCsv(text: string): string[][] {
             } else {
                 field += c;
             }
-        } else if (c === '"') {
+        } else if (c === '"' && field === '') {
+            // A quote only opens a quoted field at the start of the field;
+            // mid-field it is literal data (RFC 4180) — treating it as an
+            // opener would swallow every following delimiter into one
+            // runaway field the moment a cell contains a stray inch mark.
             inQuotes = true;
         } else if (c === ',') {
             endField();
@@ -102,7 +106,21 @@ export function downloadFile(document: Document, filename: string, mimeType: str
     el.click();
     document.body.removeChild(el);
 
-    URL.revokeObjectURL(url);
+    // Deferred: revoking synchronously can abort the still-async download
+    // pipeline in Safari/Firefox; Chrome merely tolerates the early revoke.
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+// decodeCsvBuffer decodes a CSV file's bytes: UTF-8 when the bytes are
+// valid UTF-8 (with or without BOM), Windows-1252 otherwise — legacy Excel
+// "CSV (ANSI)" exports are 1252, and decoding them as UTF-8 turns every
+// accented character into mojibake.
+export function decodeCsvBuffer(buffer: ArrayBuffer): string {
+    try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    } catch {
+        return new TextDecoder('windows-1252').decode(buffer);
+    }
 }
 
 export function slugify(s: string): string {

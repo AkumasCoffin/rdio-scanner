@@ -50,9 +50,9 @@
                 <mat-label>Import into</mat-label>
                 <mat-select [(ngModel)]="target" (selectionChange)="updateUnknownSystems()">
                     <mat-option [value]="newSystemTarget">New system&hellip;</mat-option>
+                    <mat-option [value]="routedTarget">Matching systems (from CSV)</mat-option>
                     <!-- With Sort By Groups/Tags on, talkgroups import by
-                         that axis INSTEAD of into a specific system; only
-                         the new-system escape hatch stays. -->
+                         that axis INSTEAD of into a specific system. -->
                     <mat-optgroup label="Systems" *ngIf="!(groupTargets.length || tagTargets.length)">
                         <mat-option *ngFor="let t of systemTargets" [value]="t">{{ systemLabel(t.system) }}</mat-option>
                     </mat-optgroup>
@@ -65,12 +65,6 @@
                 </mat-select>
             </mat-form-field>
         </p>
-        <p *ngIf="routingError" class="mat-caption mat-error text-center">
-            Group and tag targets require a CSV exported by Rdio Scanner (with a "system" column).
-        </p>
-        <p *ngIf="unknownSystems.length" class="mat-caption mat-error text-center">
-            Unknown systems in the CSV: {{ unknownSystems.join(', ') }}. Remove those rows to import.
-        </p>
     </section>
 
     <section *ngIf="dataType === 'units'">
@@ -78,20 +72,36 @@
         <p class="text-center" *ngIf="systemTargets.length; else noSystems">
             <mat-form-field>
                 <mat-label>Import into</mat-label>
-                <mat-select [(ngModel)]="target">
-                    <mat-option *ngFor="let t of systemTargets" [value]="t">{{ systemLabel(t.system) }}</mat-option>
+                <mat-select [(ngModel)]="target" (selectionChange)="updateUnknownSystems()">
+                    <mat-option [value]="routedTarget">Matching systems (from CSV)</mat-option>
+                    <mat-optgroup label="Systems">
+                        <mat-option *ngFor="let t of systemTargets" [value]="t">{{ systemLabel(t.system) }}</mat-option>
+                    </mat-optgroup>
                 </mat-select>
             </mat-form-field>
         </p>
         <ng-template #noSystems>
-            <p class="mat-body text-center">No systems defined — create a system first</p>
+            <p class="mat-body text-center">No systems defined &mdash; create a system first</p>
         </ng-template>
+    </section>
+
+    <section *ngIf="rowCount">
+        <p *ngIf="routingError" class="mat-caption mat-error text-center">
+            Matching-systems, group, and tag targets require a CSV exported by Rdio Scanner (with a "system" column).
+        </p>
+        <p *ngIf="unknownSystems.length" class="mat-caption mat-error text-center">
+            Unknown systems in the CSV: {{ unknownSystems.join(', ') }}. Remove those rows to import.
+        </p>
+        <p *ngIf="multiSystemWarning" class="mat-caption text-center">
+            This CSV contains rows from several systems; they will all be imported into the selected target.
+            Choose "Matching systems (from CSV)" to send each row back to its own system.
+        </p>
     </section>
 
     <section>
         <p class="mat-body">step 4: review rows to import</p>
         <div class="scroll" *ngIf="dataType === 'talkgroups'">
-            <mat-table #tgTable [dataSource]="talkgroupRows">
+            <mat-table #tgTable [dataSource]="talkgroupPreview" [trackBy]="trackByIndex">
                 <ng-container matColumnDef="system">
                     <mat-header-cell *matHeaderCellDef>
                         <span>System</span>
@@ -153,7 +163,15 @@
             </mat-table>
         </div>
         <div class="scroll" *ngIf="dataType === 'units'">
-            <mat-table #unitTable [dataSource]="unitRows">
+            <mat-table #unitTable [dataSource]="unitPreview" [trackBy]="trackByIndex">
+                <ng-container matColumnDef="system">
+                    <mat-header-cell *matHeaderCellDef>
+                        <span>System</span>
+                    </mat-header-cell>
+                    <mat-cell *matCellDef="let row">
+                        <span>{{ row.system }}</span>
+                    </mat-cell>
+                </ng-container>
                 <ng-container matColumnDef="id">
                     <mat-header-cell *matHeaderCellDef>
                         <span>Id</span>
@@ -173,7 +191,7 @@
                 <ng-container matColumnDef="action">
                     <mat-header-cell *matHeaderCellDef></mat-header-cell>
                     <mat-cell *matCellDef="let row; index as i">
-                        <button mat-icon-button (click)="unitRows.splice(i, 1); unitTable.renderRows()">
+                        <button mat-icon-button (click)="removeUnitRow(i); unitTable.renderRows()">
                             <mat-icon>clear</mat-icon>
                         </button>
                     </mat-cell>
@@ -182,6 +200,9 @@
                 <mat-row *matRowDef="let row; columns: unitColumns"></mat-row>
             </mat-table>
         </div>
+        <p *ngIf="rowCount > previewLimit" class="mat-caption text-center">
+            Showing the first {{ previewLimit }} of {{ rowCount }} rows; all {{ rowCount }} will be imported.
+        </p>
         <p *ngIf="!rowCount" class="mat-body text-center">No CSV data yet</p>
     </section>
 

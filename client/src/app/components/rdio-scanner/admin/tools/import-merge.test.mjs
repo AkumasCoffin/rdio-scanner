@@ -133,7 +133,7 @@ test('unit merge updates labels in place and appends with continuing order', () 
     const err = importUnits(config, [
         { system: '', id: 7, label: 'Renamed 7' },
         { system: '', id: 8, label: 'New 8' },
-    ], 1);
+    ], { kind: 'system', systemId: 1 });
 
     assert.equal(err, null);
     const units = config.systems[0].units;
@@ -147,7 +147,7 @@ test('unit import survives a system with no units array', () => {
     const config = baseConfig();
     delete config.systems[0].units;
 
-    const err = importUnits(config, [{ system: '', id: 1, label: 'U1' }], 1);
+    const err = importUnits(config, [{ system: '', id: 1, label: 'U1' }], { kind: 'system', systemId: 1 });
     assert.equal(err, null);
     assert.equal(config.systems[0].units.length, 1);
 });
@@ -155,5 +155,44 @@ test('unit import survives a system with no units array', () => {
 test('a vanished target system reports an error instead of silently no-oping', () => {
     const config = baseConfig();
     assert.equal(importTalkgroups(config, [row()], { kind: 'system', system: { id: 99 } }), 'Target system no longer exists');
-    assert.equal(importUnits(config, [{ system: '', id: 1, label: 'U' }], 99), 'Target system no longer exists');
+    assert.equal(importUnits(config, [{ system: '', id: 1, label: 'U' }], { kind: 'system', systemId: 99 }), 'Target system no longer exists');
+});
+
+test('empty label cells keep the existing label on merge', () => {
+    const config = baseConfig();
+    importTalkgroups(config, [row({ id: 101, label: '', name: '' })], { kind: 'system', system: { id: 1 } });
+
+    assert.equal(config.systems[0].talkgroups[0].label, 'Old A');
+    assert.equal(config.systems[0].talkgroups[0].name, 'Old A Name');
+});
+
+test('routed target sends each talkgroup row to its own system', () => {
+    const config = baseConfig();
+    config.systems.push({ id: 2, label: 'Rural', talkgroups: [] });
+
+    importTalkgroups(config, [
+        row({ id: 101, system: 'Metro', label: 'Metro Renamed' }),
+        row({ id: 500, system: 'Rural', label: 'Rural TG', group: 'Fire', tag: 'Dispatch' }),
+    ], { kind: 'routed' });
+
+    assert.equal(config.systems[0].talkgroups[0].label, 'Metro Renamed');
+    // No forced axis: Metro's existing group/tag survive the merge.
+    assert.equal(config.systems[0].talkgroups[0].groupId, 1);
+    assert.equal(config.systems[1].talkgroups.length, 1);
+    assert.equal(config.systems[1].talkgroups[0].label, 'Rural TG');
+});
+
+test('routed target sends each unit row to its own system', () => {
+    const config = baseConfig();
+    config.systems.push({ id: 2, label: 'Rural', units: [{ id: 7, label: 'Rural 7', order: 1 }] });
+
+    const err = importUnits(config, [
+        { system: 'Metro', id: 7, label: 'Metro 7 Renamed' },
+        { system: 'Rural', id: 7, label: 'Rural 7 Renamed' },
+    ], { kind: 'routed' });
+
+    assert.equal(err, null);
+    // Same unit id in two systems stays two units, each renamed in place.
+    assert.equal(config.systems[0].units[0].label, 'Metro 7 Renamed');
+    assert.equal(config.systems[1].units[0].label, 'Rural 7 Renamed');
 });
