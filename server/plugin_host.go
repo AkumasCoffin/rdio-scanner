@@ -104,7 +104,13 @@ func (controller *Controller) downstreamSupportsFeature(downstream *Downstream, 
 	}
 	u.Path = path.Join(u.Path, "/api/capabilities")
 
-	response, err := (&http.Client{Timeout: pluginProbeTimeout}).Get(u.String())
+	request, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return false
+	}
+	request.Header.Set("User-Agent", "Rdio-Scanner")
+
+	response, err := (&http.Client{Timeout: pluginProbeTimeout}).Do(request)
 	if err != nil {
 		return false
 	}
@@ -193,8 +199,16 @@ func (controller *Controller) ForwardToDownstreams(
 			continue
 		}
 
-		response, err := (&http.Client{Timeout: pluginForwardTimeout}).
-			Post(u.String(), "application/json", bytes.NewReader(encoded))
+		request, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(encoded))
+		if err != nil {
+			result["error"] = err.Error()
+			results = append(results, result)
+			continue
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("User-Agent", "Rdio-Scanner")
+
+		response, err := (&http.Client{Timeout: pluginForwardTimeout}).Do(request)
 		if err != nil {
 			result["error"] = err.Error()
 			results = append(results, result)

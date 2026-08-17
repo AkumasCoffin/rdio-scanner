@@ -246,7 +246,7 @@ func (store *PluginStore) githubRequest(repo *PluginRepo, rawUrl string) (*http.
 	}
 
 	request.Header.Set("Accept", "application/vnd.github+json")
-	request.Header.Set("User-Agent", "rdio-scanner")
+	request.Header.Set("User-Agent", "Rdio-Scanner")
 
 	if repo != nil && strings.TrimSpace(repo.Token) != "" {
 		request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(repo.Token))

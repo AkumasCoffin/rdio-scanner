@@ -129,7 +129,7 @@ func fetchReleases(owner, repo string) ([]githubRelease, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "rdio-scanner")
+	req.Header.Set("User-Agent", "Rdio-Scanner")
 	res, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
 	if err != nil {
 		return nil, err
@@ -329,7 +329,7 @@ func downloadTo(rawUrl, dst string, expectedSize int64) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "rdio-scanner")
+	req.Header.Set("User-Agent", "Rdio-Scanner")
 	res, err := (&http.Client{Timeout: 10 * time.Minute}).Do(req)
 	if err != nil {
 		return err

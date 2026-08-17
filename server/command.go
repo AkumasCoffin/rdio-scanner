@@ -459,6 +459,7 @@ func (c *Command) submit(method string, url string, body io.Reader, auth bool) (
 		if body != nil {
 			req.Header.Add("Content-Type", "application/json")
 		}
+		req.Header.Set("User-Agent", "Rdio-Scanner")
 		res, err = http.DefaultClient.Do(req)
 	}
 	return res, err
