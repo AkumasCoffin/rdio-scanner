@@ -476,12 +476,26 @@
        highlight across the top — so it reads as two LED modules behind one
        lens, like a lightbar segment. */
     &.dual {
-      width: 34px;
+      width: 42px;
       height: 18px;
       border-radius: 4px;
       border: 1px solid rgba(2, 6, 23, 0.7);
       box-sizing: border-box;
       position: relative;
+
+      /* The divider between the two modules. A real element rather than a
+         stop in the color gradient — the gradient seam proved unreliable. */
+      &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 4px;
+        margin-left: -2px;
+        background: #020617;
+        pointer-events: none;
+      }
 
       &::after {
         content: '';

@@ -997,15 +997,14 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     // Builds the lightbar's inline styles. litSide narrows the glow and dims
     // the other module during a wig-wag flash; null lights both modules.
     private applyDualStyles(litSide: 'left' | 'right' | null): void {
-        // Near-black and 4px wide: a hairline seam disappeared under the glass
-        // highlight at this size, so the divider matches the page background
-        // and takes real width to read as two separate modules.
-        const seam = '#020617';
+        // Plain 50/50 split only — the divider is NOT part of this gradient.
+        // It's drawn by the stylesheet as the .dual::before overlay, because a
+        // seam computed into the gradient (via calc color stops) failed to
+        // show reliably; a structural element can't be washed out.
         const left = litSide === 'right' ? RdioScannerMainComponent.dimmed(this.dualHex1) : this.dualHex1;
         const right = litSide === 'left' ? RdioScannerMainComponent.dimmed(this.dualHex2) : this.dualHex2;
 
-        this.dualLedBackground = `linear-gradient(90deg, ${left} 0%, ${left} calc(50% - 2px), ` +
-            `${seam} calc(50% - 2px), ${seam} calc(50% + 2px), ${right} calc(50% + 2px), ${right} 100%)`;
+        this.dualLedBackground = `linear-gradient(90deg, ${left} 0%, ${left} 50%, ${right} 50%, ${right} 100%)`;
 
         const glows = ['inset 0 0 3px rgba(2, 6, 23, 0.6)'];
         if (litSide !== 'right') {
