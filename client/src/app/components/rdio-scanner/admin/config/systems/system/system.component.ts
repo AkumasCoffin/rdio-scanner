@@ -38,6 +38,13 @@ export class RdioScannerAdminSystemComponent {
         return this.form.root.get('options')?.value?.dualLed === true;
     }
 
+    // Marks the Settings panel header when any of the system's own fields are
+    // invalid — talkgroups and units have their own panels and badges.
+    get settingsInvalid(): boolean {
+        return ['id', 'label', 'led', 'led2', 'autoPopulate', 'blacklists', 'delay', 'alert']
+            .some((key) => this.form.get(key)?.invalid === true);
+    }
+
     private formValue = new FormGroup({});
 
     @Input()

@@ -17,7 +17,74 @@
  * ****************************************************************************
  */
 
+/* Settings live in titled cards flowing into as many columns as fit, with
+   tight rows — the full-width flat list read as a wall of text. */
 :host {
+    .opt-cards {
+        align-items: start;
+        display: grid;
+        gap: 1rem;
+        // Wide enough that a setting's label and its control sit on one line
+        // — narrower columns wrapped every label onto three lines.
+        grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+
+        @media (max-width: 560px) {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .opt-card {
+        border: 1px solid rgba(127, 127, 127, 0.2);
+        border-radius: 6px;
+        padding: 0.25rem 1rem 0.5rem;
+    }
+
+    .opt-title {
+        color: var(--accent, orange);
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        margin: 0.6rem 0 0.1rem;
+        text-transform: uppercase;
+    }
+
+    .row {
+        padding: 0.2rem 0;
+
+        + .row {
+            border-top: 1px solid rgba(127, 127, 127, 0.12);
+        }
+
+        > p {
+            margin: 0.3rem 1rem 0.3rem 0;
+
+            .mat-body {
+                font-size: 0.82rem;
+            }
+
+            .mat-caption {
+                display: block;
+                font-size: 0.7rem;
+                line-height: 1.35;
+                opacity: 0.75;
+            }
+        }
+
+        > :not(p) {
+            flex: 0 0 220px;
+            max-width: 220px;
+        }
+
+        > p {
+            min-width: 200px;
+        }
+
+        > div:not(.mat-form-field) {
+            display: flex;
+            justify-content: flex-end;
+        }
+    }
+
     .setting-warning {
         align-items: flex-start;
         display: flex;
@@ -39,15 +106,5 @@
             overflow-wrap: anywhere;
             white-space: pre-wrap;
         }
-    }
-}
-
-/* Wide screens: the ~20 option rows flow into two columns instead of one
-   long scroll (tab shell redesign). */
-@media (min-width: 1100px) {
-    :host {
-        column-gap: 3rem;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
     }
 }

@@ -168,11 +168,19 @@ rdio-scanner-admin-config {
 
   .groups-tags {
     display: grid;
-    gap: 1.5rem 3rem;
+    gap: 1.5rem;
     grid-template-columns: 1fr;
 
     @media (min-width: 1000px) {
       grid-template-columns: 1fr 1fr;
+    }
+
+    /* Each half in its own card so the two lists read as separate panels
+       instead of eight interleaved columns of inputs. */
+    > div {
+      border: 1px solid rgba(127, 127, 127, 0.2);
+      border-radius: 6px;
+      padding: 0.75rem 1.25rem 1rem;
     }
   }
 

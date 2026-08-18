@@ -1,305 +1,333 @@
 <ng-container *ngIf="form" [formGroup]="form">
-    <div class="row">
-        <p>
-            <span class="mat-body">12-Hour Time Format</span><br>
-            <span class="mat-caption">Display time stamp in 12-hour format.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary" formControlName="time12hFormat"></mat-slide-toggle>
+    <div class="opt-cards">
+        <div class="opt-card">
+            <h3 class="opt-title">Display</h3>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Branding Label</span><br>
+                    <span class="mat-caption">A simple line of text displayed above the main screen to help identify
+                        the Rdio Scanner instance.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <input type="text" matInput formControlName="branding" placeholder="Branding">
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">12-Hour Time Format</span><br>
+                    <span class="mat-caption">Display time stamp in 12-hour format.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="time12hFormat"></mat-slide-toggle>
+                </div>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Dimmer Delay</span><br>
+                    <span class="mat-caption">Delay in milliseconds before turning off the screen backlight when
+                        inactive.</span>
+                </p>
+                <mat-form-field>
+                    <input type="number" min="0" step="1" matInput formControlName="dimmerDelay">
+                    <mat-error *ngIf="form?.get('dimmerDelay')?.hasError('required')">
+                        Dimmer delay is required
+                    </mat-error>
+                    <mat-error *ngIf="form?.get('dimmerDelay')?.hasError('min')">
+                        Dimmer delay is invalid
+                    </mat-error>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Show Listeners Count</span><br>
+                    <span class="mat-caption">Show listeners count on main screen.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="showListenersCount"></mat-slide-toggle>
+                </div>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">AFS Systems</span><br>
+                    <span class="mat-caption">A comma separated list of system Ids where talkgroup Ids should be
+                        displayed in AFS (agency-fleet-subfleet) format.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <textarea type="text" matInput formControlName="afsSystems" placeholder="AFS systems"></textarea>
+                    <mat-error *ngIf="form?.get('afsSystems')?.hasError('invalid')">
+                        Comma separated list of system Ids
+                    </mat-error>
+                </mat-form-field>
+            </div>
         </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">AFS Systems</span><br>
-            <span class="mat-caption">A comma separated list of system Ids where talkgroup Ids should be displayed in
-                AFS (agency-fleet-subfleet) format.</span>
-        </p>
-        <mat-form-field floatLabel="never">
-            <textarea type="text" matInput formControlName="afsSystems" placeholder="AFS systems"></textarea>
-            <mat-error *ngIf="form?.get('afsSystems')?.hasError('invalid')">
-                Comma separated list of system Ids
-            </mat-error>
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Audio Conversion</span><br>
-            <span class="mat-caption">Convert incoming audio files to H.264 m4a with ffmpeg.</span>
-            <span class="mat-caption setting-warning" *ngIf="ffmpegMissingAndNeeded">
-                <mat-icon color="warn">warning</mat-icon>
-                <span>
-                    ffmpeg was not found on this server, so no conversion is performed and calls are stored as
-                    uploaded.<ng-container *ngIf="ffmpegInstallHint">
-                        Install it with <code>{{ ffmpegInstallHint }}</code>, then restart Rdio Scanner.</ng-container>
-                </span>
-            </span>
-        </p>
-        <mat-form-field floatLabel="never">
-            <mat-select formControlName="audioConversion" placeholder="Audio Conversion">
-                <mat-option [value]="0">Disabled</mat-option>
-                <mat-option [value]="1">Enabled without normalization</mat-option>
-                <mat-option [value]="2">Enabled with normalization</mat-option>
-                <mat-option [value]="3">Enabled with loud normalization</mat-option>
-            </mat-select>
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Auto Populate</span><br>
-            <span class="mat-caption">Globaly allows the automatic creation of unconfigured systems and
-                talkgroups.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary" formControlName="autoPopulate"></mat-slide-toggle>
+
+        <div class="opt-card">
+            <h3 class="opt-title">LED</h3>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Dual Color LED</span><br>
+                    <span class="mat-caption">Allow a second LED color per system and talkgroup. Systems and talkgroups
+                        get a second color selector, and the main screen LED becomes a two-color lightbar.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="dualLed"></mat-slide-toggle>
+                </div>
+            </div>
+            <div class="row" *ngIf="form?.get('dualLed')?.value">
+                <p>
+                    <span class="mat-body">Wig-Wag LED</span><br>
+                    <span class="mat-caption">The dual LED's halves alternate like a police lightbar while a call
+                        plays.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="wigWagLed"></mat-slide-toggle>
+                </div>
+            </div>
         </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Branding Label</span><br>
-            <span class="mat-caption">A simple line of text displayed above the main screen to help identify the Rdio
-                Scanner instance.</span>
-        </p>
-        <mat-form-field floatLabel="never">
-            <input type="text" matInput formControlName="branding" placeholder="Branding">
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Dimmer Delay</span><br>
-            <span class="mat-caption">Delay in milliseconds before turning off the screen backlight when
-                inactive.</span>
-        </p>
-        <mat-form-field>
-            <input type="number" min="0" step="1" matInput formControlName="dimmerDelay">
-            <mat-error *ngIf="form?.get('dimmerDelay')?.hasError('required')">
-                Dimmer delay is required
-            </mat-error>
-            <mat-error *ngIf="form?.get('dimmerDelay')?.hasError('min')">
-                Dimmer delay is invalid
-            </mat-error>
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Disable Duplicate Call Detection</span><br>
-            <span class="mat-caption">Disable duplicate audio file detection.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary" formControlName="disableDuplicateDetection"></mat-slide-toggle>
+
+        <div class="opt-card">
+            <h3 class="opt-title">Audio</h3>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Audio Conversion</span><br>
+                    <span class="mat-caption">Convert incoming audio files to H.264 m4a with ffmpeg.</span>
+                    <span class="mat-caption setting-warning" *ngIf="ffmpegMissingAndNeeded">
+                        <mat-icon color="warn">warning</mat-icon>
+                        <span>
+                            ffmpeg was not found on this server, so no conversion is performed and calls are stored as
+                            uploaded.<ng-container *ngIf="ffmpegInstallHint">
+                                Install it with <code>{{ ffmpegInstallHint }}</code>, then restart Rdio
+                                Scanner.</ng-container>
+                        </span>
+                    </span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <mat-select formControlName="audioConversion" placeholder="Audio Conversion">
+                        <mat-option [value]="0">Disabled</mat-option>
+                        <mat-option [value]="1">Enabled without normalization</mat-option>
+                        <mat-option [value]="2">Enabled with normalization</mat-option>
+                        <mat-option [value]="3">Enabled with loud normalization</mat-option>
+                    </mat-select>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Keypad Beep Style</span><br>
+                    <span class="mat-caption">Provide audio feedback when pressing buttons.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <mat-select formControlName="keypadBeeps" placeholder="Style">
+                        <mat-option value="uniden">Uniden</mat-option>
+                        <mat-option value="whistler">Whistler</mat-option>
+                    </mat-select>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Playback Mode Goes Live</span><br>
+                    <span class="mat-caption">Playback mode changes to live stream mode when the search list is
+                        exhausted.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="playbackGoesLive"></mat-slide-toggle>
+                </div>
+            </div>
         </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Dual Color LED</span><br>
-            <span class="mat-caption">Allow a second LED color per system and talkgroup. Systems and talkgroups get a
-                second color selector, and the main screen LED becomes a two-color lightbar.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary" formControlName="dualLed"></mat-slide-toggle>
+
+        <div class="opt-card">
+            <h3 class="opt-title">Talkgroup Selector</h3>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Sort Talkgroups</span><br>
+                    <span class="mat-caption">Automatically sort talkgroups by their id.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="sortTalkgroups"></mat-slide-toggle>
+                </div>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Sort By Groups</span><br>
+                    <span class="mat-caption">Group talkgroups by their group.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary"
+                        formControlName="sortByGroups"
+                        (change)="selectSortMode('groups', $event.checked)"></mat-slide-toggle>
+                </div>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Sort By Tag</span><br>
+                    <span class="mat-caption">Group talkgroups by their tag.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary"
+                        formControlName="sortByTags"
+                        (change)="selectSortMode('tags', $event.checked)"></mat-slide-toggle>
+                </div>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Toggle By Tags</span><br>
+                    <span class="mat-caption">Allow toggling talkgroups by their tag.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="tagsToggle"></mat-slide-toggle>
+                </div>
+            </div>
         </div>
-    </div>
-    <div class="row" *ngIf="form?.get('dualLed')?.value">
-        <p>
-            <span class="mat-body">Wig-Wag LED</span><br>
-            <span class="mat-caption">The dual LED's halves alternate like a police lightbar while a call
-                plays.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary" formControlName="wigWagLed"></mat-slide-toggle>
+
+        <div class="opt-card">
+            <h3 class="opt-title">Calls &amp; Ingest</h3>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Auto Populate</span><br>
+                    <span class="mat-caption">Globaly allows the automatic creation of unconfigured systems and
+                        talkgroups.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="autoPopulate"></mat-slide-toggle>
+                </div>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Disable Duplicate Call Detection</span><br>
+                    <span class="mat-caption">Disable duplicate audio file detection.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="disableDuplicateDetection"></mat-slide-toggle>
+                </div>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Duplicate Call Detection Time Frame</span><br>
+                    <span class="mat-caption">New incoming calls will be rejected if a call already exists in the
+                        database with a start time of +/- this delay in milliseconds.</span>
+                </p>
+                <mat-form-field>
+                    <input type="number" min="0" step="1" matInput formControlName="duplicateDetectionTimeFrame">
+                    <mat-error *ngIf="form?.get('duplicateDetectionTimeFrame')?.hasError('required')">
+                        Duplicate call time frame is required
+                    </mat-error>
+                    <mat-error *ngIf="form?.get('duplicateDetectionTimeFrame')?.hasError('min')">
+                        Duplicate call time frame is invalid
+                    </mat-error>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Max Clients</span><br>
+                    <span class="mat-caption">Max number of simultaneous clients.</span>
+                </p>
+                <mat-form-field>
+                    <input type="number" min="0" step="1" matInput formControlName="maxClients">
+                    <mat-error *ngIf="form?.get('maxClients')?.hasError('required')">
+                        Max clients is required
+                    </mat-error>
+                    <mat-error *ngIf="form?.get('maxClients')?.hasError('min')">
+                        Max clients is invalid
+                    </mat-error>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Prune Days</span><br>
+                    <span class="mat-caption">Prune the database for data older than the specified number of days.
+                        Also bounds the listener-statistics history. Set to 0 to disable.</span>
+                </p>
+                <mat-form-field>
+                    <input type="number" min="0" step="1" matInput formControlName="pruneDays">
+                    <mat-error *ngIf="form?.get('pruneDays')?.hasError('required')">
+                        Prune days is required
+                    </mat-error>
+                    <mat-error *ngIf="form?.get('pruneDays')?.hasError('min')">
+                        Prune days is invalid
+                    </mat-error>
+                </mat-form-field>
+            </div>
         </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Duplicate Call Detection Time Frame</span><br>
-            <span class="mat-caption">New incoming calls will be rejected if a call already exists in the database with
-                a start time of +/- this delay in milliseconds.</span>
-        </p>
-        <mat-form-field>
-            <input type="number" min="0" step="1" matInput formControlName="duplicateDetectionTimeFrame">
-            <mat-error *ngIf="form?.get('duplicateDetectionTimeFrame')?.hasError('required')">
-                Duplicate call time frame is required
-            </mat-error>
-            <mat-error *ngIf="form?.get('duplicateDetectionTimeFrame')?.hasError('min')">
-                Duplicate call time frame is invalid
-            </mat-error>
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Email Support</span><br>
-            <span class="mat-caption">Email address where users can write to to get support.</span>
-        </p>
-        <mat-form-field floatLabel="never">
-            <input type="text" matInput formControlName="email" placeholder="Email">
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Keypad Beep Style</span><br>
-            <span class="mat-caption">Provide audio feedback when pressing buttons.</span>
-        </p>
-        <mat-form-field floatLabel="never">
-            <mat-select formControlName="keypadBeeps" placeholder="Style">
-                <mat-option value="uniden">Uniden</mat-option>
-                <mat-option value="whistler">Whistler</mat-option>
-            </mat-select>
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Max Clients</span><br>
-            <span class="mat-caption">Max number of simultaneous clients.</span>
-        </p>
-        <mat-form-field>
-            <input type="number" min="0" step="1" matInput formControlName="maxClients">
-            <mat-error *ngIf="form?.get('maxClients')?.hasError('required')">
-                Max clients is required
-            </mat-error>
-            <mat-error *ngIf="form?.get('maxClients')?.hasError('min')">
-                Max clients is invalid
-            </mat-error>
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Playback Mode Goes Live</span><br>
-            <span class="mat-caption">Playback mode changes to live stream mode when the search list is
-                exhausted.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary" formControlName="playbackGoesLive"></mat-slide-toggle>
+
+        <div class="opt-card">
+            <h3 class="opt-title">Logs &amp; Statistics</h3>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Log Prune Days</span><br>
+                    <span class="mat-caption">Prune the event logs older than the specified number of days,
+                        independently of Prune Days. Leave blank or 0 to disable. Defaults to 7.</span>
+                </p>
+                <mat-form-field>
+                    <input type="number" min="0" step="1" matInput formControlName="logPruneDays">
+                    <mat-error *ngIf="form?.get('logPruneDays')?.hasError('min')">
+                        Log prune days is invalid
+                    </mat-error>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Log Prune Count</span><br>
+                    <span class="mat-caption">Hard cap on the number of event-log rows kept (newest first), enforced
+                        hourly on top of Log Prune Days. Leave blank or 0 to disable. Defaults to 250000.</span>
+                </p>
+                <mat-form-field>
+                    <input type="number" min="0" step="1" matInput formControlName="logPruneCount">
+                    <mat-error *ngIf="form?.get('logPruneCount')?.hasError('min')">
+                        Log prune count is invalid
+                    </mat-error>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Show Listener Statistics</span><br>
+                    <span class="mat-caption">Show listener-count history charts on the statistics panel for all
+                        users. Admins always see them on the admin statistics dashboard.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="showListenerStats"></mat-slide-toggle>
+                </div>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Search Patched Talkgroups</span><br>
+                    <span class="mat-caption">Search for patched talkgroups when using the search panel. Be aware this
+                        has a negative impact on search response time.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="searchPatchedTalkgroups"></mat-slide-toggle>
+                </div>
+            </div>
         </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Prune Days</span><br>
-            <span class="mat-caption">Prune the database for data older than the specified number of days. Also bounds
-                the listener-statistics history. Set to 0 to disable.</span>
-        </p>
-        <mat-form-field>
-            <input type="number" min="0" step="1" matInput formControlName="pruneDays">
-            <mat-error *ngIf="form?.get('pruneDays')?.hasError('required')">
-                Prune days is required
-            </mat-error>
-            <mat-error *ngIf="form?.get('pruneDays')?.hasError('min')">
-                Prune days is invalid
-            </mat-error>
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Log Prune Days</span><br>
-            <span class="mat-caption">Prune the event logs older than the specified number of days, independently of
-                Prune Days above. Useful for keeping calls long-term while not letting the logs table grow unbounded.
-                Leave blank or 0 to disable. Defaults to 7.</span>
-        </p>
-        <mat-form-field>
-            <input type="number" min="0" step="1" matInput formControlName="logPruneDays">
-            <mat-error *ngIf="form?.get('logPruneDays')?.hasError('min')">
-                Log prune days is invalid
-            </mat-error>
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Log Prune Count</span><br>
-            <span class="mat-caption">Hard cap on the number of event-log rows kept (newest first), enforced hourly
-                on top of Log Prune Days. Bounds the logs table even during a burst that outpaces day-based pruning.
-                Leave blank or 0 to disable. Defaults to 250000.</span>
-        </p>
-        <mat-form-field>
-            <input type="number" min="0" step="1" matInput formControlName="logPruneCount">
-            <mat-error *ngIf="form?.get('logPruneCount')?.hasError('min')">
-                Log prune count is invalid
-            </mat-error>
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Search Patched Talkgroups</span><br>
-            <span class="mat-caption">Search for patched talkgroups when using the search panel. Be aware this has a
-                negative impact on search response time.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary" formControlName="searchPatchedTalkgroups"></mat-slide-toggle>
+
+        <div class="opt-card">
+            <h3 class="opt-title">Support &amp; Analytics</h3>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Email Support</span><br>
+                    <span class="mat-caption">Email address where users can write to to get support.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <input type="text" matInput formControlName="email" placeholder="Email">
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Umami Analytics URL</span><br>
+                    <span class="mat-caption">The URL of your Umami analytics script (e.g.
+                        https://analytics.example.com/script.js). Leave empty to disable.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <input type="text" matInput formControlName="umamiUrl" placeholder="Umami Script URL">
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Umami Website ID</span><br>
+                    <span class="mat-caption">The website ID from your Umami dashboard.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <input type="text" matInput formControlName="umamiWebsiteId" placeholder="Umami Website ID">
+                </mat-form-field>
+            </div>
         </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Show Listener Statistics</span><br>
-            <span class="mat-caption">Show listener-count history charts on the statistics panel for all users.
-                Admins always see them on the admin statistics dashboard.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary" formControlName="showListenerStats"></mat-slide-toggle>
-        </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Show Listeners Count</span><br>
-            <span class="mat-caption">Show listeners count on main screen.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary" formControlName="showListenersCount"></mat-slide-toggle>
-        </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Sort Talkgroups</span><br>
-            <span class="mat-caption">Automatically sort talkgroups by their id.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary" formControlName="sortTalkgroups"></mat-slide-toggle>
-        </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Sort By Groups</span><br>
-            <span class="mat-caption">Group talkgroups by their group.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary"
-                formControlName="sortByGroups"
-                (change)="selectSortMode('groups', $event.checked)"></mat-slide-toggle>
-        </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Sort By Tag</span><br>
-            <span class="mat-caption">Group talkgroups by their tag.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary"
-                formControlName="sortByTags"
-                (change)="selectSortMode('tags', $event.checked)"></mat-slide-toggle>
-        </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Toggle By Tags</span><br>
-            <span class="mat-caption">Allow toggling talkgroups by their tag.</span>
-        </p>
-        <div>
-            <mat-slide-toggle color="primary" formControlName="tagsToggle"></mat-slide-toggle>
-        </div>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Umami Analytics URL</span><br>
-            <span class="mat-caption">The URL of your Umami analytics script (e.g.
-                https://analytics.example.com/script.js). Leave empty to disable.</span>
-        </p>
-        <mat-form-field floatLabel="never">
-            <input type="text" matInput formControlName="umamiUrl" placeholder="Umami Script URL">
-        </mat-form-field>
-    </div>
-    <div class="row">
-        <p>
-            <span class="mat-body">Umami Website ID</span><br>
-            <span class="mat-caption">The website ID from your Umami dashboard.</span>
-        </p>
-        <mat-form-field floatLabel="never">
-            <input type="text" matInput formControlName="umamiWebsiteId" placeholder="Umami Website ID">
-        </mat-form-field>
     </div>
 </ng-container>

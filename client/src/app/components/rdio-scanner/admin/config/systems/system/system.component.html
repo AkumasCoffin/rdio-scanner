@@ -1,4 +1,13 @@
 <ng-container [formGroup]="form">
+    <mat-accordion displayMode="flat">
+        <mat-expansion-panel>
+            <mat-expansion-panel-header>
+                <mat-panel-title>
+                    Settings
+                    <mat-icon *ngIf="settingsInvalid" color="warn">error</mat-icon>
+                </mat-panel-title>
+            </mat-expansion-panel-header>
+            <ng-template matExpansionPanelContent>
     <div class="row">
         <p>
             <span class="mat-body">Id</span><br>
@@ -109,6 +118,9 @@
             </mat-select>
         </mat-form-field>
     </div>
+            </ng-template>
+        </mat-expansion-panel>
+    </mat-accordion>
     <mat-accordion displayMode="flat">
         <mat-expansion-panel>
             <mat-expansion-panel-header>

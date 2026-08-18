@@ -165,6 +165,11 @@ export class RdioScannerAdminStatsComponent implements OnInit {
             { label: 'Active Talkgroups', value: overview.activeTalkgroups, icon: 'groups', color: '#e91e63' },
             { label: 'Avg/Day', value: Math.round(avgPerDay), icon: 'trending_up', color: '#607d8b' },
             { label: 'Peak Hour', value: this.formatHour(peakHour), icon: 'schedule', color: '#795548' },
+            // Configured inventory, distinct from the activity counts above:
+            // these count what exists in the config, not what's been heard.
+            { label: 'Systems', value: this.stats.configuredSystems ?? 0, icon: 'podcasts', color: '#3f51b5' },
+            { label: 'Talkgroups', value: this.formatNumber(this.stats.configuredTalkgroups ?? 0), icon: 'forum', color: '#009688' },
+            { label: 'Units', value: this.formatNumber(this.stats.configuredUnits ?? 0), icon: 'badge', color: '#8bc34a' },
         ];
     }
 

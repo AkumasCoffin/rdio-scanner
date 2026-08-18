@@ -18,7 +18,6 @@
  */
 
 import { Component, OnDestroy, ViewChild, ViewEncapsulation } from '@angular/core';
-import { FormArray } from '@angular/forms';
 import { AdminEvent, RdioScannerAdminService } from './admin.service';
 import { ConfigSection, RdioScannerAdminConfigComponent } from './config/config.component';
 
@@ -85,10 +84,6 @@ export class RdioScannerAdminComponent implements OnDestroy {
 
     get isConfigTab(): boolean {
         return CONFIG_TABS.includes(this.activeTab);
-    }
-
-    get systemsCount(): number {
-        return (this.configComponent?.form?.get('systems') as FormArray | null)?.length ?? 0;
     }
 
     ngOnDestroy(): void {

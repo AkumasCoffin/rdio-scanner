@@ -21,7 +21,24 @@
     </div>
 
     <div *ngIf="stats && !error" class="stats-content">
-        <!-- Last Hour Talkgroups -->
+        <!-- Last Hour Talkgroups. Rendered even when empty, with a no-data
+             note: silently omitting the whole card made it look like the
+             panel had gone missing rather than simply having nothing to
+             report. -->
+        <mat-card class="table-card last-hour-card" *ngIf="!stats.lastHourTalkgroups?.length">
+            <mat-card-header>
+                <mat-card-title>
+                    <mat-icon>history</mat-icon>
+                    Last Hour Activity
+                </mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+                <div class="no-data">
+                    <mat-icon>info</mat-icon>
+                    <span>No calls in the last hour</span>
+                </div>
+            </mat-card-content>
+        </mat-card>
         <mat-card class="table-card last-hour-card" *ngIf="stats.lastHourTalkgroups?.length">
             <mat-card-header>
                 <mat-card-title>
@@ -164,7 +181,20 @@
             </div>
         </mat-expansion-panel>
 
-        <!-- Top Units Table -->
+        <!-- Top Units Table. Same reasoning as Last Hour Activity: show the
+             panel with a no-data note rather than omitting it. -->
+        <mat-expansion-panel class="table-panel" *ngIf="!stats.topUnits?.length">
+            <mat-expansion-panel-header>
+                <mat-panel-title>
+                    <mat-icon>badge</mat-icon>
+                    Top Units (Last 7 Days)
+                </mat-panel-title>
+            </mat-expansion-panel-header>
+            <div class="no-data">
+                <mat-icon>info</mat-icon>
+                <span>No unit data available. Units are recorded when calls carry a source unit id.</span>
+            </div>
+        </mat-expansion-panel>
         <mat-expansion-panel class="table-panel" *ngIf="stats.topUnits?.length">
             <mat-expansion-panel-header>
                 <mat-panel-title>

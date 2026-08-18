@@ -36,24 +36,6 @@
 
         <main class="admin-content">
             <section *ngIf="activeTab === 'dashboard'" data-rdio="admin-stats">
-                <div class="dash-cards">
-                    <button type="button" class="dash-card" (click)="select('systems')">
-                        <span class="num">{{ systemsCount }}</span>
-                        <span class="lbl">Systems</span>
-                    </button>
-                    <button type="button" class="dash-card" (click)="select('plugins')">
-                        <mat-icon>extension</mat-icon>
-                        <span class="lbl">Plugins</span>
-                    </button>
-                    <button type="button" class="dash-card" (click)="select('logs')">
-                        <mat-icon>article</mat-icon>
-                        <span class="lbl">Logs</span>
-                    </button>
-                    <button type="button" class="dash-card" (click)="select('tools')">
-                        <mat-icon>build</mat-icon>
-                        <span class="lbl">Tools</span>
-                    </button>
-                </div>
                 <rdio-scanner-admin-stats #statsComponent></rdio-scanner-admin-stats>
             </section>
 

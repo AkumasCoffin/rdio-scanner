@@ -146,6 +146,12 @@ type StatsResponse struct {
 	// the public handler strips it from a shallow copy of the cached
 	// response. omitempty also hides it on a fresh install with no samples.
 	ListenerBuckets []StatsListenerBucket `json:"listenerBuckets,omitempty"`
+	// Configured inventory, counted from the in-memory config rather than
+	// the database — no query cost, and "configured" is a different fact
+	// than the activity-based counts in Overview.
+	ConfiguredSystems    uint `json:"configuredSystems"`
+	ConfiguredTalkgroups uint `json:"configuredTalkgroups"`
+	ConfiguredUnits      uint `json:"configuredUnits"`
 }
 
 func NewStats(controller *Controller) *Stats {
@@ -737,6 +743,23 @@ func (stats *Stats) GetTalkgroupUnits(db *Database, systemId, talkgroupId uint) 
 // timeout on big tables (~300 k rows).
 func (stats *Stats) build(db *Database) *StatsResponse {
 	resp := &StatsResponse{}
+
+	// Configured inventory straight from memory — deliberately not a
+	// database query, so it adds nothing to the build's query fan-out.
+	stats.Controller.Systems.mutex.Lock()
+	for _, system := range stats.Controller.Systems.List {
+		if system == nil {
+			continue
+		}
+		resp.ConfiguredSystems++
+		if system.Talkgroups != nil {
+			resp.ConfiguredTalkgroups += uint(len(system.Talkgroups.List))
+		}
+		if system.Units != nil {
+			resp.ConfiguredUnits += uint(len(system.Units.List))
+		}
+	}
+	stats.Controller.Systems.mutex.Unlock()
 
 	// Log every sub-query failure so a single misbehaving panel doesn't
 	// silently take the whole stats page down — without this, a Postgres

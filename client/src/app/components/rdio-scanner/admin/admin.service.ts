@@ -448,6 +448,10 @@ export interface StatsResponse {
      * showListenerStats is on.
      */
     listenerBuckets?: StatsListenerBucket[];
+    /** Configured inventory counts, from the server's in-memory config. */
+    configuredSystems?: number;
+    configuredTalkgroups?: number;
+    configuredUnits?: number;
 }
 
 enum url {
