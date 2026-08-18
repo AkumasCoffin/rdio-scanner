@@ -364,6 +364,7 @@ func (admin *Admin) GetConfig() map[string]any {
 			"id":                  system.Id,
 			"label":               system.Label,
 			"led":                 system.Led,
+			"led2":                system.Led2,
 			"order":               system.Order,
 			"talkgroups":          system.Talkgroups.List,
 			"units":               system.Units.List,

@@ -176,6 +176,10 @@
       yellow: (234, 179, 8),
       orange: (249, 115, 22),
       white: (226, 232, 240),
+      lime: (132, 204, 22),
+      pink: (236, 72, 153),
+      teal: (20, 184, 166),
+      violet: (124, 58, 237),
     ) {
       &.led-#{$name} {
         background: linear-gradient(
@@ -465,6 +469,47 @@
     width: 12px;
     transition: all 0.3s ease;
 
+    /* Dual mode: the round LED widens into a twin-module lightbar. The two
+       colors and the dark center seam come in as an inline gradient plus
+       per-module glows (see dualLedBackground/dualLedGlow); this rule
+       supplies the physical housing — squared lens, dark bezel, and a glass
+       highlight across the top — so it reads as two LED modules behind one
+       lens, like a lightbar segment. */
+    &.dual {
+      width: 42px;
+      height: 18px;
+      border-radius: 4px;
+      border: 1px solid rgba(2, 6, 23, 0.7);
+      box-sizing: border-box;
+      position: relative;
+
+      /* The divider between the two modules. A real element rather than a
+         stop in the color gradient — the gradient seam proved unreliable. */
+      &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 4px;
+        margin-left: -2px;
+        background: #020617;
+        pointer-events: none;
+      }
+
+      &::after {
+        content: '';
+        position: absolute;
+        top: 1px;
+        left: 2px;
+        right: 2px;
+        height: 40%;
+        border-radius: 2px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.04));
+        pointer-events: none;
+      }
+    }
+
     &.on {
       background: var(--state-success);
       box-shadow: 0 0 8px 3px rgba(var(--state-success-rgb), 0.6);
@@ -507,6 +552,26 @@
       &.yellow {
         background: var(--state-warn);
         box-shadow: 0 0 8px 3px rgba(var(--state-warn-rgb), 0.6);
+      }
+
+      &.lime {
+        background: #84cc16;
+        box-shadow: 0 0 8px 3px rgba(132, 204, 22, 0.6);
+      }
+
+      &.pink {
+        background: #ec4899;
+        box-shadow: 0 0 8px 3px rgba(236, 72, 153, 0.6);
+      }
+
+      &.teal {
+        background: #14b8a6;
+        box-shadow: 0 0 8px 3px rgba(20, 184, 166, 0.6);
+      }
+
+      &.violet {
+        background: #7c3aed;
+        box-shadow: 0 0 8px 3px rgba(124, 58, 237, 0.6);
       }
     }
 

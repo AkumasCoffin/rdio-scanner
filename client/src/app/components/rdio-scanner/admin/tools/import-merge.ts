@@ -48,6 +48,7 @@ export interface TalkgroupRow {
     tag: string;
     frequency: string;
     led: string;
+    led2: string;
     delay: string;
     alert: string;
 }
@@ -143,6 +144,7 @@ export function importTalkgroups(config: Config, rows: TalkgroupRow[], target: I
                 if (rowTagId !== undefined) existing.tagId = rowTagId;
                 if (row.frequency) existing.frequency = +row.frequency;
                 if (row.led) existing.led = row.led;
+                if (row.led2) existing.led2 = row.led2;
                 if (row.delay) existing.delay = +row.delay;
                 if (row.alert) existing.alert = row.alert;
             } else {
@@ -157,6 +159,7 @@ export function importTalkgroups(config: Config, rows: TalkgroupRow[], target: I
                     tagId: rowTagId ?? tagId('Untagged'),
                     frequency: row.frequency ? +row.frequency : null,
                     led: row.led || null,
+                    led2: row.led2 || null,
                     delay: row.delay ? +row.delay : 0,
                     alert: row.alert || null,
                     order: ++nextOrder,

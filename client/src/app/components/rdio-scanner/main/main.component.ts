@@ -32,6 +32,7 @@ import {
     RdioScannerLivefeedMap,
     RdioScannerLivefeedMode,
 } from '../rdio-scanner';
+import { LED_HEX, ledName } from '../led-colors';
 import { RdioScannerService } from '../rdio-scanner.service';
 import { RdioScannerSupportComponent } from './support/support.component';
 
@@ -105,6 +106,17 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
     ledStyle = '';
 
+    // Inline styles for the dual-mode lightbar: a hard-stop gradient splits
+    // the lens into its two colors, and each half casts its own glow. Null in
+    // single mode or when off, so the stylesheet's LED styling applies.
+    dualLedBackground: string | null = null;
+    dualLedGlow: string | null = null;
+
+    private dualHex1 = '';
+    private dualHex2 = '';
+    private wigWagTimer: Subscription | undefined;
+    private wigWagTick = false;
+
     linked = false;
 
     listeners = 0;
@@ -138,6 +150,14 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
     get showListenersCount(): boolean {
         return this.config?.showListenersCount || false;
+    }
+
+    get dualLed(): boolean {
+        return this.config?.dualLed || false;
+    }
+
+    get wigWagLed(): boolean {
+        return (this.config?.dualLed && this.config?.wigWagLed) || false;
     }
 
     get transcriptionEnabled(): boolean {
@@ -343,6 +363,7 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         this.dimmerTimer?.unsubscribe();
         this.replayTimer?.unsubscribe();
         this.delayFlashTimer?.unsubscribe();
+        this.wigWagTimer?.unsubscribe();
 
         this.eventSubscription.unsubscribe();
     }
@@ -928,37 +949,97 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
             this.patched = this.rdioScannerService.isPatched(call);
         }
 
-        const colors = ['blue', 'cyan', 'green', 'magenta', 'orange', 'red', 'white', 'yellow'];
-
         this.ledStyle = this.call && this.livefeedPaused ? 'on paused' : this.call ? 'on' : 'off';
 
-        let activeLed = '';
         // While a call is actually playing, the LCD's own LED pulses in
         // its color. For the transcript panel color we want it to persist
         // across to the next call (like the talkgroup label does) so pull
         // from displayCall, which falls back to callPrevious.
         const ledCall = this.call || this.callPrevious;
-        if (colors.includes(this.call?.talkgroupData?.led as string)) {
-            activeLed = this.call?.talkgroupData?.led as string;
-        } else if (colors.includes(this.call?.systemData?.led as string)) {
-            activeLed = this.call?.systemData?.led as string;
-        }
+        const activeLed = ledName(this.call?.talkgroupData?.led) || ledName(this.call?.systemData?.led);
 
         if (activeLed) {
             this.ledStyle = `${this.ledStyle} ${activeLed}`;
         }
 
+        // Dual mode: the LED widens into a twin-module lightbar — first color
+        // in the left module, second in the right, dark seam between. A call
+        // with no second color lights both modules in its first color. With
+        // wig-wag on, a timer alternates which module is lit while a call
+        // plays (paused stops the flash and shows both, so the paused blink
+        // stays readable). Between calls the inline styles drop to null so
+        // the bar dims like the stock LED.
+        if (this.dualLed && this.call) {
+            const activeLed2 = ledName(this.call?.talkgroupData?.led2) || ledName(this.call?.systemData?.led2);
+            this.dualHex1 = LED_HEX[activeLed] ?? LED_HEX['green'];
+            this.dualHex2 = LED_HEX[activeLed2] ?? this.dualHex1;
+            if (this.wigWagLed && !this.livefeedPaused) {
+                this.startWigWag();
+            } else {
+                this.stopWigWag();
+                this.applyDualStyles(null);
+            }
+        } else {
+            this.stopWigWag();
+            this.dualLedBackground = null;
+            this.dualLedGlow = null;
+        }
+
         // Color class for the live-transcript panel. Derived from the
         // most recent call so the frame keeps glowing in the right color
         // even after playback stops.
-        let panelLed = '';
-        if (colors.includes(ledCall?.talkgroupData?.led as string)) {
-            panelLed = ledCall?.talkgroupData?.led as string;
-        } else if (colors.includes(ledCall?.systemData?.led as string)) {
-            panelLed = ledCall?.systemData?.led as string;
-        }
+        const panelLed = ledName(ledCall?.talkgroupData?.led) || ledName(ledCall?.systemData?.led);
         this.liveTranscriptColor = panelLed ? `led-${panelLed}` : '';
 
         this.ngChangeDetectorRef.detectChanges();
+    }
+
+    // Builds the lightbar's inline styles. litSide narrows the glow and dims
+    // the other module during a wig-wag flash; null lights both modules.
+    private applyDualStyles(litSide: 'left' | 'right' | null): void {
+        // Plain 50/50 split only — the divider is NOT part of this gradient.
+        // It's drawn by the stylesheet as the .dual::before overlay, because a
+        // seam computed into the gradient (via calc color stops) failed to
+        // show reliably; a structural element can't be washed out.
+        const left = litSide === 'right' ? RdioScannerMainComponent.dimmed(this.dualHex1) : this.dualHex1;
+        const right = litSide === 'left' ? RdioScannerMainComponent.dimmed(this.dualHex2) : this.dualHex2;
+
+        this.dualLedBackground = `linear-gradient(90deg, ${left} 0%, ${left} 50%, ${right} 50%, ${right} 100%)`;
+
+        const glows = ['inset 0 0 3px rgba(2, 6, 23, 0.6)'];
+        if (litSide !== 'right') {
+            glows.push(`-6px 0 10px 1px ${this.dualHex1}99`);
+        }
+        if (litSide !== 'left') {
+            glows.push(`6px 0 10px 1px ${this.dualHex2}99`);
+        }
+        this.dualLedGlow = glows.join(', ');
+    }
+
+    // Driven from a timer rather than CSS keyframes so the flash survives
+    // reduced-motion settings, which suppress CSS animations wholesale.
+    private startWigWag(): void {
+        if (this.wigWagTimer) {
+            return;
+        }
+
+        this.wigWagTimer = timer(0, 450).subscribe(() => {
+            this.wigWagTick = !this.wigWagTick;
+            this.applyDualStyles(this.wigWagTick ? 'left' : 'right');
+            this.ngChangeDetectorRef.detectChanges();
+        });
+    }
+
+    private stopWigWag(): void {
+        this.wigWagTimer?.unsubscribe();
+        this.wigWagTimer = undefined;
+    }
+
+    // A named color's hex dropped to ~15% brightness — the "dark" module of a
+    // wig-wag flash, still faintly showing its color like a real lens does.
+    private static dimmed(hex: string): string {
+        const n = parseInt(hex.slice(1), 16);
+        const dim = (v: number) => Math.round(v * 0.15);
+        return `rgb(${dim((n >> 16) & 255)}, ${dim((n >> 8) & 255)}, ${dim(n & 255)})`;
     }
 }

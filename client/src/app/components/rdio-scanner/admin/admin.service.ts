@@ -23,6 +23,7 @@ import { AbstractControl, FormArray, FormBuilder, FormGroup, ValidationErrors, V
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { firstValueFrom, timer } from 'rxjs';
 import { AppUpdateService } from '../../../shared/update/update.service';
+import { LED_NAMES } from '../led-colors';
 
 export interface Access {
     _id?: string;
@@ -299,6 +300,8 @@ export interface Options {
     pruneDays?: number;
     logPruneDays?: number;
     logPruneCount?: number;
+    dualLed?: boolean;
+    wigWagLed?: boolean;
     searchPatchedTalkgroups?: boolean;
     showListenerStats?: boolean;
     showListenersCount?: boolean;
@@ -318,6 +321,7 @@ export interface System {
     id?: number;
     label?: string;
     led?: string | null;
+    led2?: string | null;
     order?: number | null;
     talkgroups?: Talkgroup[];
     units?: Unit[];
@@ -336,6 +340,7 @@ export interface Talkgroup {
     id?: number;
     label?: string;
     led?: string | null;
+    led2?: string | null;
     name?: string;
     order?: number;
     tagId?: number;
@@ -554,7 +559,7 @@ export class RdioScannerAdminService implements OnDestroy {
     }
 
     getLeds(): string[] {
-        return ['blue', 'cyan', 'green', 'magenta', 'orange', 'red', 'white', 'yellow'];
+        return LED_NAMES;
     }
 
     async getLogs(options: LogsQueryOptions): Promise<LogsQuery | undefined> {
@@ -771,6 +776,7 @@ export class RdioScannerAdminService implements OnDestroy {
             id: [system?.id, [Validators.required, Validators.min(1)]],
             label: [system?.label, Validators.required],
             led: [system?.led],
+            led2: [system?.led2],
             order: [system?.order],
             talkgroups: this.newIdFormArray(system?.talkgroups?.map((talkgroup) => this.newTalkgroupForm(talkgroup)) || []),
             units: this.newIdFormArray(system?.units?.map((unit) => this.newUnitForm(unit)) || []),
@@ -786,6 +792,7 @@ export class RdioScannerAdminService implements OnDestroy {
             id: [talkgroup?.id, [Validators.required, Validators.min(1)]],
             label: [talkgroup?.label, Validators.required],
             led: [talkgroup?.led],
+            led2: [talkgroup?.led2],
             name: [talkgroup?.name, Validators.required],
             order: [talkgroup?.order],
             tagId: [talkgroup?.tagId, [Validators.required, this.validateTag()]],
@@ -810,6 +817,8 @@ export class RdioScannerAdminService implements OnDestroy {
             branding: [options?.branding],
             dimmerDelay: [options?.dimmerDelay, [Validators.required, Validators.min(0)]],
             disableDuplicateDetection: [options?.disableDuplicateDetection],
+            dualLed: [options?.dualLed ?? false],
+            wigWagLed: [options?.wigWagLed ?? false],
             duplicateDetectionTimeFrame: [options?.duplicateDetectionTimeFrame, [Validators.required, Validators.min(0)]],
             email: [options?.email],
             keypadBeeps: [options?.keypadBeeps, Validators.required],

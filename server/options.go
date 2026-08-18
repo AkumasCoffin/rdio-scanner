@@ -32,6 +32,14 @@ type Options struct {
 	Branding                    string `json:"branding"`
 	DimmerDelay                 uint   `json:"dimmerDelay"`
 	DisableDuplicateDetection   bool   `json:"disableDuplicateDetection"`
+	// DualLed enables a second LED color per system/talkgroup (#10): the admin
+	// editors show a second color selector and the main screen renders a
+	// second LED. Off by default so stock-looking setups stay stock-looking.
+	DualLed                     bool   `json:"dualLed"`
+	// WigWagLed makes the dual LED's halves alternate like a lightbar while a
+	// call plays. Only meaningful when DualLed is on; the admin UI hides the
+	// toggle otherwise.
+	WigWagLed                   bool   `json:"wigWagLed"`
 	DuplicateDetectionTimeFrame uint   `json:"duplicateDetectionTimeFrame"`
 	Email                       string `json:"email"`
 	KeypadBeeps                 string `json:"keypadBeeps"`
@@ -141,6 +149,8 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	}
 
 	setBool("disableDuplicateDetection", &options.DisableDuplicateDetection)
+	setBool("dualLed", &options.DualLed)
+	setBool("wigWagLed", &options.WigWagLed)
 	setUint("duplicateDetectionTimeFrame", &options.DuplicateDetectionTimeFrame)
 	setStr("email", &options.Email)
 	setStr("keypadBeeps", &options.KeypadBeeps)
@@ -186,6 +196,8 @@ func (options *Options) optionKeyValuePairs() []struct {
 		{"branding", options.Branding},
 		{"dimmerDelay", options.DimmerDelay},
 		{"disableDuplicateDetection", options.DisableDuplicateDetection},
+		{"dualLed", options.DualLed},
+		{"wigWagLed", options.WigWagLed},
 		{"duplicateDetectionTimeFrame", options.DuplicateDetectionTimeFrame},
 		{"email", options.Email},
 		{"keypadBeeps", options.KeypadBeeps},
@@ -302,6 +314,8 @@ func (options *Options) Read(db *Database) error {
 		applyStr("branding", &options.Branding)
 		applyUint("dimmerDelay", &options.DimmerDelay)
 		applyBool("disableDuplicateDetection", &options.DisableDuplicateDetection)
+		applyBool("dualLed", &options.DualLed)
+		applyBool("wigWagLed", &options.WigWagLed)
 		applyUint("duplicateDetectionTimeFrame", &options.DuplicateDetectionTimeFrame)
 		applyStr("email", &options.Email)
 		applyStr("keypadBeeps", &options.KeypadBeeps)

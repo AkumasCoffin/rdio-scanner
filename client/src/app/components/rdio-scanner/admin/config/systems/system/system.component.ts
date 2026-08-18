@@ -23,12 +23,21 @@ import { Component, EventEmitter, Input, Output, QueryList, ViewChild, ViewChild
 import { FormArray, FormControl, FormGroup } from '@angular/forms';
 import { MatExpansionPanel } from '@angular/material/expansion';
 import { RdioScannerAdminService, Group, Tag } from '../../../admin.service';
+import { LED_HEX } from '../../../../led-colors';
 
 @Component({
     selector: 'rdio-scanner-admin-system',
     templateUrl: './system.component.html',
 })
 export class RdioScannerAdminSystemComponent {
+    ledHex = LED_HEX;
+
+    // The root form is the whole config form, so the Options section's toggle
+    // is readable from here — the second color selector follows it live.
+    get dualLed(): boolean {
+        return this.form.root.get('options')?.value?.dualLed === true;
+    }
+
     private formValue = new FormGroup({});
 
     @Input()
