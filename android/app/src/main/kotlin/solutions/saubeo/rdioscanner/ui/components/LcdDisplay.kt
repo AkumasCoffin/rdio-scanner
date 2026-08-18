@@ -210,21 +210,27 @@ private fun DualLedIndicator(
         Modifier
             .size(width = 42.dp, height = 18.dp)
             .drawBehind {
-                val r = size.height * 0.9f
-                if (leftGlows) {
+                // Radial fade to transparent, not a solid disc — Compose has
+                // no blurred box-shadow, and a flat circle reads as a colored
+                // ring around the lens instead of light bleeding off it.
+                val r = size.height * 1.3f
+                fun glow(color: Color, cx: Float) {
+                    val center = Offset(cx, size.height / 2f)
                     drawCircle(
-                        color1.copy(alpha = 0.5f * alpha),
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                color.copy(alpha = 0.4f * alpha),
+                                color.copy(alpha = 0f),
+                            ),
+                            center = center,
+                            radius = r,
+                        ),
                         radius = r,
-                        center = Offset(size.width * 0.25f, size.height / 2f),
+                        center = center,
                     )
                 }
-                if (rightGlows) {
-                    drawCircle(
-                        color2.copy(alpha = 0.5f * alpha),
-                        radius = r,
-                        center = Offset(size.width * 0.75f, size.height / 2f),
-                    )
-                }
+                if (leftGlows) glow(color1, size.width * 0.25f)
+                if (rightGlows) glow(color2, size.width * 0.75f)
             }
             .clip(shape)
             .background(RdioPalette.Bg)
