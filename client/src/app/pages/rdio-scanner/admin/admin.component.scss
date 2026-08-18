@@ -22,16 +22,6 @@
     min-height: 0;
     width: 100%;
 
-    // The mat-card between here and the admin component is display: block by
-    // default, which breaks the height chain: the shell's height resolves
-    // against auto and nothing constrains the scrolling pane.
-    > .mat-card {
-      display: flex;
-      flex: 1;
-      flex-direction: column;
-      min-height: 0;
-      overflow: hidden;
-    }
   }
 
   > h1 {
