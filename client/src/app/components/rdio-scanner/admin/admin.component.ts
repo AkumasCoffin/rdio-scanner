@@ -18,6 +18,7 @@
  */
 
 import { Component, OnDestroy, ViewChild, ViewEncapsulation } from '@angular/core';
+import packageInfo from '../../../../../package.json';
 import { AdminEvent, RdioScannerAdminService } from './admin.service';
 import { ConfigSection, RdioScannerAdminConfigComponent } from './config/config.component';
 
@@ -58,6 +59,8 @@ export class RdioScannerAdminComponent implements OnDestroy {
     @ViewChild('configComponent') configComponent: RdioScannerAdminConfigComponent | undefined;
 
     authenticated = this.adminService.authenticated;
+
+    version = packageInfo.version;
 
     activeTab: AdminTab = 'dashboard';
 

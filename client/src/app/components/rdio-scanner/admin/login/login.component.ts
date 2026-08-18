@@ -19,6 +19,7 @@
 
 import { Component, EventEmitter, Output } from '@angular/core';
 import { FormBuilder, Validators } from '@angular/forms';
+import packageInfo from '../../../../../../package.json';
 import { RdioScannerAdminService } from '../admin.service';
 
 @Component({
@@ -28,6 +29,8 @@ import { RdioScannerAdminService } from '../admin.service';
 })
 export class RdioScannerAdminLoginComponent {
     @Output() loggedIn = new EventEmitter<void>();
+
+    version = packageInfo.version;
 
     form = this.formBuilder.group({
         password: [null, Validators.required],

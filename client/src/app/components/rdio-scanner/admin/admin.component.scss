@@ -85,6 +85,15 @@ rdio-scanner-admin {
       white-space: nowrap;
     }
 
+    .admin-version {
+      color: var(--text-muted);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.04em;
+      opacity: 0.8;
+      white-space: nowrap;
+    }
+
     .admin-spacer {
       flex: 1;
     }

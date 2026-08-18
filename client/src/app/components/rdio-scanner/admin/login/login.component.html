@@ -1,5 +1,8 @@
 <form [formGroup]="form" (ngSubmit)="login()">
-    <p class="mat-body-1">Please enter the admin password to gain access to the administrative dashboard</p>
+    <!-- Carries the version on this screen, since the header that shows it
+         only exists once signed in and the page banner is gone. -->
+    <p class="mat-body-1">Rdio Scanner server v{{ version }} — please enter the admin password to gain access to the
+        administrative dashboard</p>
     <mat-form-field hideRequiredMarker>
         <mat-label>Password</mat-label>
         <input matInput formControlName="password" type="password" required>
