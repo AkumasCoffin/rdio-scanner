@@ -10,6 +10,7 @@
         <span class="dot"></span>CONTROLLING STREAM DISPLAY
     </div>
     <div class="led" data-rdio="led" [ngClass]="ledStyle"></div>
+    <div class="led led2" data-rdio="led2" *ngIf="dualLed" [ngClass]="led2Style"></div>
 </div>
 <div class="rdio-display" data-rdio="lcd" [ngClass]="{ idle: !dimmer }" (dblclick)="toggleFullscreen.emit()">
     <div class="row">

@@ -31,6 +31,7 @@ type System struct {
 	Blacklists          Blacklists  `json:"blacklists"`
 	Label               string      `json:"label"`
 	Led                 any         `json:"led"`
+	Led2                any         `json:"led2"`
 	Order               uint        `json:"order"`
 	RowId               any         `json:"_id"`
 	Talkgroups          *Talkgroups `json:"talkgroups"`
@@ -74,6 +75,11 @@ func (system *System) FromMap(m map[string]any) *System {
 	switch v := m["led"].(type) {
 	case string:
 		system.Led = v
+	}
+
+	switch v := m["led2"].(type) {
+	case string:
+		system.Led2 = v
 	}
 
 	if v, ok := jsonUint(m["order"]); ok {
@@ -289,6 +295,10 @@ func (systems *Systems) GetScopedSystems(client *Client, groups *Groups, tags *T
 				talkgroupMap["led"] = rawTalkgroup.Led
 			}
 
+			if rawTalkgroup.Led2 != nil {
+				talkgroupMap["led2"] = rawTalkgroup.Led2
+			}
+
 			if rawTalkgroup.Alert != "" {
 				talkgroupMap["alert"] = rawTalkgroup.Alert
 			}
@@ -317,6 +327,10 @@ func (systems *Systems) GetScopedSystems(client *Client, groups *Groups, tags *T
 			systemMap["led"] = rawSystem.Led
 		}
 
+		if rawSystem.Led2 != nil {
+			systemMap["led2"] = rawSystem.Led2
+		}
+
 		if rawSystem.Alert != "" {
 			systemMap["alert"] = rawSystem.Alert
 		}
@@ -341,6 +355,7 @@ func (systems *Systems) Read(db *Database) error {
 		blacklists sql.NullString
 		err        error
 		led        sql.NullString
+		led2       sql.NullString
 		order      sql.NullFloat64
 		rowId      sql.NullFloat64
 		rows       *sql.Rows
@@ -356,7 +371,7 @@ func (systems *Systems) Read(db *Database) error {
 	}
 
 	var alert sql.NullString
-	if rows, err = db.Query("select `_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`, `delay`, `alert` from `rdioScannerSystems`"); err != nil {
+	if rows, err = db.Query("select `_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `led2`, `order`, `delay`, `alert` from `rdioScannerSystems`"); err != nil {
 		return formatError(err)
 	}
 
@@ -376,7 +391,7 @@ func (systems *Systems) Read(db *Database) error {
 			Units:      NewUnits(),
 		}
 
-		if err = rows.Scan(&rowId, &system.AutoPopulate, &blacklists, &system.Id, &system.Label, &led, &order, &system.Delay, &alert); err != nil {
+		if err = rows.Scan(&rowId, &system.AutoPopulate, &blacklists, &system.Id, &system.Label, &led, &led2, &order, &system.Delay, &alert); err != nil {
 			break
 		}
 
@@ -396,6 +411,10 @@ func (systems *Systems) Read(db *Database) error {
 
 		if led.Valid && len(led.String) > 0 {
 			system.Led = led.String
+		}
+
+		if led2.Valid && len(led2.String) > 0 {
+			system.Led2 = led2.String
 		}
 
 		if order.Valid && order.Float64 > 0 {
@@ -518,15 +537,15 @@ func (systems *Systems) Write(db *Database) error {
 		if count == 0 {
 			rowIdVal, hasRowId := system.RowId.(uint)
 			if db.Config.DbType == DbTypePostgres && (!hasRowId || rowIdVal == 0) {
-				_, err = db.Exec("insert into `rdioScannerSystems` (`autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`, `delay`, `alert`) values (?, ?, ?, ?, ?, ?, ?, ?)", system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order, system.Delay, system.Alert)
+				_, err = db.Exec("insert into `rdioScannerSystems` (`autoPopulate`, `blacklists`, `id`, `label`, `led`, `led2`, `order`, `delay`, `alert`) values (?, ?, ?, ?, ?, ?, ?, ?, ?)", system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Led2, system.Order, system.Delay, system.Alert)
 			} else {
-				_, err = db.Exec("insert into `rdioScannerSystems` (`_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `order`, `delay`, `alert`) values (?, ?, ?, ?, ?, ?, ?, ?, ?)", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order, system.Delay, system.Alert)
+				_, err = db.Exec("insert into `rdioScannerSystems` (`_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `led2`, `order`, `delay`, `alert`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Led2, system.Order, system.Delay, system.Alert)
 			}
 			if err != nil {
 				break
 			}
 
-		} else if _, err = db.Exec("update `rdioScannerSystems` set `_id` = ?, `autoPopulate` = ?, `blacklists` = ?, `id` = ?, `label` = ?, `led` = ?, `order` = ?, `delay` = ?, `alert` = ? where `_id` = ?", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Order, system.Delay, system.Alert, system.RowId); err != nil {
+		} else if _, err = db.Exec("update `rdioScannerSystems` set `_id` = ?, `autoPopulate` = ?, `blacklists` = ?, `id` = ?, `label` = ?, `led` = ?, `led2` = ?, `order` = ?, `delay` = ?, `alert` = ? where `_id` = ?", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Led2, system.Order, system.Delay, system.Alert, system.RowId); err != nil {
 			break
 		}
 

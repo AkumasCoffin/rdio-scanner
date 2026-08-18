@@ -469,6 +469,11 @@
     width: 12px;
     transition: all 0.3s ease;
 
+    /* Second LED of a dual-color pair sits tight against the first. */
+    &.led2 {
+      margin-left: 10px;
+    }
+
     &.on {
       background: var(--state-success);
       box-shadow: 0 0 8px 3px rgba(var(--state-success-rgb), 0.6);

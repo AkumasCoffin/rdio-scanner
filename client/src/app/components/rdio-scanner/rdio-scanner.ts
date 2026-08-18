@@ -98,6 +98,7 @@ export interface RdioScannerConfig {
     alerts?: { [name: string]: RdioScannerBeep[] };
     branding?: string;
     dimmerDelay: number | false;
+    dualLed?: boolean;
     email?: string;
     groups: { [key: string]: { [key: number]: number[] } };
     keypadBeeps: RdioScannerKeypadBeeps | false;
@@ -213,6 +214,8 @@ export interface RdioScannerSystem {
     // union so a config from a newer or older server never fails the type —
     // unknown names degrade to the default green LED at render time.
     led?: string;
+    // Second LED color, shown when the dualLed option is enabled.
+    led2?: string;
     order?: number;
     talkgroups: RdioScannerTalkgroup[];
     units: RdioScannerUnit[];
@@ -224,8 +227,9 @@ export interface RdioScannerTalkgroup {
     group: string;
     id: number;
     label: string;
-    // See RdioScannerSystem.led.
+    // See RdioScannerSystem.led / led2.
     led?: string;
+    led2?: string;
     name: string;
     tag: string;
     alert?: string;

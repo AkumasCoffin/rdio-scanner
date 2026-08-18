@@ -297,6 +297,7 @@ func (controller *Controller) PluginSystemsList() []map[string]any {
 				"delay":     talkgroup.Delay,
 				"alert":     talkgroup.Alert,
 				"led":       talkgroup.Led,
+				"led2":      talkgroup.Led2,
 				"order":     talkgroup.Order,
 			})
 		}
@@ -321,6 +322,7 @@ func (controller *Controller) PluginSystemsList() []map[string]any {
 			"delay":      system.Delay,
 			"alert":      system.Alert,
 			"led":        system.Led,
+			"led2":       system.Led2,
 			"order":      system.Order,
 		})
 	}

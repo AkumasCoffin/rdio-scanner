@@ -29,6 +29,11 @@ import { LED_HEX } from '../../../../led-colors';
 export class RdioScannerAdminTalkgroupComponent {
     ledHex = LED_HEX;
 
+    // See RdioScannerAdminSystemComponent.dualLed.
+    get dualLed(): boolean {
+        return this.form?.root.get('options')?.value?.dualLed === true;
+    }
+
     @Input() form: FormGroup | undefined;
 
     @Output() blacklist = new EventEmitter<void>();

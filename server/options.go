@@ -32,6 +32,10 @@ type Options struct {
 	Branding                    string `json:"branding"`
 	DimmerDelay                 uint   `json:"dimmerDelay"`
 	DisableDuplicateDetection   bool   `json:"disableDuplicateDetection"`
+	// DualLed enables a second LED color per system/talkgroup (#10): the admin
+	// editors show a second color selector and the main screen renders a
+	// second LED. Off by default so stock-looking setups stay stock-looking.
+	DualLed                     bool   `json:"dualLed"`
 	DuplicateDetectionTimeFrame uint   `json:"duplicateDetectionTimeFrame"`
 	Email                       string `json:"email"`
 	KeypadBeeps                 string `json:"keypadBeeps"`
@@ -141,6 +145,7 @@ func (options *Options) FromMap(m map[string]any) *Options {
 	}
 
 	setBool("disableDuplicateDetection", &options.DisableDuplicateDetection)
+	setBool("dualLed", &options.DualLed)
 	setUint("duplicateDetectionTimeFrame", &options.DuplicateDetectionTimeFrame)
 	setStr("email", &options.Email)
 	setStr("keypadBeeps", &options.KeypadBeeps)
@@ -186,6 +191,7 @@ func (options *Options) optionKeyValuePairs() []struct {
 		{"branding", options.Branding},
 		{"dimmerDelay", options.DimmerDelay},
 		{"disableDuplicateDetection", options.DisableDuplicateDetection},
+		{"dualLed", options.DualLed},
 		{"duplicateDetectionTimeFrame", options.DuplicateDetectionTimeFrame},
 		{"email", options.Email},
 		{"keypadBeeps", options.KeypadBeeps},
@@ -302,6 +308,7 @@ func (options *Options) Read(db *Database) error {
 		applyStr("branding", &options.Branding)
 		applyUint("dimmerDelay", &options.DimmerDelay)
 		applyBool("disableDuplicateDetection", &options.DisableDuplicateDetection)
+		applyBool("dualLed", &options.DualLed)
 		applyUint("duplicateDetectionTimeFrame", &options.DuplicateDetectionTimeFrame)
 		applyStr("email", &options.Email)
 		applyStr("keypadBeeps", &options.KeypadBeeps)

@@ -672,6 +672,9 @@ func (db *Database) migrate() error {
 		err = db.migration20260815090000(verbose)
 	}
 	if err == nil {
+		err = db.migration20260819100000(verbose)
+	}
+	if err == nil {
 		err = db.migrationTranscriptsToPlugin(verbose)
 	}
 
@@ -1403,6 +1406,28 @@ func (db *Database) migration20260519120000(verbose bool) error {
 		}
 	}
 	return db.migrateWithSchema("20260519120000-add-talkgroup-alert", queries, verbose)
+}
+
+// migration20260819100000 adds the `led2` column to rdioScannerSystems and
+// rdioScannerTalkgroups for the dual-color LED feature (#10). Nullable with no
+// default, exactly like `led`: null means no second color, and a database
+// shared with a stock chuot/rdio-scanner build keeps working since stock code
+// never selects the column.
+func (db *Database) migration20260819100000(verbose bool) error {
+	var queries []string
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerSystems" add column "led2" varchar(255)`,
+			`alter table "rdioScannerTalkgroups" add column "led2" varchar(255)`,
+		}
+	default:
+		queries = []string{
+			"alter table `rdioScannerSystems` add column `led2` varchar(255)",
+			"alter table `rdioScannerTalkgroups` add column `led2` varchar(255)",
+		}
+	}
+	return db.migrateWithSchema("20260819100000-add-led2-columns", queries, verbose)
 }
 
 // migration20260519110000 creates the rdioScannerDelayed table used by the

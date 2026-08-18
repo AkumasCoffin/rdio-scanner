@@ -278,6 +278,7 @@ export class RdioScannerAdminImportComponent implements OnInit {
                 tag: this.headerCell(r, 'tag'),
                 frequency: this.headerCell(r, 'frequency'),
                 led: this.headerCell(r, 'led'),
+                led2: this.headerCell(r, 'led2'),
                 delay: this.headerCell(r, 'delay'),
                 alert: this.headerCell(r, 'alert'),
             }));
@@ -292,6 +293,7 @@ export class RdioScannerAdminImportComponent implements OnInit {
                 group: (r[f[4]] ?? '').trim(),
                 frequency: '',
                 led: '',
+                led2: '',
                 delay: '',
                 alert: '',
             }));

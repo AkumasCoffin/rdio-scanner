@@ -104,14 +104,14 @@ export class RdioScannerAdminExportComponent implements OnInit {
         let slug: string;
 
         if (this.dataType === 'talkgroups') {
-            rows.push(['system', 'id', 'label', 'name', 'group', 'tag', 'frequency', 'led', 'delay', 'alert']);
+            rows.push(['system', 'id', 'label', 'name', 'group', 'tag', 'frequency', 'led', 'led2', 'delay', 'alert']);
             for (const system of scopedSystems) {
                 const talkgroups = [...(system.talkgroups ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
                 for (const tg of talkgroups) {
                     rows.push([
                         system.label, tg.id, tg.label, tg.name,
                         groupLabel(tg.groupId), tagLabel(tg.tagId),
-                        tg.frequency, tg.led, tg.delay, tg.alert,
+                        tg.frequency, tg.led, tg.led2, tg.delay, tg.alert,
                     ]);
                 }
             }

@@ -105,6 +105,7 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     holdTg = false;
 
     ledStyle = '';
+    led2Style = '';
 
     linked = false;
 
@@ -139,6 +140,10 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
     get showListenersCount(): boolean {
         return this.config?.showListenersCount || false;
+    }
+
+    get dualLed(): boolean {
+        return this.config?.dualLed || false;
     }
 
     get transcriptionEnabled(): boolean {
@@ -941,6 +946,14 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         if (activeLed) {
             this.ledStyle = `${this.ledStyle} ${activeLed}`;
         }
+
+        // The second LED mirrors the first's on/paused state in its own color,
+        // and stays dark when no second color is configured — so a mixed setup
+        // where only some talkgroups have a second color reads correctly.
+        const activeLed2 = ledName(this.call?.talkgroupData?.led2) || ledName(this.call?.systemData?.led2);
+        this.led2Style = activeLed2 && this.call
+            ? (this.livefeedPaused ? `on paused ${activeLed2}` : `on ${activeLed2}`)
+            : 'off';
 
         // Color class for the live-transcript panel. Derived from the
         // most recent call so the frame keeps glowing in the right color

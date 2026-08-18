@@ -32,6 +32,12 @@ import { LED_HEX } from '../../../../led-colors';
 export class RdioScannerAdminSystemComponent {
     ledHex = LED_HEX;
 
+    // The root form is the whole config form, so the Options section's toggle
+    // is readable from here — the second color selector follows it live.
+    get dualLed(): boolean {
+        return this.form.root.get('options')?.value?.dualLed === true;
+    }
+
     private formValue = new FormGroup({});
 
     @Input()
