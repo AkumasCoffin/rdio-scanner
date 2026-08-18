@@ -17,7 +17,7 @@
  * ****************************************************************************
  */
 
-import { Component, OnDestroy, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, OnDestroy, ViewChild } from '@angular/core';
 import { FormBuilder } from '@angular/forms';
 import { MatPaginator } from '@angular/material/paginator';
 import { BehaviorSubject, Subscription } from 'rxjs';
@@ -29,7 +29,7 @@ import { Log, LogsQuery, LogsQueryOptions, RdioScannerAdminService } from '../ad
     styleUrls: ['./logs.component.scss'],
     templateUrl: './logs.component.html',
 })
-export class RdioScannerAdminLogsComponent implements OnDestroy {
+export class RdioScannerAdminLogsComponent implements AfterViewInit, OnDestroy {
     form = this.ngFormBuilder.group({
         category: [null],
         date: [null],
@@ -75,6 +75,14 @@ export class RdioScannerAdminLogsComponent implements OnDestroy {
                     this.formHandler();
                 }
             });
+    }
+
+    // Loads itself once the paginator exists, rather than waiting for the
+    // host to call reload() — the accordion used to do that on expand, and
+    // nothing did after the move to tabs, so the table sat empty until the
+    // user hit refresh.
+    ngAfterViewInit(): void {
+        this.reload();
     }
 
     ngOnDestroy(): void {

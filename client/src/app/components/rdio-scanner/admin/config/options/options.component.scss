@@ -20,23 +20,26 @@
 /* Settings live in titled cards flowing into as many columns as fit, with
    tight rows — the full-width flat list read as a wall of text. */
 :host {
+    // CSS columns rather than a grid: cards pack vertically and flow into the
+    // next column, so a short card (LED) doesn't leave a tall empty gap
+    // underneath waiting for the tallest card in its grid row.
     .opt-cards {
-        align-items: start;
-        display: grid;
-        gap: 1rem;
-        // Wide enough that a setting's label and its control sit on one line
-        // — narrower columns wrapped every label onto three lines.
-        grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
-
-        @media (max-width: 560px) {
-            grid-template-columns: 1fr;
-        }
+        column-gap: 1rem;
+        // Column width, not count — the browser fits as many as the viewport
+        // allows. Wide enough that a setting's label and its control sit on
+        // one line; narrower columns wrapped every label onto three lines.
+        columns: 520px;
     }
 
     .opt-card {
         border: 1px solid rgba(127, 127, 127, 0.2);
         border-radius: 6px;
+        break-inside: avoid;
+        display: inline-block;
+        margin-bottom: 1rem;
         padding: 0.25rem 1rem 0.5rem;
+        vertical-align: top;
+        width: 100%;
     }
 
     .opt-title {

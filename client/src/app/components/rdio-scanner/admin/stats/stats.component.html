@@ -21,57 +21,46 @@
     </div>
 
     <div *ngIf="stats && !error" class="stats-content">
-        <!-- Last Hour Talkgroups. Rendered even when empty, with a no-data
-             note: silently omitting the whole card made it look like the
-             panel had gone missing rather than simply having nothing to
-             report. -->
-        <mat-card class="table-card last-hour-card" *ngIf="!stats.lastHourTalkgroups?.length">
-            <mat-card-header>
-                <mat-card-title>
+        <!-- Last Hour Talkgroups, as a collapsible panel to match Top
+             Talkgroups / Top Units. Rendered even when empty, with a no-data
+             note: silently omitting it made it look like the panel had gone
+             missing rather than simply having nothing to report. -->
+        <mat-expansion-panel class="table-panel last-hour-panel">
+            <mat-expansion-panel-header>
+                <mat-panel-title>
                     <mat-icon>history</mat-icon>
                     Last Hour Activity
-                </mat-card-title>
-            </mat-card-header>
-            <mat-card-content>
-                <div class="no-data">
-                    <mat-icon>info</mat-icon>
-                    <span>No calls in the last hour</span>
-                </div>
-            </mat-card-content>
-        </mat-card>
-        <mat-card class="table-card last-hour-card" *ngIf="stats.lastHourTalkgroups?.length">
-            <mat-card-header>
-                <mat-card-title>
-                    <mat-icon>history</mat-icon>
-                    Last Hour Activity (Click Talkgroup for Units)
-                </mat-card-title>
-            </mat-card-header>
-            <mat-card-content>
-                <table mat-table [dataSource]="stats.lastHourTalkgroups" class="talkgroups-table clickable-table">
-                    <ng-container matColumnDef="talkgroup">
-                        <th mat-header-cell *matHeaderCellDef>Talkgroup</th>
-                        <td mat-cell *matCellDef="let tg">{{ tg.talkgroupName || tg.talkgroupLabel }}</td>
-                    </ng-container>
-                    <ng-container matColumnDef="system">
-                        <th mat-header-cell *matHeaderCellDef>System</th>
-                        <td mat-cell *matCellDef="let tg">{{ tg.systemLabel }}</td>
-                    </ng-container>
-                    <ng-container matColumnDef="lastCall">
-                        <th mat-header-cell *matHeaderCellDef>Last Call</th>
-                        <td mat-cell *matCellDef="let tg">{{ formatTimeAgo(tg.lastCall) }}</td>
-                    </ng-container>
-                    <ng-container matColumnDef="count">
-                        <th mat-header-cell *matHeaderCellDef>Calls</th>
-                        <td mat-cell *matCellDef="let tg">
-                            <span class="call-count">{{ tg.count }}</span>
-                        </td>
-                    </ng-container>
-                    <tr mat-header-row *matHeaderRowDef="['talkgroup', 'system', 'lastCall', 'count']"></tr>
-                    <tr mat-row *matRowDef="let row; columns: ['talkgroup', 'system', 'lastCall', 'count']" 
-                        (click)="showTalkgroupUnits(row)" class="clickable-row"></tr>
-                </table>
-            </mat-card-content>
-        </mat-card>
+                </mat-panel-title>
+            </mat-expansion-panel-header>
+            <div class="no-data" *ngIf="!stats.lastHourTalkgroups?.length">
+                <mat-icon>info</mat-icon>
+                <span>No calls in the last hour</span>
+            </div>
+            <table mat-table *ngIf="stats.lastHourTalkgroups?.length" [dataSource]="stats.lastHourTalkgroups"
+                class="talkgroups-table clickable-table">
+                <ng-container matColumnDef="talkgroup">
+                    <th mat-header-cell *matHeaderCellDef>Talkgroup</th>
+                    <td mat-cell *matCellDef="let tg">{{ tg.talkgroupName || tg.talkgroupLabel }}</td>
+                </ng-container>
+                <ng-container matColumnDef="system">
+                    <th mat-header-cell *matHeaderCellDef>System</th>
+                    <td mat-cell *matCellDef="let tg">{{ tg.systemLabel }}</td>
+                </ng-container>
+                <ng-container matColumnDef="lastCall">
+                    <th mat-header-cell *matHeaderCellDef>Last Call</th>
+                    <td mat-cell *matCellDef="let tg">{{ formatTimeAgo(tg.lastCall) }}</td>
+                </ng-container>
+                <ng-container matColumnDef="count">
+                    <th mat-header-cell *matHeaderCellDef>Calls</th>
+                    <td mat-cell *matCellDef="let tg">
+                        <span class="call-count">{{ tg.count }}</span>
+                    </td>
+                </ng-container>
+                <tr mat-header-row *matHeaderRowDef="['talkgroup', 'system', 'lastCall', 'count']"></tr>
+                <tr mat-row *matRowDef="let row; columns: ['talkgroup', 'system', 'lastCall', 'count']"
+                    (click)="showTalkgroupUnits(row)" class="clickable-row"></tr>
+            </table>
+        </mat-expansion-panel>
 
         <!-- Time Range Filter (calls + listeners time series) -->
         <div class="range-filter">
