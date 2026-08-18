@@ -111,3 +111,31 @@
         }
     }
 }
+
+/* Phones: one card per row, label above control, tighter type. */
+@media (max-width: 719px) {
+    :host {
+        .opt-cards {
+            columns: 1;
+        }
+
+        .opt-card {
+            padding: 0.25rem 0.75rem 0.5rem;
+        }
+
+        .row {
+            align-items: stretch;
+            flex-direction: column;
+            gap: 0.25rem;
+
+            > :not(p) {
+                flex: 1 1 auto;
+                max-width: none;
+            }
+
+            > div:not(.mat-form-field) {
+                justify-content: flex-start;
+            }
+        }
+    }
+}

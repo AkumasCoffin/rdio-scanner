@@ -209,6 +209,13 @@ rdio-scanner-admin-config {
     position: sticky;
     top: 0;
 
+    // Stacked on a phone: sticky positioning made the list float over the
+    // editor below it, and a viewport-tall list buried the editor entirely.
+    @media (max-width: 899px) {
+      max-height: 40vh;
+      position: static;
+    }
+
     .system-item {
       align-items: center;
       background: none;
@@ -315,5 +322,48 @@ rdio-scanner-admin-system {
         font-weight: 600;
       }
     }
+  }
+}
+
+@media (max-width: 719px) {
+  rdio-scanner-admin-config {
+    // Label above control instead of a squeezed two-column row.
+    .row {
+      align-items: stretch;
+      flex-direction: column;
+
+      > p {
+        padding-right: 0;
+      }
+    }
+
+    .groups-tags > div {
+      padding: 0.5rem 0.75rem 0.75rem;
+    }
+
+    .admin-config-virtual-list {
+      height: 45vh;
+      min-height: 220px;
+    }
+
+    .admin-config-list-toolbar {
+      flex-wrap: wrap;
+      gap: 0.25rem;
+    }
+  }
+
+  // The long explanatory blurbs cost five lines each on a phone; the
+  // controls beside them are self-explanatory.
+  rdio-scanner-admin-systems .row.top > p,
+  rdio-scanner-admin-access .row.top > p,
+  rdio-scanner-admin-api-keys .row.top > p,
+  rdio-scanner-admin-downstreams .row.top > p,
+  rdio-scanner-admin-dir-watch .row.top > p {
+    display: none;
+  }
+
+  rdio-scanner-admin-system .system-tabs .system-tab {
+    font-size: 0.8rem;
+    padding: 0.45rem 0.6rem;
   }
 }

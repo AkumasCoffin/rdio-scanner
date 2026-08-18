@@ -180,18 +180,77 @@ rdio-scanner-admin {
 
 @media (max-width: 719px) {
   rdio-scanner-admin {
+    .admin-shell {
+      gap: 8px;
+    }
+
+    // One tight row: title + version on the left, actions on the right. The
+    // old wrapping header spent three lines and a third of a phone screen.
     .admin-header {
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
+      gap: 4px;
+      overflow: hidden;
+      padding: 6px 8px;
       position: static;
 
       .admin-title {
-        flex: 1 1 100%;
+        font-size: 13px;
+        letter-spacing: 0;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
+
+      .admin-version {
+        font-size: 10px;
+      }
+
+      // Text is redundant next to the icon at this width.
+      .admin-dirty {
+        font-size: 0;
+
+        &::before {
+          content: '●';
+          font-size: 14px;
+        }
+      }
+
+      .mat-button,
+      .mat-raised-button {
+        line-height: 30px;
+        min-width: 0;
+        padding: 0 10px;
+      }
+
+      // Icon alone says "log out" at this width; the word costs ~55px that
+      // the title needs.
+      [data-rdio="admin-logout"] {
+        font-size: 0;
+        padding: 0 8px;
+
+        .mat-icon {
+          font-size: 20px;
+          margin: 0;
+        }
+      }
+    }
+
+    // Pills would push the actions off-screen; the same warnings are visible
+    // on the tabs they belong to. !important because the todos component's
+    // own :host rule is an attribute selector, which outranks this one.
+    rdio-scanner-admin-todos {
+      display: none !important;
     }
 
     .admin-tab {
       font-size: 12px;
-      padding: 8px 10px;
+      gap: 4px;
+      padding: 8px 9px;
+    }
+
+    .admin-content {
+      padding-right: 0;
     }
   }
 }
