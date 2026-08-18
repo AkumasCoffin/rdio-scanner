@@ -32,6 +32,12 @@ import { LED_HEX } from '../../../../led-colors';
 export class RdioScannerAdminSystemComponent {
     ledHex = LED_HEX;
 
+    // Settings / Talkgroups / Units as tabs rather than stacked dropdowns.
+    // Only the active pane is in the DOM, which keeps the virtual-scroll
+    // lists off the page until asked for — the same laziness the expansion
+    // panels' matExpansionPanelContent gave.
+    tab: 'settings' | 'talkgroups' | 'units' = 'settings';
+
     // The root form is the whole config form, so the Options section's toggle
     // is readable from here — the second color selector follows it live.
     get dualLed(): boolean {

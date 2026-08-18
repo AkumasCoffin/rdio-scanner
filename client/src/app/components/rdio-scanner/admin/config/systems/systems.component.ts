@@ -32,23 +32,28 @@ export class RdioScannerAdminSystemsComponent {
 
     // Master/detail selection: the list on the left, this system's editor on
     // the right. Held by identity so reorders don't change what's selected.
-    selected: FormGroup | undefined;
+    // Only ever assigned from user actions — never from a getter. A getter
+    // that wrote to it (or sorted the live controls array in place) mutated
+    // state during template evaluation, so every change-detection pass
+    // scheduled another one and the tab locked the browser up.
+    private selection: FormGroup | undefined;
 
     get systems(): FormGroup[] {
-        const systems = this.form?.controls
+        return [...(this.form?.controls ?? [])]
             .sort((a, b) => (a.value.order || 0) - (b.value.order || 0)) as FormGroup[];
+    }
 
-        // Auto-select the first system so the detail pane never opens empty,
-        // and drop a selection whose system was removed (e.g. by an import
-        // replacing the whole config).
-        if (this.selected && !systems?.includes(this.selected)) {
-            this.selected = undefined;
-        }
-        if (!this.selected && systems?.length) {
-            this.selected = systems[0];
+    // The system the detail pane shows: the user's pick when it still exists
+    // (an import can replace the whole config), else the first one, so the
+    // pane never opens empty. Pure — computed, never assigned.
+    get selected(): FormGroup | undefined {
+        const systems = this.systems;
+
+        if (this.selection && systems.includes(this.selection)) {
+            return this.selection;
         }
 
-        return systems;
+        return systems[0];
     }
 
     @ViewChildren(MatExpansionPanel) private panels: QueryList<MatExpansionPanel> | undefined;
@@ -64,7 +69,7 @@ export class RdioScannerAdminSystemsComponent {
 
         this.form?.markAsDirty();
 
-        this.selected = system;
+        this.selection = system;
     }
 
     closeAll(): void {
@@ -82,21 +87,23 @@ export class RdioScannerAdminSystemsComponent {
     }
 
     select(system: FormGroup): void {
-        this.selected = system;
+        this.selection = system;
     }
 
     removeSelected(): void {
-        if (!this.selected) {
+        const selected = this.selected;
+
+        if (!selected) {
             return;
         }
 
-        const index = this.form?.controls.indexOf(this.selected) ?? -1;
+        const index = this.form?.controls.indexOf(selected) ?? -1;
 
         if (index >= 0) {
             this.form?.removeAt(index);
             this.form?.markAsDirty();
         }
 
-        this.selected = undefined;
+        this.selection = undefined;
     }
 }

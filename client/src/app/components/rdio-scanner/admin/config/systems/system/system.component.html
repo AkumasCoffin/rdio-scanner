@@ -1,13 +1,21 @@
 <ng-container [formGroup]="form">
-    <mat-accordion displayMode="flat">
-        <mat-expansion-panel>
-            <mat-expansion-panel-header>
-                <mat-panel-title>
-                    Settings
-                    <mat-icon *ngIf="settingsInvalid" color="warn">error</mat-icon>
-                </mat-panel-title>
-            </mat-expansion-panel-header>
-            <ng-template matExpansionPanelContent>
+    <nav class="system-tabs">
+        <button type="button" class="system-tab" [class.active]="tab === 'settings'" (click)="tab = 'settings'">
+            Settings
+            <mat-icon class="warn" *ngIf="settingsInvalid" color="warn">error</mat-icon>
+        </button>
+        <button type="button" class="system-tab" [class.active]="tab === 'talkgroups'" (click)="tab = 'talkgroups'">
+            Talkgroups
+            <span class="count">{{ talkgroups.length }}</span>
+            <mat-icon class="warn" *ngIf="form.get('talkgroups')?.invalid" color="warn">error</mat-icon>
+        </button>
+        <button type="button" class="system-tab" [class.active]="tab === 'units'" (click)="tab = 'units'">
+            Units
+            <span class="count">{{ units.length }}</span>
+            <mat-icon class="warn" *ngIf="form.get('units')?.invalid" color="warn">error</mat-icon>
+        </button>
+    </nav>
+    <div class="system-pane" *ngIf="tab === 'settings'">
     <div class="row">
         <p>
             <span class="mat-body">Id</span><br>
@@ -118,18 +126,8 @@
             </mat-select>
         </mat-form-field>
     </div>
-            </ng-template>
-        </mat-expansion-panel>
-    </mat-accordion>
-    <mat-accordion displayMode="flat">
-        <mat-expansion-panel>
-            <mat-expansion-panel-header>
-                <mat-panel-title>
-                    Talkgroups
-                    <mat-icon *ngIf="form.get('talkgroups')?.invalid" color="warn">error</mat-icon>
-                </mat-panel-title>
-            </mat-expansion-panel-header>
-            <ng-template matExpansionPanelContent>
+    </div>
+    <div class="system-pane" *ngIf="tab === 'talkgroups'">
                 <div class="row top">
                     <p class="mat-caption">System talkgroups. Select one to edit it. You can drag and drop talkgroups
                         when the list is not filtered. They
@@ -171,18 +169,8 @@
                         (remove)="removeTalkgroup(selectedTalkgroup)">
                     </rdio-scanner-admin-talkgroup>
                 </div>
-            </ng-template>
-        </mat-expansion-panel>
-    </mat-accordion>
-    <mat-accordion displayMode="flat">
-        <mat-expansion-panel>
-            <mat-expansion-panel-header>
-                <mat-panel-title>
-                    Units
-                    <mat-icon *ngIf="form.get('units')?.invalid" color="warn">error</mat-icon>
-                </mat-panel-title>
-            </mat-expansion-panel-header>
-            <ng-template matExpansionPanelContent>
+    </div>
+    <div class="system-pane" *ngIf="tab === 'units'">
                 <div class="row top">
                     <p class="mat-caption">Create units to display the label instead of showing the unit id on the main
                         screen. Select one to edit it.<br>You can drag and drop them when the list is not filtered.</p>
@@ -220,9 +208,7 @@
                     <rdio-scanner-admin-unit [form]="selectedUnit" (remove)="removeUnit(selectedUnit)">
                     </rdio-scanner-admin-unit>
                 </div>
-            </ng-template>
-        </mat-expansion-panel>
-    </mat-accordion>
+    </div>
     <div class="row bottom">
         <button type="button" mat-button color="warn" (click)="remove.emit()">
             Delete system
