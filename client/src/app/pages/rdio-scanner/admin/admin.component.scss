@@ -5,9 +5,11 @@
   min-height: 100vh;
   padding: 16px;
 
+  /* Full width: the admin is a workspace, not an article — the old
+     1200px centered column wasted most of a desktop display. */
   > div {
     margin: 16px auto;
-    max-width: 1200px;
+    max-width: none;
   }
 
   > h1 {

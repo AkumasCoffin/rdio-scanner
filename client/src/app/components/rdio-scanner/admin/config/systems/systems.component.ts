@@ -30,9 +30,25 @@ import { RdioScannerAdminService } from '../../admin.service';
 export class RdioScannerAdminSystemsComponent {
     @Input() form: FormArray | undefined;
 
+    // Master/detail selection: the list on the left, this system's editor on
+    // the right. Held by identity so reorders don't change what's selected.
+    selected: FormGroup | undefined;
+
     get systems(): FormGroup[] {
-        return this.form?.controls
+        const systems = this.form?.controls
             .sort((a, b) => (a.value.order || 0) - (b.value.order || 0)) as FormGroup[];
+
+        // Auto-select the first system so the detail pane never opens empty,
+        // and drop a selection whose system was removed (e.g. by an import
+        // replacing the whole config).
+        if (this.selected && !systems?.includes(this.selected)) {
+            this.selected = undefined;
+        }
+        if (!this.selected && systems?.length) {
+            this.selected = systems[0];
+        }
+
+        return systems;
     }
 
     @ViewChildren(MatExpansionPanel) private panels: QueryList<MatExpansionPanel> | undefined;
@@ -47,6 +63,8 @@ export class RdioScannerAdminSystemsComponent {
         this.form?.insert(0, system);
 
         this.form?.markAsDirty();
+
+        this.selected = system;
     }
 
     closeAll(): void {
@@ -63,9 +81,22 @@ export class RdioScannerAdminSystemsComponent {
         }
     }
 
-    remove(index: number): void {
-        this.form?.removeAt(index);
+    select(system: FormGroup): void {
+        this.selected = system;
+    }
 
-        this.form?.markAsDirty();
+    removeSelected(): void {
+        if (!this.selected) {
+            return;
+        }
+
+        const index = this.form?.controls.indexOf(this.selected) ?? -1;
+
+        if (index >= 0) {
+            this.form?.removeAt(index);
+            this.form?.markAsDirty();
+        }
+
+        this.selected = undefined;
     }
 }

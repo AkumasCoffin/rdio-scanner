@@ -4,17 +4,21 @@
         systems to rearrange their order.</p>
     <button type="button" mat-button color="accent" (click)="add()">New system</button>
 </div>
-<mat-accordion displayMode="flat" cdkDropList [cdkDropListAutoScrollStep]=64 [cdkDropListData]="systems" (cdkDropListDropped)="drop($event)">
-    <mat-expansion-panel *ngFor="let system of systems; index as i" [formGroup]="system"
-        (afterCollapse)="systemComponent.closeAll()" cdkDrag>
-        <mat-expansion-panel-header>
-            <mat-panel-title>
-                <mat-icon cdkDragHandle>drag_indicator</mat-icon>
-                {{ system.value.label?.trim() || 'NewSystem' }}
-                <mat-icon *ngIf="system.invalid" color="warn">error</mat-icon>
-            </mat-panel-title>
-        </mat-expansion-panel-header>
-        <rdio-scanner-admin-system #systemComponent [form]="system" (add)="add()" (remove)="remove(i)">
+<div class="systems-split">
+    <div class="systems-list" cdkDropList [cdkDropListAutoScrollStep]=64 [cdkDropListData]="systems"
+        (cdkDropListDropped)="drop($event)">
+        <button type="button" class="system-item" *ngFor="let system of systems" cdkDrag
+            [class.active]="system === selected" (click)="select(system)">
+            <mat-icon cdkDragHandle>drag_indicator</mat-icon>
+            <span class="label">{{ system.value.label?.trim() || 'NewSystem' }}</span>
+            <span class="count">{{ system.value.talkgroups?.length || 0 }}</span>
+            <mat-icon *ngIf="system.invalid" color="warn">error</mat-icon>
+        </button>
+        <p class="mat-caption empty" *ngIf="!systems?.length">No systems yet — use New system to add one.</p>
+    </div>
+    <div class="systems-detail">
+        <rdio-scanner-admin-system *ngIf="selected" [form]="selected" (add)="add()" (remove)="removeSelected()">
         </rdio-scanner-admin-system>
-    </mat-expansion-panel>
-</mat-accordion>
+        <p class="mat-caption empty" *ngIf="!selected && systems?.length">Select a system to edit it.</p>
+    </div>
+</div>

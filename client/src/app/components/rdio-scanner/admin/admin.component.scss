@@ -44,3 +44,165 @@ rdio-scanner-admin {
     }
   }
 }
+
+/* ---- Tab shell (issue: full-width admin redesign) ---- */
+
+rdio-scanner-admin {
+  .admin-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .admin-header {
+    align-items: center;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    display: flex;
+    gap: 8px;
+    padding: 8px 16px;
+    position: sticky;
+    top: 8px;
+    z-index: 20;
+
+    .admin-title {
+      color: var(--text-main);
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    .admin-spacer {
+      flex: 1;
+    }
+
+    .admin-dirty {
+      color: var(--accent);
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+  }
+
+  .admin-tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--border-subtle);
+    overflow-x: auto;
+    scrollbar-width: thin;
+
+    .admin-tab {
+      align-items: center;
+      background: none;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      font: inherit;
+      font-size: 13px;
+      gap: 6px;
+      padding: 10px 14px;
+      white-space: nowrap;
+
+      .mat-icon {
+        font-size: 18px;
+        height: 18px;
+        width: 18px;
+      }
+
+      .mat-icon.warn {
+        font-size: 14px;
+        height: 14px;
+        width: 14px;
+      }
+
+      &:hover {
+        color: var(--text-main);
+      }
+
+      &.active {
+        border-bottom-color: var(--accent);
+        color: var(--accent);
+        font-weight: 600;
+      }
+    }
+  }
+
+  .admin-content {
+    min-width: 0;
+
+    > section {
+      display: block;
+    }
+
+    /* display: block above would silently defeat the [hidden] attribute the
+       config host uses to survive tab switches — restate it explicitly. */
+    > section[hidden] {
+      display: none;
+    }
+  }
+
+  .dash-cards {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    margin-bottom: 16px;
+
+    .dash-card {
+      align-items: center;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      color: var(--text-main);
+      cursor: pointer;
+      display: flex;
+      font: inherit;
+      gap: 10px;
+      padding: 14px 16px;
+
+      .num {
+        color: var(--accent);
+        font-size: 22px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .mat-icon {
+        color: var(--accent);
+      }
+
+      .lbl {
+        color: var(--text-muted);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      &:hover {
+        border-color: var(--accent);
+      }
+    }
+  }
+}
+
+@media (max-width: 719px) {
+  rdio-scanner-admin {
+    .admin-header {
+      flex-wrap: wrap;
+      position: static;
+
+      .admin-title {
+        flex: 1 1 100%;
+      }
+    }
+
+    .admin-tab {
+      font-size: 12px;
+      padding: 8px 10px;
+    }
+  }
+}

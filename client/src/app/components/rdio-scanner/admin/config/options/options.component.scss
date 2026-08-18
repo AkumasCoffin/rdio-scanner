@@ -41,3 +41,13 @@
         }
     }
 }
+
+/* Wide screens: the ~20 option rows flow into two columns instead of one
+   long scroll (tab shell redesign). */
+@media (min-width: 1100px) {
+    :host {
+        column-gap: 3rem;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+}
