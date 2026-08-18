@@ -48,10 +48,21 @@ rdio-scanner-admin {
 /* ---- Tab shell (issue: full-width admin redesign) ---- */
 
 rdio-scanner-admin {
+  // The component element sits between the page's flex column and the shell.
+  // Without its own display/flex it collapses to auto height, and the
+  // shell's height: 100% resolves against auto — so nothing constrains
+  // .admin-content and the page scrolls as a whole instead of the pane.
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+
   .admin-shell {
     display: flex;
+    flex: 1;
     flex-direction: column;
     gap: 12px;
+    min-height: 0;
   }
 
   .admin-header {
@@ -85,6 +96,12 @@ rdio-scanner-admin {
       text-transform: uppercase;
       white-space: nowrap;
     }
+  }
+
+  .admin-header,
+  .admin-tabs,
+  rdio-scanner-admin-todos {
+    flex: none;
   }
 
   .admin-tabs {
@@ -132,8 +149,13 @@ rdio-scanner-admin {
     }
   }
 
+  // The only scrolling region: the header and tab bar above it stay put.
   .admin-content {
+    flex: 1;
+    min-height: 0;
     min-width: 0;
+    overflow-y: auto;
+    padding-right: 4px;
 
     > section {
       display: block;

@@ -1,15 +1,41 @@
+/* App-shell layout: the page itself never scrolls, so the background and the
+   header/tab bar stay put and scrolling happens inside the panes. */
 :host {
   background: #1e1e1e;
   box-sizing: border-box;
-  display: block;
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
   padding: 16px;
 
   /* Full width: the admin is a workspace, not an article — the old
      1200px centered column wasted most of a desktop display. */
   > div {
-    margin: 16px auto;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    margin: 16px auto 0;
     max-width: none;
+    // Lets the flex child shrink so its own overflow scrolls instead of
+    // pushing the page taller.
+    min-height: 0;
+    width: 100%;
+
+    // The mat-card between here and the admin component is display: block by
+    // default, which breaks the height chain: the shell's height resolves
+    // against auto and nothing constrains the scrolling pane.
+    > .mat-card {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+  }
+
+  > h1 {
+    flex: none;
   }
 
   > h1 {

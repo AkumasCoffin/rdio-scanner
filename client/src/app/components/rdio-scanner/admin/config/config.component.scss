@@ -200,7 +200,14 @@ rdio-scanner-admin-config {
     border-radius: 6px;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    // Scrolls on its own so a long system list doesn't drag the whole page
+    // — the editor beside it keeps its own scroll position.
+    max-height: calc(100vh - 220px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    // Sticks while the editor beside it scrolls.
+    position: sticky;
+    top: 0;
 
     .system-item {
       align-items: center;
