@@ -1,6 +1,5 @@
-<div class="todos" *ngIf="todos.length">
-    <div class="todo" *ngFor="let todo of todos" [class.warn]="todo.level === 'warn'">
-        <mat-icon>{{ todo.level === 'warn' ? 'warning' : 'notifications' }}</mat-icon>
-        <span>{{ todo.message }}</span>
-    </div>
-</div>
+<span class="todo-pill" *ngFor="let todo of todos" [class.warn]="todo.level === 'warn'"
+    [matTooltip]="todo.message" matTooltipPosition="below" tabindex="0">
+    <span class="label">{{ todo.label }}</span>
+    <mat-icon aria-hidden="false" [attr.aria-label]="todo.message">info_outline</mat-icon>
+</span>

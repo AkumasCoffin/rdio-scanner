@@ -11,6 +11,7 @@
         <header class="admin-header">
             <span class="admin-title">Rdio Scanner Admin</span>
             <span class="admin-spacer"></span>
+            <rdio-scanner-admin-todos></rdio-scanner-admin-todos>
             <span class="admin-dirty" *ngIf="configComponent?.form?.dirty">unsaved changes</span>
             <button type="button" mat-button [disabled]="!configComponent?.form || configComponent?.form?.disabled || configComponent?.form?.pristine"
                 (click)="configComponent?.reset()">Reset</button>
@@ -22,8 +23,6 @@
                 Logout
             </button>
         </header>
-
-        <rdio-scanner-admin-todos></rdio-scanner-admin-todos>
 
         <nav class="admin-tabs">
             <button *ngFor="let tab of visibleTabs" type="button" class="admin-tab"
