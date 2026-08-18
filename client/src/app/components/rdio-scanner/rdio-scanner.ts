@@ -99,6 +99,7 @@ export interface RdioScannerConfig {
     branding?: string;
     dimmerDelay: number | false;
     dualLed?: boolean;
+    wigWagLed?: boolean;
     email?: string;
     groups: { [key: string]: { [key: number]: number[] } };
     keypadBeeps: RdioScannerKeypadBeeps | false;

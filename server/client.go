@@ -272,6 +272,7 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 		"branding":           options.Branding,
 		"dimmerDelay":        options.DimmerDelay,
 		"dualLed":            options.DualLed,
+		"wigWagLed":          options.WigWagLed,
 		"email":              options.Email,
 		"groups":             client.GroupsMap,
 		"keypadBeeps":        GetKeypadBeeps(options),

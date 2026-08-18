@@ -301,6 +301,7 @@ export interface Options {
     logPruneDays?: number;
     logPruneCount?: number;
     dualLed?: boolean;
+    wigWagLed?: boolean;
     searchPatchedTalkgroups?: boolean;
     showListenerStats?: boolean;
     showListenersCount?: boolean;
@@ -817,6 +818,7 @@ export class RdioScannerAdminService implements OnDestroy {
             dimmerDelay: [options?.dimmerDelay, [Validators.required, Validators.min(0)]],
             disableDuplicateDetection: [options?.disableDuplicateDetection],
             dualLed: [options?.dualLed ?? false],
+            wigWagLed: [options?.wigWagLed ?? false],
             duplicateDetectionTimeFrame: [options?.duplicateDetectionTimeFrame, [Validators.required, Validators.min(0)]],
             email: [options?.email],
             keypadBeeps: [options?.keypadBeeps, Validators.required],

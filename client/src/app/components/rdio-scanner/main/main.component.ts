@@ -112,6 +112,11 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     dualLedBackground: string | null = null;
     dualLedGlow: string | null = null;
 
+    private dualHex1 = '';
+    private dualHex2 = '';
+    private wigWagTimer: Subscription | undefined;
+    private wigWagTick = false;
+
     linked = false;
 
     listeners = 0;
@@ -149,6 +154,10 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
 
     get dualLed(): boolean {
         return this.config?.dualLed || false;
+    }
+
+    get wigWagLed(): boolean {
+        return (this.config?.dualLed && this.config?.wigWagLed) || false;
     }
 
     get transcriptionEnabled(): boolean {
@@ -354,6 +363,7 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         this.dimmerTimer?.unsubscribe();
         this.replayTimer?.unsubscribe();
         this.delayFlashTimer?.unsubscribe();
+        this.wigWagTimer?.unsubscribe();
 
         this.eventSubscription.unsubscribe();
     }
@@ -952,17 +962,25 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
             this.ledStyle = `${this.ledStyle} ${activeLed}`;
         }
 
-        // Dual mode: the LED widens into a two-color lightbar. The first color
-        // fills the left half, the second the right; a call with no second
-        // color lights the whole lens in its first color. Between calls the
-        // inline styles drop to null so the bar dims like the stock LED.
+        // Dual mode: the LED widens into a twin-module lightbar — first color
+        // in the left module, second in the right, dark seam between. A call
+        // with no second color lights both modules in its first color. With
+        // wig-wag on, a timer alternates which module is lit while a call
+        // plays (paused stops the flash and shows both, so the paused blink
+        // stays readable). Between calls the inline styles drop to null so
+        // the bar dims like the stock LED.
         if (this.dualLed && this.call) {
             const activeLed2 = ledName(this.call?.talkgroupData?.led2) || ledName(this.call?.systemData?.led2);
-            const hex1 = LED_HEX[activeLed] ?? LED_HEX['green'];
-            const hex2 = LED_HEX[activeLed2] ?? hex1;
-            this.dualLedBackground = `linear-gradient(90deg, ${hex1} 0%, ${hex1} 50%, ${hex2} 50%, ${hex2} 100%)`;
-            this.dualLedGlow = `inset 0 0 3px rgba(2, 6, 23, 0.45), -6px 0 10px 1px ${hex1}99, 6px 0 10px 1px ${hex2}99`;
+            this.dualHex1 = LED_HEX[activeLed] ?? LED_HEX['green'];
+            this.dualHex2 = LED_HEX[activeLed2] ?? this.dualHex1;
+            if (this.wigWagLed && !this.livefeedPaused) {
+                this.startWigWag();
+            } else {
+                this.stopWigWag();
+                this.applyDualStyles(null);
+            }
         } else {
+            this.stopWigWag();
             this.dualLedBackground = null;
             this.dualLedGlow = null;
         }
@@ -974,5 +992,52 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         this.liveTranscriptColor = panelLed ? `led-${panelLed}` : '';
 
         this.ngChangeDetectorRef.detectChanges();
+    }
+
+    // Builds the lightbar's inline styles. litSide narrows the glow and dims
+    // the other module during a wig-wag flash; null lights both modules.
+    private applyDualStyles(litSide: 'left' | 'right' | null): void {
+        const seam = '#0b1120';
+        const left = litSide === 'right' ? RdioScannerMainComponent.dimmed(this.dualHex1) : this.dualHex1;
+        const right = litSide === 'left' ? RdioScannerMainComponent.dimmed(this.dualHex2) : this.dualHex2;
+
+        this.dualLedBackground = `linear-gradient(90deg, ${left} 0%, ${left} calc(50% - 1px), ` +
+            `${seam} calc(50% - 1px), ${seam} calc(50% + 1px), ${right} calc(50% + 1px), ${right} 100%)`;
+
+        const glows = ['inset 0 0 3px rgba(2, 6, 23, 0.6)'];
+        if (litSide !== 'right') {
+            glows.push(`-6px 0 10px 1px ${this.dualHex1}99`);
+        }
+        if (litSide !== 'left') {
+            glows.push(`6px 0 10px 1px ${this.dualHex2}99`);
+        }
+        this.dualLedGlow = glows.join(', ');
+    }
+
+    // Driven from a timer rather than CSS keyframes so the flash survives
+    // reduced-motion settings, which suppress CSS animations wholesale.
+    private startWigWag(): void {
+        if (this.wigWagTimer) {
+            return;
+        }
+
+        this.wigWagTimer = timer(0, 450).subscribe(() => {
+            this.wigWagTick = !this.wigWagTick;
+            this.applyDualStyles(this.wigWagTick ? 'left' : 'right');
+            this.ngChangeDetectorRef.detectChanges();
+        });
+    }
+
+    private stopWigWag(): void {
+        this.wigWagTimer?.unsubscribe();
+        this.wigWagTimer = undefined;
+    }
+
+    // A named color's hex dropped to ~15% brightness — the "dark" module of a
+    // wig-wag flash, still faintly showing its color like a real lens does.
+    private static dimmed(hex: string): string {
+        const n = parseInt(hex.slice(1), 16);
+        const dim = (v: number) => Math.round(v * 0.15);
+        return `rgb(${dim((n >> 16) & 255)}, ${dim((n >> 8) & 255)}, ${dim(n & 255)})`;
     }
 }
