@@ -744,23 +744,6 @@ func (stats *Stats) GetTalkgroupUnits(db *Database, systemId, talkgroupId uint) 
 func (stats *Stats) build(db *Database) *StatsResponse {
 	resp := &StatsResponse{}
 
-	// Configured inventory straight from memory — deliberately not a
-	// database query, so it adds nothing to the build's query fan-out.
-	stats.Controller.Systems.mutex.Lock()
-	for _, system := range stats.Controller.Systems.List {
-		if system == nil {
-			continue
-		}
-		resp.ConfiguredSystems++
-		if system.Talkgroups != nil {
-			resp.ConfiguredTalkgroups += uint(len(system.Talkgroups.List))
-		}
-		if system.Units != nil {
-			resp.ConfiguredUnits += uint(len(system.Units.List))
-		}
-	}
-	stats.Controller.Systems.mutex.Unlock()
-
 	// Log every sub-query failure so a single misbehaving panel doesn't
 	// silently take the whole stats page down — without this, a Postgres
 	// permission error or schema drift just shows up as an empty chart
@@ -899,22 +882,69 @@ func (stats *Stats) PublicHandler(w http.ResponseWriter, r *http.Request) {
 	stats.handleStatsRequest(w, r, stats.Controller.Options.GetShowListenerStats())
 }
 
+// configuredInventory counts what is configured, as opposed to what has been
+// heard — the activity counts in Overview come from the calls table.
+//
+// Talkgroups and Units carry their own mutexes and the call-ingest path
+// appends to them under auto-populate, so each is locked in turn rather than
+// read behind the Systems lock alone. Systems first, then the child, matching
+// the order Systems.Read uses.
+func (stats *Stats) configuredInventory() (systems uint, talkgroups uint, units uint) {
+	// A controller without a systems collection is only ever a partially
+	// built one in a test; report zeroes rather than panicking a request.
+	if stats.Controller == nil || stats.Controller.Systems == nil {
+		return 0, 0, 0
+	}
+
+	stats.Controller.Systems.mutex.Lock()
+	defer stats.Controller.Systems.mutex.Unlock()
+
+	for _, system := range stats.Controller.Systems.List {
+		if system == nil {
+			continue
+		}
+
+		systems++
+
+		if system.Talkgroups != nil {
+			system.Talkgroups.mutex.Lock()
+			talkgroups += uint(len(system.Talkgroups.List))
+			system.Talkgroups.mutex.Unlock()
+		}
+
+		if system.Units != nil {
+			system.Units.mutex.Lock()
+			units += uint(len(system.Units.List))
+			system.Units.mutex.Unlock()
+		}
+	}
+
+	return systems, talkgroups, units
+}
+
 func (stats *Stats) handleStatsRequest(w http.ResponseWriter, r *http.Request, includeListeners bool) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	resp := stats.cachedBuild(stats.Controller.Database)
+	cached := stats.cachedBuild(stats.Controller.Database)
 
-	if !includeListeners && resp.ListenerBuckets != nil {
-		// Shallow copy — the cached response is shared by every caller, so
-		// stripping the field in place would hide it from admins too until
-		// the next rebuild.
-		shaped := *resp
+	// Shallow copy — the cached response is shared by every caller, so
+	// per-request shaping in place would leak between them.
+	shaped := *cached
+
+	// Counted per request rather than inside build(): it costs nothing (no
+	// query, just walking the in-memory config), and folding it into the
+	// cached build left the tiles showing pre-save numbers for the rest of
+	// the cache TTL, which reads as a save that didn't take.
+	shaped.ConfiguredSystems, shaped.ConfiguredTalkgroups, shaped.ConfiguredUnits = stats.configuredInventory()
+
+	if !includeListeners {
 		shaped.ListenerBuckets = nil
-		resp = &shaped
 	}
+
+	resp := &shaped
 
 	w.Header().Set("Content-Type", "application/json")
 	if b, err := json.Marshal(resp); err == nil {

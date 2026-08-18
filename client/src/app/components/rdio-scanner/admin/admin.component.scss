@@ -73,9 +73,6 @@ rdio-scanner-admin {
     display: flex;
     gap: 8px;
     padding: 8px 16px;
-    position: sticky;
-    top: 8px;
-    z-index: 20;
 
     .admin-title {
       color: var(--text-main);

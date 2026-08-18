@@ -18,13 +18,10 @@
  */
 
 import { Component } from '@angular/core';
-import packageInfo from '../../../../../package.json';
 
 @Component({
     selector: 'rdio-scanner-admin-page',
     styleUrls: ['./admin.component.scss'],
     templateUrl: './admin.component.html',
 })
-export class RdioScannerAdminPageComponent {
-    version = packageInfo.version;
-}
+export class RdioScannerAdminPageComponent { }

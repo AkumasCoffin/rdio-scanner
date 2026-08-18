@@ -56,6 +56,18 @@ export class RdioScannerAdminSystemComponent {
     @Input()
     set form(form: FormGroup) {
         this.formValue = form;
+
+        // One editor instance now serves every system (the master/detail pane
+        // swaps this input), so per-system view state has to be dropped here.
+        // Carrying a selection across the swap left the editor pointed at the
+        // previous system's talkgroup: edits went to the old system, and
+        // Delete/Blacklist acted on an id the new system doesn't contain.
+        this.selectedTalkgroup = undefined;
+        this.selectedUnit = undefined;
+        this.talkgroupQuery = '';
+        this.unitQuery = '';
+        this.tab = 'settings';
+
         this.refreshLists();
     }
 

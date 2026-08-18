@@ -82,7 +82,11 @@ export class RdioScannerAdminLogsComponent implements AfterViewInit, OnDestroy {
     // nothing did after the move to tabs, so the table sat empty until the
     // user hit refresh.
     ngAfterViewInit(): void {
-        this.reload();
+        // Deferred a microtask: reload() flips logsQueryPending and disables
+        // the form synchronously, and both are bound in the template, so
+        // calling it inside the lifecycle hook trips
+        // ExpressionChangedAfterItHasBeenCheckedError in dev builds.
+        Promise.resolve().then(() => this.reload());
     }
 
     ngOnDestroy(): void {

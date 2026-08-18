@@ -36,7 +36,7 @@
 
         <main class="admin-content">
             <section *ngIf="activeTab === 'dashboard'" data-rdio="admin-stats">
-                <rdio-scanner-admin-stats #statsComponent></rdio-scanner-admin-stats>
+                <rdio-scanner-admin-stats></rdio-scanner-admin-stats>
             </section>
 
             <!-- One always-alive config host: the reactive form (and any
@@ -47,17 +47,17 @@
             </section>
 
             <section *ngIf="activeTab === 'plugins'" data-rdio="admin-plugins">
-                <rdio-scanner-admin-plugins #pluginsComponent></rdio-scanner-admin-plugins>
+                <rdio-scanner-admin-plugins></rdio-scanner-admin-plugins>
                 <!-- Plugin-provided admin panels live with the plugin manager. -->
                 <rdio-plugin-slot name="admin-panel"></rdio-plugin-slot>
             </section>
 
             <section *ngIf="activeTab === 'logs'" data-rdio="admin-logs">
-                <rdio-scanner-admin-logs #logsComponent></rdio-scanner-admin-logs>
+                <rdio-scanner-admin-logs></rdio-scanner-admin-logs>
             </section>
 
             <section *ngIf="activeTab === 'tools'" data-rdio="admin-tools">
-                <rdio-scanner-admin-tools #toolsComponent
+                <rdio-scanner-admin-tools
                     (config)="configComponent?.reset($event, { dirty: true }); select('systems')"></rdio-scanner-admin-tools>
             </section>
         </main>
