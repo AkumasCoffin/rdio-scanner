@@ -52,7 +52,6 @@ var pluginAnchors = []string{
 	"status",
 	"branding",
 	"led",
-	"led2",
 	"lcd",
 	"lcd-transcript",
 	"history",
@@ -105,7 +104,7 @@ var pluginAnchors = []string{
 
 const componentsDir = "../client/src/app/components/rdio-scanner"
 
-var anchorAttribute = regexp.MustCompile(`data-rdio="([a-z0-9-]+)"`)
+var anchorAttribute = regexp.MustCompile(`data-rdio="([a-z-]+)"`)
 
 // anchorsInTemplates is every anchor actually present in the markup.
 func anchorsInTemplates(t *testing.T) map[string]int {

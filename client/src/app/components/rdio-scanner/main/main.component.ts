@@ -32,7 +32,7 @@ import {
     RdioScannerLivefeedMap,
     RdioScannerLivefeedMode,
 } from '../rdio-scanner';
-import { ledName } from '../led-colors';
+import { LED_HEX, ledName } from '../led-colors';
 import { RdioScannerService } from '../rdio-scanner.service';
 import { RdioScannerSupportComponent } from './support/support.component';
 
@@ -105,7 +105,12 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     holdTg = false;
 
     ledStyle = '';
-    led2Style = '';
+
+    // Inline styles for the dual-mode lightbar: a hard-stop gradient splits
+    // the lens into its two colors, and each half casts its own glow. Null in
+    // single mode or when off, so the stylesheet's LED styling applies.
+    dualLedBackground: string | null = null;
+    dualLedGlow: string | null = null;
 
     linked = false;
 
@@ -947,13 +952,20 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
             this.ledStyle = `${this.ledStyle} ${activeLed}`;
         }
 
-        // The second LED mirrors the first's on/paused state in its own color,
-        // and stays dark when no second color is configured — so a mixed setup
-        // where only some talkgroups have a second color reads correctly.
-        const activeLed2 = ledName(this.call?.talkgroupData?.led2) || ledName(this.call?.systemData?.led2);
-        this.led2Style = activeLed2 && this.call
-            ? (this.livefeedPaused ? `on paused ${activeLed2}` : `on ${activeLed2}`)
-            : 'off';
+        // Dual mode: the LED widens into a two-color lightbar. The first color
+        // fills the left half, the second the right; a call with no second
+        // color lights the whole lens in its first color. Between calls the
+        // inline styles drop to null so the bar dims like the stock LED.
+        if (this.dualLed && this.call) {
+            const activeLed2 = ledName(this.call?.talkgroupData?.led2) || ledName(this.call?.systemData?.led2);
+            const hex1 = LED_HEX[activeLed] ?? LED_HEX['green'];
+            const hex2 = LED_HEX[activeLed2] ?? hex1;
+            this.dualLedBackground = `linear-gradient(90deg, ${hex1} 0%, ${hex1} 50%, ${hex2} 50%, ${hex2} 100%)`;
+            this.dualLedGlow = `inset 0 0 3px rgba(2, 6, 23, 0.45), -6px 0 10px 1px ${hex1}99, 6px 0 10px 1px ${hex2}99`;
+        } else {
+            this.dualLedBackground = null;
+            this.dualLedGlow = null;
+        }
 
         // Color class for the live-transcript panel. Derived from the
         // most recent call so the frame keeps glowing in the right color
