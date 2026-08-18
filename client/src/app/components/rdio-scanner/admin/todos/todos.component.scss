@@ -1,12 +1,37 @@
-.info {
-  color: green;
-}
-
-.warn {
-  color: orange;
+/* Compact notice strip: one slim line per todo instead of the old card with
+   a "Todos" heading and full-height list rows. */
+.todos {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .todo {
-  text-overflow: unset;
-  white-space: normal;
+  align-items: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--state-success, green);
+  border-radius: 4px;
+  color: var(--text-muted);
+  display: flex;
+  font-size: 12.5px;
+  gap: 8px;
+  line-height: 1.35;
+  padding: 5px 10px;
+
+  .mat-icon {
+    color: var(--state-success, green);
+    flex: none;
+    font-size: 16px;
+    height: 16px;
+    width: 16px;
+  }
+
+  &.warn {
+    border-left-color: var(--state-warn, orange);
+
+    .mat-icon {
+      color: var(--state-warn, orange);
+    }
+  }
 }
