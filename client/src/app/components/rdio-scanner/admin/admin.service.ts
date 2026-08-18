@@ -23,6 +23,7 @@ import { AbstractControl, FormArray, FormBuilder, FormGroup, ValidationErrors, V
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { firstValueFrom, timer } from 'rxjs';
 import { AppUpdateService } from '../../../shared/update/update.service';
+import { LED_NAMES } from '../led-colors';
 
 export interface Access {
     _id?: string;
@@ -554,7 +555,7 @@ export class RdioScannerAdminService implements OnDestroy {
     }
 
     getLeds(): string[] {
-        return ['blue', 'cyan', 'green', 'magenta', 'orange', 'red', 'white', 'yellow'];
+        return LED_NAMES;
     }
 
     async getLogs(options: LogsQueryOptions): Promise<LogsQuery | undefined> {

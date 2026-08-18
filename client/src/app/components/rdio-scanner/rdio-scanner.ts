@@ -209,7 +209,10 @@ export interface RdioScannerSearchOptions {
 export interface RdioScannerSystem {
     id: number;
     label: string;
-    led?: 'blue' | 'cyan' | 'green' | 'magenta' | 'orange' | 'red' | 'white' | 'yellow';
+    // A name from LED_COLORS (led-colors.ts). Typed as string rather than a
+    // union so a config from a newer or older server never fails the type —
+    // unknown names degrade to the default green LED at render time.
+    led?: string;
     order?: number;
     talkgroups: RdioScannerTalkgroup[];
     units: RdioScannerUnit[];
@@ -221,7 +224,8 @@ export interface RdioScannerTalkgroup {
     group: string;
     id: number;
     label: string;
-    led?: 'blue' | 'cyan' | 'green' | 'magenta' | 'orange' | 'red' | 'white' | 'yellow';
+    // See RdioScannerSystem.led.
+    led?: string;
     name: string;
     tag: string;
     alert?: string;

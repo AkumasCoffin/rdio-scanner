@@ -22,6 +22,7 @@ import { AfterViewChecked, ChangeDetectorRef, Component, ElementRef, Inject, OnD
 import { FormBuilder } from '@angular/forms';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { Subscription } from 'rxjs';
+import { LED_HEX } from '../led-colors';
 import { RdioScannerCall, RdioScannerEvent } from '../rdio-scanner';
 import { RdioScannerService } from '../rdio-scanner.service';
 import { RdioScannerMainComponent } from '../main/main.component';
@@ -277,25 +278,13 @@ export class RdioScannerStreamComponent extends RdioScannerMainComponent impleme
         return this.countOf(type) === 0 && type !== 'text' && !streamIsBorder(type);
     }
 
-    // Hex equivalents of the main LCD's named LED colors.
-    private static readonly LED_HEX: { [key: string]: string } = {
-        blue: '#3b82f6',
-        cyan: '#06b6d4',
-        green: '#22c55e',
-        magenta: '#a855f7',
-        orange: '#f97316',
-        red: '#ef4444',
-        white: '#f9fafb',
-        yellow: '#eab308',
-    };
-
     // The LCD color of the CURRENTLY playing call (from its talkgroup or system
     // LED), or null when nothing is playing — so "match LCD color" elements fall
     // back to their set color between calls rather than holding the last color.
     private ledColor(): string | null {
         const call = this.call;
         const led = (call?.talkgroupData?.led as string) || (call?.systemData?.led as string) || '';
-        return RdioScannerStreamComponent.LED_HEX[led] ?? null;
+        return LED_HEX[led] ?? null;
     }
 
     // The effective color for an item: the live LCD color when "Match LCD

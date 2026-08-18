@@ -34,6 +34,13 @@ object RdioPalette {
     val Cyan = Color(0xFF06B6D4)
     val Magenta = Color(0xFFA855F7)
     val White = Color(0xFFF9FAFB)
+
+    // Extended LED set (#10) — kept in sync with client/src/app/components/
+    // rdio-scanner/led-colors.ts.
+    val Lime = Color(0xFF84CC16)
+    val Pink = Color(0xFFEC4899)
+    val Teal = Color(0xFF14B8A6)
+    val Violet = Color(0xFF7C3AED)
 }
 
 object RdioShape {
@@ -64,7 +71,13 @@ fun RdioTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = Scheme, content = content)
 }
 
-/** Returns the hex color for a webapp-style `led: "blue" | "cyan" | ...` string. */
+/**
+ * Returns the hex color for a webapp-style `led: "blue" | "cyan" | ...` string.
+ *
+ * Unknown names (a color added after this build, or anything a stock
+ * chuot/rdio-scanner server might send) fall back to the default green,
+ * matching how the webapp and stock clients degrade.
+ */
 fun ledColor(name: String?): Color = when (name?.lowercase()) {
     "blue" -> RdioPalette.Blue
     "cyan" -> RdioPalette.Cyan
@@ -74,5 +87,9 @@ fun ledColor(name: String?): Color = when (name?.lowercase()) {
     "red" -> RdioPalette.Red
     "white" -> RdioPalette.White
     "yellow" -> RdioPalette.Yellow
+    "lime" -> RdioPalette.Lime
+    "pink" -> RdioPalette.Pink
+    "teal" -> RdioPalette.Teal
+    "violet" -> RdioPalette.Violet
     else -> RdioPalette.Green
 }

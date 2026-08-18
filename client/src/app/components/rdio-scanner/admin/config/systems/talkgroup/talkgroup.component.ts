@@ -20,12 +20,15 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { FormArray, FormControl, FormGroup } from '@angular/forms';
 import { RdioScannerAdminService, Group, Tag } from '../../../admin.service';
+import { LED_HEX } from '../../../../led-colors';
 
 @Component({
     selector: 'rdio-scanner-admin-talkgroup',
     templateUrl: './talkgroup.component.html',
 })
 export class RdioScannerAdminTalkgroupComponent {
+    ledHex = LED_HEX;
+
     @Input() form: FormGroup | undefined;
 
     @Output() blacklist = new EventEmitter<void>();

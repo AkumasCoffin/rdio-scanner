@@ -176,6 +176,10 @@
       yellow: (234, 179, 8),
       orange: (249, 115, 22),
       white: (226, 232, 240),
+      lime: (132, 204, 22),
+      pink: (236, 72, 153),
+      teal: (20, 184, 166),
+      violet: (124, 58, 237),
     ) {
       &.led-#{$name} {
         background: linear-gradient(
@@ -507,6 +511,26 @@
       &.yellow {
         background: var(--state-warn);
         box-shadow: 0 0 8px 3px rgba(var(--state-warn-rgb), 0.6);
+      }
+
+      &.lime {
+        background: #84cc16;
+        box-shadow: 0 0 8px 3px rgba(132, 204, 22, 0.6);
+      }
+
+      &.pink {
+        background: #ec4899;
+        box-shadow: 0 0 8px 3px rgba(236, 72, 153, 0.6);
+      }
+
+      &.teal {
+        background: #14b8a6;
+        box-shadow: 0 0 8px 3px rgba(20, 184, 166, 0.6);
+      }
+
+      &.violet {
+        background: #7c3aed;
+        box-shadow: 0 0 8px 3px rgba(124, 58, 237, 0.6);
       }
     }
 

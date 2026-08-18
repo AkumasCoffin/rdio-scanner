@@ -32,6 +32,7 @@ import {
     RdioScannerLivefeedMap,
     RdioScannerLivefeedMode,
 } from '../rdio-scanner';
+import { ledName } from '../led-colors';
 import { RdioScannerService } from '../rdio-scanner.service';
 import { RdioScannerSupportComponent } from './support/support.component';
 
@@ -928,21 +929,14 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
             this.patched = this.rdioScannerService.isPatched(call);
         }
 
-        const colors = ['blue', 'cyan', 'green', 'magenta', 'orange', 'red', 'white', 'yellow'];
-
         this.ledStyle = this.call && this.livefeedPaused ? 'on paused' : this.call ? 'on' : 'off';
 
-        let activeLed = '';
         // While a call is actually playing, the LCD's own LED pulses in
         // its color. For the transcript panel color we want it to persist
         // across to the next call (like the talkgroup label does) so pull
         // from displayCall, which falls back to callPrevious.
         const ledCall = this.call || this.callPrevious;
-        if (colors.includes(this.call?.talkgroupData?.led as string)) {
-            activeLed = this.call?.talkgroupData?.led as string;
-        } else if (colors.includes(this.call?.systemData?.led as string)) {
-            activeLed = this.call?.systemData?.led as string;
-        }
+        const activeLed = ledName(this.call?.talkgroupData?.led) || ledName(this.call?.systemData?.led);
 
         if (activeLed) {
             this.ledStyle = `${this.ledStyle} ${activeLed}`;
@@ -951,12 +945,7 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         // Color class for the live-transcript panel. Derived from the
         // most recent call so the frame keeps glowing in the right color
         // even after playback stops.
-        let panelLed = '';
-        if (colors.includes(ledCall?.talkgroupData?.led as string)) {
-            panelLed = ledCall?.talkgroupData?.led as string;
-        } else if (colors.includes(ledCall?.systemData?.led as string)) {
-            panelLed = ledCall?.systemData?.led as string;
-        }
+        const panelLed = ledName(ledCall?.talkgroupData?.led) || ledName(ledCall?.systemData?.led);
         this.liveTranscriptColor = panelLed ? `led-${panelLed}` : '';
 
         this.ngChangeDetectorRef.detectChanges();

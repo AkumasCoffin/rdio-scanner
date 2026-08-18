@@ -39,7 +39,8 @@
             <mat-select formControlName="led" placeholder="Color">
                 <mat-option [value]="null">Default</mat-option>
                 <mat-option *ngFor="let led of leds" [value]="led">
-                    {{ led | titlecase }}
+                    <span [style.background]="ledHex[led]"
+                        style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:baseline;"></span>{{ led | titlecase }}
                 </mat-option>
             </mat-select>
         </mat-form-field>
