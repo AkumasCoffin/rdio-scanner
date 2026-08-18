@@ -93,3 +93,11 @@ fun ledColor(name: String?): Color = when (name?.lowercase()) {
     "violet" -> RdioPalette.Violet
     else -> RdioPalette.Green
 }
+
+/**
+ * A LED color at ~15% brightness — the dark module during a wig-wag flash,
+ * still faintly showing its color like a real lens does. Mirrors the webapp's
+ * dimmed() in main.component.ts.
+ */
+fun ledColorDimmed(color: Color): Color =
+    Color(color.red * 0.15f, color.green * 0.15f, color.blue * 0.15f)

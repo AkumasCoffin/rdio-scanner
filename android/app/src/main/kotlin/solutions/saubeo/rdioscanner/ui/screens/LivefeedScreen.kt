@@ -121,11 +121,19 @@ fun LivefeedScreen(
             .padding(horizontal = 20.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        // Talkgroup color wins over the system's, matching the webapp. The
+        // second color resolves the same way and falls back to the first, so
+        // a one-color call lights both lightbar modules in that color.
+        val ledName = currentTg?.led ?: currentSys?.led
+        val led2Name = currentTg?.led2 ?: currentSys?.led2 ?: ledName
         StatusBar(
             branding = branding,
             ledOn = playing != null,
-            ledColor = ledColor(currentSys?.led),
+            ledColor = ledColor(ledName),
             paused = paused,
+            dualLed = config?.dualLed == true,
+            ledColor2 = ledColor(led2Name),
+            wigWag = config?.wigWagLed == true,
             onSwitchConnection = { vm.disconnect() },
             connectionLabel = activeProfileName ?: "Connections",
         )
@@ -299,7 +307,7 @@ private fun DisplayRows(
     LcdSpacerSmall()
     TranscriptPanel(
         transcript = transcript,
-        ledColor = ledColor(system?.led),
+        ledColor = ledColor(talkgroup?.led ?: system?.led),
     )
 }
 

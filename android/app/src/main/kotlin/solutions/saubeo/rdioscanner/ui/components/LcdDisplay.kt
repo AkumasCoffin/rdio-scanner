@@ -14,11 +14,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,11 +30,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -39,7 +48,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import solutions.saubeo.rdioscanner.ui.theme.RdioPalette
+import solutions.saubeo.rdioscanner.ui.theme.ledColorDimmed
 
 /** Dark rounded LCD-style card used for the scanner display. */
 @Composable
@@ -67,6 +78,12 @@ fun StatusBar(
     ledColor: Color,
     paused: Boolean,
     modifier: Modifier = Modifier,
+    // Dual-color LED (#10): when dualLed is on the round LED becomes a
+    // twin-module lightbar, second module in ledColor2, optionally wig-wag
+    // flashing. Defaults preserve the classic single LED.
+    dualLed: Boolean = false,
+    ledColor2: Color = ledColor,
+    wigWag: Boolean = false,
     onSwitchConnection: (() -> Unit)? = null,
     connectionLabel: String? = null,
 ) {
@@ -93,7 +110,17 @@ fun StatusBar(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        LedIndicator(color = ledColor, on = ledOn, paused = paused)
+        if (dualLed) {
+            DualLedIndicator(
+                color1 = ledColor,
+                color2 = ledColor2,
+                on = ledOn,
+                paused = paused,
+                wigWag = wigWag,
+            )
+        } else {
+            LedIndicator(color = ledColor, on = ledOn, paused = paused)
+        }
     }
 }
 
@@ -125,6 +152,114 @@ private fun SwitchConnectionChip(label: String, onClick: () -> Unit) {
             ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * Twin-module lightbar for dual-color mode — mirrors the webapp's `.led.dual`:
+ * two color modules behind one squared lens, split by a 4dp near-black
+ * divider, glass highlight across the top, per-module glow. With wigWag on,
+ * the modules alternate every 450 ms while a call plays (paused shows both,
+ * so the paused blink stays readable).
+ */
+@Composable
+private fun DualLedIndicator(
+    color1: Color,
+    color2: Color,
+    on: Boolean,
+    paused: Boolean,
+    wigWag: Boolean,
+) {
+    val blink by rememberInfiniteTransition(label = "led-dual").animateFloat(
+        initialValue = if (paused) 0f else 1f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000), repeatMode = RepeatMode.Reverse,
+        ),
+        label = "blink",
+    )
+    val alpha = if (paused) blink else 1f
+
+    val flashing = on && wigWag && !paused
+    var leftLit by remember { mutableStateOf(true) }
+    LaunchedEffect(flashing) {
+        leftLit = true
+        while (flashing) {
+            delay(450)
+            leftLit = !leftLit
+        }
+    }
+
+    val off = Color(0x4D94A3B8)
+    val left = when {
+        !on -> off
+        flashing && !leftLit -> ledColorDimmed(color1)
+        else -> color1
+    }
+    val right = when {
+        !on -> off
+        flashing && leftLit -> ledColorDimmed(color2)
+        else -> color2
+    }
+    val leftGlows = on && (!flashing || leftLit)
+    val rightGlows = on && (!flashing || !leftLit)
+
+    val shape = RoundedCornerShape(4.dp)
+    Box(
+        Modifier
+            .size(width = 42.dp, height = 18.dp)
+            .drawBehind {
+                val r = size.height * 0.9f
+                if (leftGlows) {
+                    drawCircle(
+                        color1.copy(alpha = 0.5f * alpha),
+                        radius = r,
+                        center = Offset(size.width * 0.25f, size.height / 2f),
+                    )
+                }
+                if (rightGlows) {
+                    drawCircle(
+                        color2.copy(alpha = 0.5f * alpha),
+                        radius = r,
+                        center = Offset(size.width * 0.75f, size.height / 2f),
+                    )
+                }
+            }
+            .clip(shape)
+            .background(RdioPalette.Bg)
+            .border(BorderStroke(1.dp, Color(0xB3020617)), shape),
+    ) {
+        Row(Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(left.copy(alpha = left.alpha * alpha)),
+            )
+            // The divider: the housing background showing through, like the
+            // webapp's ::before seam.
+            Spacer(Modifier.width(4.dp).fillMaxHeight())
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(right.copy(alpha = right.alpha * alpha)),
+            )
+        }
+        // Glass highlight swept across the top of the lens.
+        Box(
+            Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 1.dp, start = 2.dp, end = 2.dp)
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0x59FFFFFF), Color(0x0AFFFFFF)),
+                    ),
+                ),
         )
     }
 }
