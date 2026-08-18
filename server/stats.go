@@ -44,6 +44,43 @@ type Stats struct {
 	mu       sync.Mutex
 	cached   *StatsResponse
 	cachedAt time.Time
+	// Top rankings depend on the viewer's selected range, so they're cached
+	// per range instead of riding the single shared build. Only the ranking
+	// query re-runs when a range changes; everything else stays cached.
+	topCache map[string]*statsTopEntry
+}
+
+type statsTopEntry struct {
+	categories []StatsTopCategory
+	kind       string
+	systems    []StatsTopSystem
+	at         time.Time
+}
+
+// statsRangeSince maps a filter key from the dashboard to the start of its
+// window. An unknown key (or "all") means no lower bound — the epoch keeps
+// the query shape identical so the dateTime index is still used.
+func statsRangeSince(rng string) time.Time {
+	now := time.Now().UTC()
+
+	switch rng {
+	case "1h":
+		return now.Add(-time.Hour)
+	case "6h":
+		return now.Add(-6 * time.Hour)
+	case "12h":
+		return now.Add(-12 * time.Hour)
+	case "24h":
+		return now.Add(-24 * time.Hour)
+	case "48h":
+		return now.Add(-48 * time.Hour)
+	case "1w":
+		return now.AddDate(0, 0, -7)
+	case "1m":
+		return now.AddDate(0, 0, -30)
+	default:
+		return time.Unix(0, 0).UTC()
+	}
 }
 
 type StatsOverview struct {
@@ -353,10 +390,11 @@ func (stats *Stats) annotateTalkgroup(item *StatsTopTalkgroup) {
 	}
 }
 
-// GetTopSystems: top N systems by call count over the last 7 days.
-func (stats *Stats) GetTopSystems(db *Database, limit int) ([]StatsTopSystem, error) {
+// GetTopSystems: top N systems by call count since the given time. The
+// window comes from the dashboard's range filter, so the ranking matches the
+// period the rest of the dashboard is showing.
+func (stats *Stats) GetTopSystems(db *Database, limit int, since time.Time) ([]StatsTopSystem, error) {
 	result := []StatsTopSystem{}
-	since := time.Now().UTC().AddDate(0, 0, -7)
 
 	q := fmt.Sprintf(
 		"select `system`, count(*) as c from `rdioScannerCalls` where `dateTime` >= ? group by `system` order by c desc limit %d",
@@ -401,13 +439,12 @@ func (stats *Stats) topCategoriesKind() string {
 	return "systems"
 }
 
-// getTopCategoriesGrouped returns the last 7 days ranked by group or tag:
+// getTopCategoriesGrouped returns the given window ranked by group or tag:
 // tally per (system, talkgroup) in SQL, then resolve each pair to its label
 // via the systems config; talkgroups without a resolvable group or tag land
 // in "Other". The systems lens never comes here — build() derives it from
 // the TopSystems aggregation it already ran.
-func (stats *Stats) getTopCategoriesGrouped(db *Database, limit int, kind string) ([]StatsTopCategory, error) {
-	since := time.Now().UTC().AddDate(0, 0, -7)
+func (stats *Stats) getTopCategoriesGrouped(db *Database, limit int, kind string, since time.Time) ([]StatsTopCategory, error) {
 	rows, err := db.Query(
 		"select `system`, `talkgroup`, count(*) as c from `rdioScannerCalls` where `dateTime` >= ? group by `system`, `talkgroup`",
 		since.Format(db.DateTimeFormat),
@@ -783,7 +820,7 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 		}
 	})
 	run(func() {
-		if v, err := stats.GetTopSystems(db, 10); err != nil {
+		if v, err := stats.GetTopSystems(db, 10, statsRangeSince("1w")); err != nil {
 			logErr(err)
 		} else {
 			resp.TopSystems = v
@@ -795,7 +832,7 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 	topKind := stats.topCategoriesKind()
 	if topKind != "systems" {
 		run(func() {
-			if v, err := stats.getTopCategoriesGrouped(db, 10, topKind); err != nil {
+			if v, err := stats.getTopCategoriesGrouped(db, 10, topKind, statsRangeSince("1w")); err != nil {
 				logErr(err)
 			} else {
 				resp.TopCategories = v
@@ -882,6 +919,49 @@ func (stats *Stats) PublicHandler(w http.ResponseWriter, r *http.Request) {
 	stats.handleStatsRequest(w, r, stats.Controller.Options.GetShowListenerStats())
 }
 
+// topForRange returns the ranking chart's data for one filter range, cached
+// per range on the same TTL as the main build. Only this one aggregation
+// re-runs when the viewer changes range — the rest of the response is still
+// served from the single shared build.
+func (stats *Stats) topForRange(db *Database, rng string) ([]StatsTopCategory, string, []StatsTopSystem) {
+	stats.mu.Lock()
+	if entry, ok := stats.topCache[rng]; ok && time.Since(entry.at) < statsCacheTTL {
+		stats.mu.Unlock()
+		return entry.categories, entry.kind, entry.systems
+	}
+	stats.mu.Unlock()
+
+	since := statsRangeSince(rng)
+	kind := stats.topCategoriesKind()
+
+	systems, err := stats.GetTopSystems(db, 10, since)
+	if err != nil {
+		stats.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("stats.handler: %v", err))
+		return nil, "", nil
+	}
+
+	categories := make([]StatsTopCategory, 0, len(systems))
+	if kind == "systems" {
+		// Same aggregation the systems lens already ran — no second query.
+		for _, system := range systems {
+			categories = append(categories, StatsTopCategory{Label: system.SystemLabel, Count: system.Count})
+		}
+	} else if v, err := stats.getTopCategoriesGrouped(db, 10, kind, since); err != nil {
+		stats.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("stats.handler: %v", err))
+	} else {
+		categories = v
+	}
+
+	stats.mu.Lock()
+	if stats.topCache == nil {
+		stats.topCache = map[string]*statsTopEntry{}
+	}
+	stats.topCache[rng] = &statsTopEntry{categories: categories, kind: kind, systems: systems, at: time.Now()}
+	stats.mu.Unlock()
+
+	return categories, kind, systems
+}
+
 // configuredInventory counts what is configured, as opposed to what has been
 // heard — the activity counts in Overview come from the calls table.
 //
@@ -939,6 +1019,16 @@ func (stats *Stats) handleStatsRequest(w http.ResponseWriter, r *http.Request, i
 	// cached build left the tiles showing pre-save numbers for the rest of
 	// the cache TTL, which reads as a save that didn't take.
 	shaped.ConfiguredSystems, shaped.ConfiguredTalkgroups, shaped.ConfiguredUnits = stats.configuredInventory()
+
+	// The ranking chart follows the dashboard's range filter. Absent (an
+	// older client, or the public page) it keeps the cached 7-day ranking.
+	if rng := r.URL.Query().Get("range"); rng != "" {
+		if categories, kind, systems := stats.topForRange(stats.Controller.Database, rng); categories != nil {
+			shaped.TopCategories = categories
+			shaped.TopCategoriesKind = kind
+			shaped.TopSystems = systems
+		}
+	}
 
 	if !includeListeners {
 		shaped.ListenerBuckets = nil

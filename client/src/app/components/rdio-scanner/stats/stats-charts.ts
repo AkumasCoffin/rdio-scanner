@@ -123,9 +123,14 @@ export function timeSeriesOptions(
     return {
         responsive: true,
         maintainAspectRatio: false,
+        // Hovering anywhere in a column shows every series at that x. Without
+        // it Chart.js wants the cursor on the line itself, which is
+        // unhittable where the series is drawn with no point markers.
+        interaction: { mode: 'index', intersect: false },
         plugins: {
             legend: { display: legend, labels: legendLabels },
             title: { display: true, text: title, color: '#e0e0e0' },
+            tooltip: { mode: 'index', intersect: false },
         },
         scales: {
             x: { ticks: { color: '#a0a0a0', maxTicksLimit: cosmetics.maxTicksLimit }, grid: { color: 'rgba(255,255,255,0.1)' } },
@@ -141,9 +146,11 @@ export function topSeriesOptions(title: string): ChartConfiguration['options'] {
         indexAxis: 'y',
         responsive: true,
         maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
         plugins: {
             legend: { display: false },
             title: { display: true, text: title, color: '#e0e0e0' },
+            tooltip: { intersect: false },
         },
         scales: {
             x: { beginAtZero: true, ticks: { color: '#a0a0a0', precision: 0 }, grid: { color: 'rgba(255,255,255,0.1)' } },
@@ -368,12 +375,15 @@ export interface TopSeries {
 
 export function buildTopSeries(
     categories: TopCategoryLike[], kind: string | undefined, cosmetics: StatsChartCosmetics,
+    // Names the window the ranking covers. Empty on the public page, which
+    // has no range filter and takes the server's default.
+    rangeSuffix = '',
 ): TopSeries {
     const kindTitle = kind === 'groups' ? 'Groups' : kind === 'tags' ? 'Tags' : 'Systems';
     const max = cosmetics.truncateLabels;
     const truncate = (s: string) => s.length > max ? `${s.slice(0, max - 1)}…` : s;
     return {
-        title: `Top ${kindTitle} (Last 7 Days)`,
+        title: `Top ${kindTitle}${rangeSuffix ? ` (${rangeSuffix})` : ''}`,
         labels: categories.map(c => truncate(c.label)),
         data: categories.map(c => c.count),
     };

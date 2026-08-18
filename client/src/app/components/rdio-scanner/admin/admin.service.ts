@@ -583,13 +583,14 @@ export class RdioScannerAdminService implements OnDestroy {
         }
     }
 
-    async getStats(): Promise<StatsResponse | undefined> {
+    async getStats(range?: string): Promise<StatsResponse | undefined> {
         try {
             // Server response is pure UTC — hourBuckets carry RFC3339
             // startUtc and the client bins them in the browser's TZ for
-            // display.
+            // display. `range` only selects the window for the rankings the
+            // server aggregates; the time series are sliced client-side.
             const res = await firstValueFrom(this.ngHttpClient.get<StatsResponse>(
-                this.getUrl(url.stats),
+                this.getUrl(url.stats) + (range ? `?range=${encodeURIComponent(range)}` : ''),
                 { headers: this.getHeaders(), responseType: 'json' },
             ));
 

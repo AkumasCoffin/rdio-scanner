@@ -91,7 +91,7 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         this.error = false;
 
         try {
-            this.stats = await this.adminService.getStats();
+            this.stats = await this.adminService.getStats(this.range);
             if (this.stats) {
                 this.buildOverviewCards();
                 this.buildHourlyChart();
@@ -119,9 +119,20 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfWeek.getDate() - 6);
         const startOfMonth = new Date(startOfToday); startOfMonth.setDate(startOfMonth.getDate() - 29);
 
+        // Start of the selected filter range. 'all' has no lower bound, so
+        // every bucket the server sent (30 days) counts.
+        const rangeHours: { [key: string]: number } = {
+            '1h': 1, '6h': 6, '12h': 12, '24h': 24, '48h': 48, '1w': 24 * 7, '1m': 24 * 30,
+        };
+        const rangeStart = this.range === 'all'
+            ? new Date(0)
+            : new Date(now.getTime() - (rangeHours[this.range] ?? 24) * 3600 * 1000);
+
         let todayCalls = 0;
         let weekCalls = 0;
         let monthCalls = 0;
+        let rangeCalls = 0;
+        const rangeDays = new Set<string>();
         const hourOfDay = new Array<number>(24).fill(0);
         const dayCounts = new Map<string, number>(); // local YYYY-MM-DD -> count
 
@@ -135,9 +146,14 @@ export class RdioScannerAdminStatsComponent implements OnInit {
                 const key = `${t.getFullYear()}-${(t.getMonth() + 1).toString().padStart(2, '0')}-${t.getDate().toString().padStart(2, '0')}`;
                 dayCounts.set(key, (dayCounts.get(key) || 0) + b.count);
             }
-            // Hour-of-day rollup uses the last 7 days, matching the
-            // historic "Average Calls Per Hour (over 7 days)" chart.
-            if (t >= startOfWeek) hourOfDay[t.getHours()] += b.count;
+            // Hour-of-day rollup and the range card follow the selected
+            // filter rather than a fixed week, so the whole dashboard
+            // describes one period.
+            if (t >= rangeStart) {
+                hourOfDay[t.getHours()] += b.count;
+                rangeCalls += b.count;
+                rangeDays.add(`${t.getFullYear()}-${t.getMonth()}-${t.getDate()}`);
+            }
         }
 
         // Peak hour = argmax(hourOfDay).
@@ -150,7 +166,8 @@ export class RdioScannerAdminStatsComponent implements OnInit {
             }
         }
 
-        const avgPerDay = monthCalls / 30;
+        // Averaged over the days the range actually spans, not a fixed 30.
+        const avgPerDay = rangeDays.size ? rangeCalls / rangeDays.size : 0;
 
         // Stash the binned arrays for the chart builders.
         this._hourOfDayLast7d = hourOfDay;
@@ -158,6 +175,7 @@ export class RdioScannerAdminStatsComponent implements OnInit {
 
         this.overviewCards = [
             { label: 'Total Calls', value: this.formatNumber(overview.totalCalls), icon: 'call', color: '#00bcd4' },
+            { label: this.rangeLabel(), value: this.formatNumber(rangeCalls), icon: 'filter_alt', color: '#00bcd4' },
             { label: 'Today', value: this.formatNumber(todayCalls), icon: 'today', color: '#4caf50' },
             { label: 'This Week', value: this.formatNumber(weekCalls), icon: 'date_range', color: '#ff9800' },
             { label: 'This Month', value: this.formatNumber(monthCalls), icon: 'calendar_month', color: '#9c27b0' },
@@ -173,12 +191,29 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         ];
     }
 
+    // Label for the range-scoped card, e.g. "LAST 24 HOURS".
+    private rangeLabel(): string {
+        return (STATS_RANGES.find((r) => r.key === this.range)?.label ?? '') + ' calls';
+    }
+
     private _hourOfDayLast7d: number[] = new Array(24).fill(0);
     private _dayCountsLast30d: Map<string, number> = new Map();
 
     private buildHourlyChart(): void {
         const labels = this._hourOfDayLast7d.map((_, h) => `${h.toString().padStart(2, '0')}:00`);
         const data = this._hourOfDayLast7d;
+
+        this.hourlyChartOptions = {
+            ...this.hourlyChartOptions,
+            plugins: {
+                ...(this.hourlyChartOptions?.plugins ?? {}),
+                title: {
+                    display: true,
+                    text: `Calls by Hour of Day (${STATS_RANGES.find((r) => r.key === this.range)?.label ?? ''})`,
+                    color: '#e0e0e0',
+                },
+            },
+        };
 
         this.hourlyChartData = {
             labels,
@@ -195,9 +230,18 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         if (this.range === range) {
             return;
         }
+
         this.range = range;
+
+        // Series and cards come off buckets already in hand, so they update
+        // immediately; the rankings are aggregated server-side per range, so
+        // refetch for those (the response is cached per range).
+        this.buildOverviewCards();
+        this.buildHourlyChart();
         this.buildCallsChart();
         this.buildListenerCharts();
+
+        this.loadStats();
     }
 
     private buildCallsChart(): void {
@@ -219,7 +263,10 @@ export class RdioScannerAdminStatsComponent implements OnInit {
             : (this.stats?.topSystems || []).map(s => ({ label: s.systemLabel, count: s.count }));
         if (!categories.length) return;
 
-        const series = buildTopSeries(categories, this.stats?.topCategoriesKind, COSMETICS);
+        const series = buildTopSeries(
+            categories, this.stats?.topCategoriesKind, COSMETICS,
+            STATS_RANGES.find((r) => r.key === this.range)?.label ?? '',
+        );
         this.topChartOptions = topSeriesOptions(series.title);
         this.topChartData = { labels: series.labels, datasets: topDatasets(series) };
     }
