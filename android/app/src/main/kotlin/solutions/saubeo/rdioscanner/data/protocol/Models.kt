@@ -35,6 +35,8 @@ data class TalkgroupDto(
     val tag: String = "",
     val frequency: Double? = null,
     val led: String? = null,
+    /** Second LED color for dual mode; null means fall back to the system's. */
+    val led2: String? = null,
     /** Name of an alert preset (alert1..alert9) to play before this talkgroup's calls. */
     val alert: String? = null,
 )
@@ -50,6 +52,8 @@ data class SystemDto(
     val id: Int,
     val label: String,
     val led: String? = null,
+    /** Second LED color for dual mode. */
+    val led2: String? = null,
     val order: Int? = null,
     val talkgroups: List<TalkgroupDto> = emptyList(),
     val units: List<UnitDto> = emptyList(),
@@ -89,6 +93,13 @@ data class ConfigDto(
     val tagsToggle: Boolean = false,
     val playbackGoesLive: Boolean = false,
     val showListenersCount: Boolean = false,
+    /**
+     * Dual-color LED (#10): the status LED becomes a twin-module lightbar
+     * using led/led2, optionally wig-wag flashing. Defaults keep older
+     * servers, which omit the keys, on the single round LED.
+     */
+    val dualLed: Boolean = false,
+    val wigWagLed: Boolean = false,
     val time12hFormat: Boolean = false,
     val umamiUrl: String? = null,
     val umamiWebsiteId: String? = null,
