@@ -53,6 +53,7 @@ type dbExecutor interface {
 	Exec(query string, args ...any) (sql.Result, error)
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
 }
 
@@ -81,7 +82,13 @@ func NewDatabase(config *Config) *Database {
 		// MariaDB has no such variable (it uses max_statement_time), so that
 		// would fail every connection with "Error 1193: Unknown system
 		// variable". readTimeout is handled by the driver and works on both.
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?readTimeout=%s",
+		// parseTime hands datetime columns back as time.Time instead of raw
+		// bytes. Without it any Scan into a time.Time or sql.NullTime fails on
+		// this backend — which is not a corner: it is how the plugin registry
+		// reads installedAt, so plugins.read failed at startup and no plugin
+		// ever loaded on MySQL or MariaDB. ParseDateTime already accepts a
+		// time.Time, so the paths that scan into `any` are unaffected.
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?readTimeout=%s&parseTime=true",
 			config.DbUsername, config.DbPassword, config.DbHost, config.DbPort, config.DbName, statementTimeout)
 
 		if database.Sql, err = sql.Open("mysql", dsn); err != nil {
@@ -462,7 +469,7 @@ func (db *Database) ExecInsert(table string, column string, query string, args .
 
 func (db *Database) ParseDateTime(f any) (time.Time, error) {
 	var dateTimeStr string
-	
+
 	switch v := f.(type) {
 	case []uint8:
 		dateTimeStr = string(v)
@@ -473,18 +480,18 @@ func (db *Database) ParseDateTime(f any) (time.Time, error) {
 	default:
 		return time.Time{}, fmt.Errorf("unknown datetime format %T", v)
 	}
-	
+
 	// Try multiple datetime formats (database may store in different formats)
 	formats := []string{
-		time.RFC3339,                      // "2006-01-02T15:04:05Z07:00" - ISO 8601 with timezone
-		"2006-01-02T15:04:05Z",            // ISO 8601 UTC
-		"2006-01-02T15:04:05.000Z",        // ISO 8601 UTC with milliseconds
-		"2006-01-02T15:04:05.999999Z",     // ISO 8601 UTC with microseconds
-		db.DateTimeFormat,                 // Database's expected format
-		"2006-01-02 15:04:05",             // MySQL standard format
-		"2006-01-02 15:04:05.000",         // With milliseconds, no timezone
+		time.RFC3339,                  // "2006-01-02T15:04:05Z07:00" - ISO 8601 with timezone
+		"2006-01-02T15:04:05Z",        // ISO 8601 UTC
+		"2006-01-02T15:04:05.000Z",    // ISO 8601 UTC with milliseconds
+		"2006-01-02T15:04:05.999999Z", // ISO 8601 UTC with microseconds
+		db.DateTimeFormat,             // Database's expected format
+		"2006-01-02 15:04:05",         // MySQL standard format
+		"2006-01-02 15:04:05.000",     // With milliseconds, no timezone
 	}
-	
+
 	var lastErr error
 	for _, format := range formats {
 		if t, err := time.Parse(format, dateTimeStr); err == nil {
@@ -493,7 +500,7 @@ func (db *Database) ParseDateTime(f any) (time.Time, error) {
 			lastErr = err
 		}
 	}
-	
+
 	return time.Time{}, fmt.Errorf("unable to parse datetime '%s': %v", dateTimeStr, lastErr)
 }
 
@@ -543,6 +550,20 @@ func (db *Database) Exec(query string, args ...any) (sql.Result, error) {
 // runaway read.
 func (db *Database) Query(query string, args ...any) (*sql.Rows, error) {
 	return db.runner().Query(db.formatQuery(query), args...)
+}
+
+// QueryContext is Query with a caller-supplied deadline. Only safe where the
+// caller finishes with the rows before cancelling — the context must outlive
+// the scan, so this is for callers that drain and close within one function,
+// not for handing *sql.Rows onwards.
+//
+// The deadline matters more than the statement timeouts already configured on
+// each DSN: those bound how long the *server* spends executing, and cover
+// nothing about the wait for a free connection from the pool. That wait is
+// client-side and, without a context, unbounded — so an exhausted pool parks
+// the caller indefinitely with the database sitting perfectly idle.
+func (db *Database) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return db.runner().QueryContext(ctx, db.formatQuery(query), args...)
 }
 
 func (db *Database) QueryRow(query string, args ...any) *sql.Row {

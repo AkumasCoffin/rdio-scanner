@@ -143,7 +143,7 @@ var pluginCapabilities = []struct {
 		"request({url, method, headers, body, timeoutMs, binary}) — returns a promise; pass binary for an ArrayBuffer body instead of a string, and check `truncated`",
 		"multipart({url, headers, fields, files, timeoutMs, binary}) — the same, for uploads",
 	}},
-	{"routes", "Serve HTTP endpoints.", []string{
+	{"routes", "Serve HTTP endpoints. A handler runs on your plugin's one event loop, so slow work in it delays every other thing your plugin does — including its other requests. Return a promise and do the waiting off the loop. A handler has 90 seconds; past that, or once the loop is far enough behind, the caller is answered without you (503, and it is told to retry).", []string{
 		"register(method, path, handler)", "registerAbsolute(path, handler)",
 	}},
 	{"ws", "Your own websocket commands, over the connection clients already have.", []string{

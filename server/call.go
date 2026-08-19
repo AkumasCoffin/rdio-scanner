@@ -221,6 +221,21 @@ func (calls *Calls) CheckDuplicate(call *Call, msTimeFrame uint, db *Database) b
 }
 
 func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
+	return calls.getCall(id, db, true)
+}
+
+// GetCallMeta is GetCall without the audio blob, for callers that only want a
+// call's metadata.
+//
+// Worth a separate entry point because the blob is 50–200 KB and the cost is
+// not just bandwidth: rdio.calls.get runs on the plugin's event loop, so a
+// plugin asking for metadata was paying a blob transfer, on the loop, per
+// call, for bytes it then discarded.
+func (calls *Calls) GetCallMeta(id uint, db *Database) (*Call, error) {
+	return calls.getCall(id, db, false)
+}
+
+func (calls *Calls) getCall(id uint, db *Database, withAudio bool) (*Call, error) {
 	var (
 		audioName   sql.NullString
 		audioType   sql.NullString
@@ -239,7 +254,14 @@ func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
 	// WriteCall from the ingest path. Removing the lock drops that queue.
 	call := Call{Id: id}
 
-	query := fmt.Sprintf("select `audio`, `audioName`, `audioType`, `dateTime`, `frequencies`, `frequency`, `patches`, `source`, `sources`, `system`, `talkgroup` from `rdioScannerCalls` where `id` = %v", id)
+	// A literal rather than the column when audio is not wanted, so the row
+	// carries no blob and the scan target below stays the same shape.
+	audioColumn := "`audio`"
+	if !withAudio {
+		audioColumn = "null"
+	}
+
+	query := fmt.Sprintf("select %s, `audioName`, `audioType`, `dateTime`, `frequencies`, `frequency`, `patches`, `source`, `sources`, `system`, `talkgroup` from `rdioScannerCalls` where `id` = %v", audioColumn, id)
 	err := db.QueryRow(query).Scan(&call.Audio, &audioName, &audioType, &dateTime, &frequencies, &frequency, &patches, &source, &sources, &call.System, &call.Talkgroup)
 	if err == sql.ErrNoRows {
 		// Surface "not found" instead of returning a zombie empty Call.
@@ -845,10 +867,10 @@ func (searchOptions *CallsSearchOptions) fromMap(m map[string]any) error {
 }
 
 type CallsSearchResult struct {
-	Id            uint      `json:"id"`
-	DateTime      time.Time `json:"dateTime"`
-	System        uint      `json:"system"`
-	Talkgroup     uint      `json:"talkgroup"`
+	Id        uint      `json:"id"`
+	DateTime  time.Time `json:"dateTime"`
+	System    uint      `json:"system"`
+	Talkgroup uint      `json:"talkgroup"`
 	// pluginFields holds values contributed by plugins through
 	// rdio.search.extend, merged into the wire payload by MarshalJSON. Nil on
 	// any install with no such plugin, which is why this costs nothing unused.

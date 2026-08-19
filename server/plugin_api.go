@@ -266,6 +266,13 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 		}
 
 		timer := rt.loop.SetInterval(func(vm *goja.Runtime) {
+			// Timed like any other loop job. A timer is scheduled straight
+			// onto the loop rather than through runOnLoop, so without this the
+			// periodic work — which nobody is waiting on and therefore nobody
+			// notices growing — is the one thing that could hold the loop
+			// without ever being named for it.
+			defer rt.timeLoopJob("schedule")()
+
 			stop := rt.armWatchdog(vm, "schedule", pluginCallTimeout)
 			defer stop()
 
@@ -328,14 +335,11 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 
 	calls.Set("get", func(id int64, options goja.Value) goja.Value {
 
-		call, err := rt.controller.Calls.GetCall(uint(id), rt.controller.Database)
-		if err != nil {
-			throw("calls.get: %v", err)
-		}
-		if call == nil {
-			return goja.Null()
-		}
-
+		// Read the option before the query, not after: this decides whether the
+		// row carries a 50–200 KB blob. It used to be read afterwards, so every
+		// metadata-only lookup fetched the audio and then dropped it — on the
+		// event loop, where the cost is paid by everything else the plugin is
+		// waiting to do.
 		withAudio := false
 		if options != nil && !goja.IsUndefined(options) && !goja.IsNull(options) {
 			if o, ok := options.Export().(map[string]any); ok {
@@ -343,6 +347,24 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 					withAudio = v
 				}
 			}
+		}
+
+		var (
+			call *Call
+			err  error
+		)
+
+		if withAudio {
+			call, err = rt.controller.Calls.GetCall(uint(id), rt.controller.Database)
+		} else {
+			call, err = rt.controller.Calls.GetCallMeta(uint(id), rt.controller.Database)
+		}
+
+		if err != nil {
+			throw("calls.get: %v", err)
+		}
+		if call == nil {
+			return goja.Null()
 		}
 
 		return vm.ToValue(pluginCallValue(call, withAudio))
@@ -1006,7 +1028,7 @@ func (rt *PluginRuntime) httpPromise(vm *goja.Runtime, spec goja.Value, isMultip
 // settle runs a promise resolution on the event loop. Resolving from the
 // goroutine that did the I/O would touch the runtime from two threads.
 func (rt *PluginRuntime) settle(fn func(vm *goja.Runtime)) {
-	rt.runOnLoop(fn)
+	rt.runOnLoop("promise", fn)
 }
 
 // promiseFrom runs work on a goroutine and settles a promise with its result.
