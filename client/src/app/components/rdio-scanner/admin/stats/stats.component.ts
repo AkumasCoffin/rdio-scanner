@@ -134,6 +134,7 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         let rangeCalls = 0;
         const rangeDays = new Set<string>();
         const hourOfDay = new Array<number>(24).fill(0);
+        const hourOfDayOccurrences = new Array<number>(24).fill(0);
         const dayCounts = new Map<string, number>(); // local YYYY-MM-DD -> count
 
         for (const b of buckets) {
@@ -151,17 +152,28 @@ export class RdioScannerAdminStatsComponent implements OnInit {
             // describes one period.
             if (t >= rangeStart) {
                 hourOfDay[t.getHours()] += b.count;
+                // How many times this hour-of-day actually occurs in the
+                // window. A range rarely covers whole days, so 03:00 can
+                // appear 31 times where 15:00 appears 30 — dividing every
+                // hour by one day count would tilt the whole distribution.
+                hourOfDayOccurrences[t.getHours()]++;
                 rangeCalls += b.count;
                 rangeDays.add(`${t.getFullYear()}-${t.getMonth()}-${t.getDate()}`);
             }
         }
 
-        // Peak hour = argmax(hourOfDay).
+        // Per-hour averages, so hours seen more often than others don't win by
+        // repetition alone.
+        const hourOfDayAverage = hourOfDay.map(
+            (total, h) => (hourOfDayOccurrences[h] ? total / hourOfDayOccurrences[h] : 0),
+        );
+
+        // Peak hour = argmax over the averages, for the same reason.
         let peakHour = 0;
         let peakCount = -1;
         for (let h = 0; h < 24; h++) {
-            if (hourOfDay[h] > peakCount) {
-                peakCount = hourOfDay[h];
+            if (hourOfDayAverage[h] > peakCount) {
+                peakCount = hourOfDayAverage[h];
                 peakHour = h;
             }
         }
@@ -172,6 +184,8 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         // Stash the binned arrays for the chart builders.
         this._rangeDayCount = rangeDays.size;
         this._hourOfDayLast7d = hourOfDay;
+        this._hourOfDayAverage = hourOfDayAverage;
+        this._hourOfDayOccurrences = hourOfDayOccurrences;
         this._dayCountsLast30d = dayCounts;
 
         // One call counter that follows the filter, rather than a fixed total
@@ -207,22 +221,23 @@ export class RdioScannerAdminStatsComponent implements OnInit {
 
     private _rangeDayCount = 1;
     private _hourOfDayLast7d: number[] = new Array(24).fill(0);
+    private _hourOfDayAverage: number[] = new Array(24).fill(0);
+    private _hourOfDayOccurrences: number[] = new Array(24).fill(0);
     private _dayCountsLast30d: Map<string, number> = new Map();
 
     private buildHourlyChart(): void {
         const rangeLabel = STATS_RANGES.find((r) => r.key === this.range)?.label ?? '';
+        const rangeHours: { [key: string]: number } = {
+            '1h': 1, '6h': 6, '12h': 12, '24h': 24, '48h': 48, '1w': 24 * 7, '1m': 24 * 30,
+        };
+        const hours = rangeHours[this.range] ?? 0;
 
-        // Three modes, because one shape doesn't fit every window:
-        //  1h        — a 5-minute timeline; hour-of-day bins would give one bar.
-        //  ≤ 24h     — hour-of-day totals; each hour occurs once, so a total
-        //              and an average are the same number.
-        //  > 24h     — hour-of-day averaged over the days covered, otherwise
-        //              a month's bars are just 30x a day's and unreadable.
         let labels: string[];
         let data: number[];
         let title: string;
 
         if (this.range === '1h') {
+            // Hour-of-day bins would be a single bar, so draw the minutes.
             const cutoff = Date.now() - 3600 * 1000;
             const slots = (this.stats?.callMicroBuckets ?? []).filter((b) => {
                 const t = new Date(b.startUtc).getTime();
@@ -231,14 +246,39 @@ export class RdioScannerAdminStatsComponent implements OnInit {
             labels = slots.map((b) => new Date(b.startUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
             data = slots.map((b) => b.count);
             title = 'Calls per 5 Minutes (1H)';
+
+        } else if (hours && hours <= 24) {
+            // Inside a day, every hour-of-day happens at most once, so a
+            // 24-hour distribution axis is mostly empty columns. Draw the
+            // hours the window actually covers, in the order they happened.
+            const buckets = new Map<number, number>();
+            for (const b of this.stats?.hourBuckets ?? []) {
+                const t = new Date(b.startUtc);
+                if (!isNaN(t.getTime())) buckets.set(t.getTime(), b.count);
+            }
+
+            const now = new Date();
+            const currentHour = new Date(
+                now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(),
+            ).getTime();
+
+            labels = [];
+            data = [];
+            for (let i = hours - 1; i >= 0; i--) {
+                const slot = new Date(currentHour - i * 3600 * 1000);
+                labels.push(`${slot.getHours().toString().padStart(2, '0')}:00`);
+                data.push(buckets.get(slot.getTime()) ?? 0);
+            }
+            title = `Calls by Hour (${rangeLabel})`;
+
         } else {
-            const days = this._rangeDayCount;
-            const average = days > 1;
+            // Multi-day windows: the distribution across the day, averaged so
+            // a week doesn't just read as seven times a day.
+            const averaged = this._hourOfDayOccurrences.some((n) => n > 1);
             labels = this._hourOfDayLast7d.map((_, h) => `${h.toString().padStart(2, '0')}:00`);
-            data = average
-                ? this._hourOfDayLast7d.map((v) => Math.round((v / days) * 10) / 10)
-                : this._hourOfDayLast7d;
-            title = `${average ? 'Average ' : ''}Calls by Hour of Day (${rangeLabel})`;
+            data = (averaged ? this._hourOfDayAverage : this._hourOfDayLast7d)
+                .map((v) => Math.round(v * 10) / 10);
+            title = `${averaged ? 'Average ' : ''}Calls by Hour of Day (${rangeLabel})`;
         }
 
         this.hourlyChartOptions = {
