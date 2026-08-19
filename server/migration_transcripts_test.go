@@ -224,7 +224,10 @@ func seedCallWithTranscript(t *testing.T, db *Database, id int, transcript strin
 	_, err := db.Exec(
 		"insert into `rdioScannerCalls` (`id`, `audio`, `dateTime`, `frequencies`, `patches`, `sources`, `system`, `talkgroup`, `transcript`) "+
 			"values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		id, []byte("audio"), time.Now().UTC().Format("2006-01-02 15:04:05.000 -07:00"),
+		// The backend's own format, not a literal: SQLite's carries a zone
+		// suffix MariaDB rejects outright, so hardcoding it meant these
+		// tests could only ever pass against SQLite and Postgres.
+		id, []byte("audio"), time.Now().UTC().Format(db.DateTimeFormat),
 		"[]", "[]", "[]", 1, 100, transcript,
 	)
 	if err != nil {
@@ -250,7 +253,7 @@ func seedBulkCalls(t *testing.T, db *Database, firstId int, count int) {
 		t.Fatalf("cannot prepare: %v", err)
 	}
 
-	now := time.Now().UTC().Format("2006-01-02 15:04:05.000 -07:00")
+	now := time.Now().UTC().Format(db.DateTimeFormat)
 	for i := 0; i < count; i++ {
 		if _, err := stmt.Exec(firstId+i, []byte("a"), now, "[]", "[]", "[]", 1, 100); err != nil {
 			t.Fatalf("cannot seed filler call: %v", err)
