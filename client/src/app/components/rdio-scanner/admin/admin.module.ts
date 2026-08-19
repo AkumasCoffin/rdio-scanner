@@ -39,6 +39,7 @@ import { RdioScannerAdminTagsComponent } from './config/tags/tags.component';
 import { RdioScannerAdminLoginComponent } from './login/login.component';
 import { RdioScannerAdminLogsComponent } from './logs/logs.component';
 import { RdioScannerAdminPluginsComponent } from './plugins/plugins.component';
+import { RdioScannerAdminPluginUninstallDialogComponent } from './plugins/uninstall-dialog.component';
 import { RdioScannerAdminStatsComponent } from './stats/stats.component';
 import { RdioScannerAdminTodosComponent } from './todos/todos.component';
 import { RdioScannerAdminToolsComponent } from './tools/tools.component';
@@ -63,6 +64,7 @@ import { RdioScannerAdminUpdatesComponent } from './tools/updates/updates.compon
         RdioScannerAdminOptionsComponent,
         RdioScannerAdminPasswordComponent,
         RdioScannerAdminPluginsComponent,
+        RdioScannerAdminPluginUninstallDialogComponent,
         RdioScannerAdminStatsComponent,
         RdioScannerAdminSystemComponent,
         RdioScannerAdminSystemsComponent,

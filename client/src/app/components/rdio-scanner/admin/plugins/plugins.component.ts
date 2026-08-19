@@ -18,7 +18,10 @@
  */
 
 import { Component, OnInit } from '@angular/core';
+import { MatDialog } from '@angular/material/dialog';
 import { MatSnackBar } from '@angular/material/snack-bar';
+import { firstValueFrom } from 'rxjs';
+import { RdioScannerAdminPluginUninstallDialogComponent } from './uninstall-dialog.component';
 import {
     AdminAvailablePlugin,
     AdminPlugin,
@@ -73,6 +76,7 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
 
     constructor(
         private adminService: RdioScannerAdminService,
+        private matDialog: MatDialog,
         private matSnackBar: MatSnackBar,
     ) { }
 
@@ -262,6 +266,21 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
         return this.updates[plugin.pluginId]?.error || '';
     }
 
+    /**
+     * The check result for a plugin that came back up to date.
+     *
+     * "Up to date" is a claim about one repository and one branch, and it is
+     * only as good as which ones were consulted — a plugin installed from a
+     * branch that never received a release is genuinely up to date against
+     * that branch while looking stale next to the version everyone else has.
+     * Showing what was checked turns an unqualified claim into one that can
+     * be disagreed with.
+     */
+    upToDate(plugin: AdminPlugin): AdminPluginUpdate | undefined {
+        const update = this.updates[plugin.pluginId];
+        return update && !update.updateAvailable && !update.error ? update : undefined;
+    }
+
     /** True when a check found updates for at least one plugin. */
     get updatesAvailable(): number {
         return Object.values(this.updates).filter((update) => update.updateAvailable).length;
@@ -329,24 +348,27 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
     }
 
     async uninstall(plugin: AdminPlugin): Promise<void> {
-        if (!confirm(
-            `Uninstall "${plugin.name}"?\n\n` +
-            `Its settings and data are kept, so reinstalling restores everything.`
-        )) {
+        // One dialog naming both outcomes on its buttons, rather than two
+        // browser confirms where the second answered "keep or delete your
+        // data" with OK and Cancel — a mapping nobody should have to guess at,
+        // on the one question here that cannot be undone.
+        //
+        // Purging is still asked at uninstall time because that is the only
+        // time it can be answered: it needs the manifest to know which tables
+        // were the plugin's, and the manifest goes with the registry row.
+        const answer = await firstValueFrom(
+            this.matDialog.open(RdioScannerAdminPluginUninstallDialogComponent, {
+                data: { name: plugin.name },
+                width: '32rem',
+                maxWidth: '95vw',
+            }).afterClosed(),
+        );
+
+        if (!answer) {
             return;
         }
 
-        // Asked now because now is the only time it can be answered. Purging
-        // needs the manifest to know which tables belong to the plugin, and
-        // the manifest goes with the registry row — so "uninstall now, purge
-        // later", which this dialog used to advise, described something that
-        // could not be done. The tables were simply orphaned.
-        const purge = confirm(
-            `Also delete "${plugin.name}"'s stored data and settings?\n\n` +
-            `OK deletes them permanently. Cancel keeps them, and reinstalling restores everything.\n\n` +
-            `This is the only chance to remove them — once the plugin is uninstalled, ` +
-            `Rdio Scanner no longer knows which tables were its.`
-        );
+        const purge: boolean = answer.purge === true;
 
         this.busy = true;
 

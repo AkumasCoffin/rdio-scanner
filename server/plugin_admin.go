@@ -296,6 +296,28 @@ func (admin *Admin) pluginUpdates(w http.ResponseWriter, r *http.Request) {
 		if update.UpdateAvailable {
 			count++
 		}
+
+		// Record what was compared, and against which source.
+		//
+		// "Up to date" is a claim about a specific repository and branch, and
+		// when it is wrong it is indistinguishable from the button not
+		// working — there was no way, afterwards, to tell whether the check
+		// read a stale manifest, looked at a branch the plugin was installed
+		// from rather than the one that got the release, or read the
+		// installed version wrong. This is cheap because it only runs when
+		// somebody presses the button.
+		detail := fmt.Sprintf("plugin update check: %s installed %s, %s offers %s on %s",
+			update.PluginId, update.InstalledVersion, update.Repo, update.LatestVersion, update.Branch)
+
+		if update.Error != "" {
+			detail += "; " + update.Error
+		} else if update.UpdateAvailable {
+			detail += "; update available"
+		} else {
+			detail += "; up to date"
+		}
+
+		admin.Controller.Logs.LogEvent(LogLevelInfo, detail)
 	}
 
 	writeJson(w, map[string]any{"updates": updates, "updateCount": count})

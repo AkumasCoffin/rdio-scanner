@@ -1,0 +1,81 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2019-2022 Chrystian Huot <chrystian.huot@saubeo.solutions>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * ****************************************************************************
+ */
+
+.lead {
+    margin: 0 0 1rem;
+    opacity: 0.85;
+}
+
+.choice {
+    align-items: flex-start;
+    display: flex;
+    gap: 0.75rem;
+    padding: 0.75rem;
+
+    + .choice {
+        margin-top: 0.5rem;
+    }
+
+    // Reads as one option per row rather than a wall of prose, so the two
+    // outcomes can be compared at a glance instead of parsed.
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+
+    mat-icon {
+        flex: none;
+        opacity: 0.7;
+    }
+
+    div {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+    }
+
+    strong {
+        font-size: 0.95rem;
+    }
+
+    span {
+        font-size: 0.85rem;
+        line-height: 1.35;
+        opacity: 0.8;
+    }
+
+    &.warn mat-icon {
+        color: #f44336;
+        opacity: 1;
+    }
+}
+
+mat-dialog-actions {
+    gap: 0.5rem;
+
+    // Keep data is the safe choice and has to look like a live one. A stroked
+    // button on this background renders as faint outline and dim label, which
+    // reads as disabled — pushing people towards the destructive button beside
+    // it purely because that one looks pressable.
+    //
+    // !important because the theme sets the label colour on the button element
+    // itself; a plain class here loses to it and the button stays grey.
+    button.keep.mat-stroked-button {
+        border-color: rgba(255, 255, 255, 0.5) !important;
+        color: #fff !important;
+    }
+}
