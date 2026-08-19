@@ -1073,7 +1073,13 @@ func (controller *Controller) Start() error {
 	// first user hit never waits on a cold count(*) over the whole table.
 	go func() {
 		controller.Calls.WarmSearchMeta(controller.Database)
-		ticker := time.NewTicker(10 * time.Second)
+
+		// Re-warmed a little before the cache expires, rather than every ten
+		// seconds. The warm runs a count(*) over the whole table, so at the
+		// old interval a large database spent a good part of every minute
+		// counting its own rows — and one of those was usually in flight when
+		// a shutdown tried to close the connection.
+		ticker := time.NewTicker(callsSearchMetaTTL - 15*time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
 			controller.Calls.WarmSearchMeta(controller.Database)
@@ -1151,18 +1157,74 @@ func (controller *Controller) Start() error {
 	return nil
 }
 
+// terminateTimeout bounds how long a shutdown waits for cleanup.
+//
+// sql.DB.Close blocks until every in-flight query has finished, and a plugin
+// shutdown handler can take as long as it likes. On a busy or large database
+// that turned Ctrl+C into "the process ignores me": there is almost always
+// some query in flight, so the wait never visibly ended. Cleanup still gets a
+// fair chance to run; it just no longer gets to hold the process hostage.
+const terminateTimeout = 5 * time.Second
+
+// terminating makes a second signal mean "now", so an operator who sees a
+// stop take longer than expected can press Ctrl+C again and get out.
+var terminating atomic.Bool
+
 func (controller *Controller) Terminate() {
-	controller.Dirwatches.Stop()
+	if !terminating.CompareAndSwap(false, true) {
+		log.Println("second signal received, exiting immediately")
+		os.Exit(1)
+	}
 
-	// Stop plugins before closing the database — a shutdown handler that wants
-	// to flush state needs its tables to still be reachable.
-	controller.Plugins.Stop(controller)
+	var phase atomic.Value
+	phase.Store("starting")
 
-	if err := controller.Database.Sql.Close(); err != nil {
-		log.Println(err)
+	if !runWithTimeout(func() { controller.terminateWork(&phase) }, terminateTimeout) {
+		log.Printf("shutdown gave up after %s while %v; exiting anyway", terminateTimeout, phase.Load())
 	}
 
 	log.Println("terminated")
 
 	os.Exit(0)
+}
+
+// terminateWork is the cleanup itself, separated from the exit so it can be
+// bounded (and tested) without taking the process down.
+//
+// Each step records what it is about to do, so if the deadline fires the last
+// recorded phase names the step that hung — otherwise a stuck shutdown tells
+// you only that it was stuck, and whoever debugs it next starts from nothing.
+func (controller *Controller) terminateWork(phase *atomic.Value) {
+	phase.Store("stopping directory watchers")
+	controller.Dirwatches.Stop()
+
+	// Stop plugins before closing the database — a shutdown handler that wants
+	// to flush state needs its tables to still be reachable.
+	phase.Store("stopping plugins")
+	controller.Plugins.Stop(controller)
+
+	phase.Store("closing the database")
+	if err := controller.Database.Sql.Close(); err != nil {
+		log.Println(err)
+	}
+
+	phase.Store("done")
+}
+
+// runWithTimeout reports whether work finished within the timeout. Work that
+// overruns is abandoned, not cancelled — the caller is on its way out.
+func runWithTimeout(work func(), timeout time.Duration) bool {
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		work()
+	}()
+
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }

@@ -159,7 +159,13 @@ type callsSearchMeta struct {
 	expires   time.Time
 }
 
-const callsSearchMetaTTL = 15 * time.Second
+// callsSearchMetaTTL — how long a cached search count/date-range is trusted.
+//
+// The count behind it is a count(*) over the whole calls table, which on a
+// large database is a full scan. Refreshing that every few seconds costs more
+// than the staleness it avoids: the number feeds a result count and a date
+// picker, where being a minute out of date is unnoticeable.
+const callsSearchMetaTTL = 2 * time.Minute
 
 func NewCalls() *Calls {
 	return &Calls{
