@@ -1,7 +1,13 @@
 /* App-shell layout: the page itself never scrolls, so the background and the
    header/tab bar stay put and scrolling happens inside the panes. */
 :host {
-  background: #1e1e1e;
+  // The app's own gradient rather than a flat grey. The grey was hidden
+  // behind a full-page card until that wrapper came out; now the page
+  // itself shows, so it has to match the surfaces sitting on it.
+  background: var(--app-background);
+  background-attachment: fixed;
+  background-color: var(--surface-deep);
+  background-repeat: no-repeat;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;

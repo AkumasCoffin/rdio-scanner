@@ -163,8 +163,15 @@ rdio-scanner-admin {
     overflow-y: auto;
     padding-right: 4px;
 
+    /* Each tab's content is a card sitting on the page background, the same
+       surface the Options/Groups cards use — the page itself stays the app
+       backdrop rather than becoming one big panel. */
     > section {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
       display: block;
+      padding: 12px 16px;
     }
 
     /* display: block above would silently defeat the [hidden] attribute the
@@ -248,6 +255,10 @@ rdio-scanner-admin {
 
     .admin-content {
       padding-right: 0;
+
+      > section {
+        padding: 8px 10px;
+      }
     }
   }
 }
