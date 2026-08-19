@@ -251,6 +251,23 @@ rdio-scanner-admin {
           margin: 0;
         }
       }
+
+      // Same for Restart, which arrived after this pass was written and was
+      // the label that tipped the row over: the title lost enough width to
+      // truncate to "Rdio Scann…". The icon carries it, and the tooltip on
+      // the button still spells it out.
+      .admin-restart {
+        padding: 0 8px;
+
+        .admin-restart-label {
+          display: none;
+        }
+
+        .mat-icon {
+          font-size: 20px;
+          margin: 0;
+        }
+      }
     }
 
     // Pills would push the actions off-screen; the same warnings are visible
@@ -273,5 +290,19 @@ rdio-scanner-admin {
         padding: 8px 10px;
       }
     }
+  }
+}
+
+// Below this the version string is what costs the title its last few
+// characters, and a name that reads "Rdio Scanne…" is worth more than a
+// version number nobody is reading mid-task. It is still on the login screen,
+// which is where anyone checking it starts.
+//
+// 439px because that is where the two stop fitting together: measured across
+// the common phone widths, 440 shows both and everything below it has to give
+// up one or the other.
+@media (max-width: 439px) {
+  rdio-scanner-admin .admin-header .admin-version {
+    display: none;
   }
 }
