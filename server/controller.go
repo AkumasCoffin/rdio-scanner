@@ -1058,8 +1058,15 @@ func (controller *Controller) Start() error {
 		// shutdown, and the database closed by the process dying rather than
 		// by us.
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-		<-c
-		controller.Terminate()
+
+		// Keep receiving rather than handling one signal and blocking in
+		// Terminate. Registering for a signal takes away the runtime's
+		// default kill behaviour, so a second Ctrl+C only means anything if
+		// something is still listening for it; Terminate gets its own
+		// goroutine so this loop stays free to pick that second one up.
+		for range c {
+			go controller.Terminate()
+		}
 	}()
 
 	go func() {
@@ -1077,8 +1084,7 @@ func (controller *Controller) Start() error {
 		// Re-warmed a little before the cache expires, rather than every ten
 		// seconds. The warm runs a count(*) over the whole table, so at the
 		// old interval a large database spent a good part of every minute
-		// counting its own rows — and one of those was usually in flight when
-		// a shutdown tried to close the connection.
+		// counting its own rows for a number nobody had asked for.
 		ticker := time.NewTicker(callsSearchMetaTTL - 15*time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
@@ -1159,11 +1165,16 @@ func (controller *Controller) Start() error {
 
 // terminateTimeout bounds how long a shutdown waits for cleanup.
 //
-// sql.DB.Close blocks until every in-flight query has finished, and a plugin
-// shutdown handler can take as long as it likes. On a busy or large database
-// that turned Ctrl+C into "the process ignores me": there is almost always
-// some query in flight, so the wait never visibly ended. Cleanup still gets a
-// fair chance to run; it just no longer gets to hold the process hostage.
+// The known offender is plugin shutdown. PluginRuntime.Stop allows a runtime
+// up to 5s to run its shutdown handlers and another 5s to stop its event
+// loop, and Plugins.Stop walks the plugins one at a time — so a few loaded
+// plugins can hold the process for tens of seconds. That only bites once the
+// server has been up long enough for plugins to be running, which is why
+// stopping it seconds after startup always felt fine.
+//
+// The bound is deliberately on the whole of cleanup rather than on any one
+// step: whatever blocks next gets the same treatment without anyone having to
+// predict it first.
 const terminateTimeout = 5 * time.Second
 
 // terminating makes a second signal mean "now", so an operator who sees a

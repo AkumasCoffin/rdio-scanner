@@ -20,10 +20,10 @@ import (
 	"time"
 )
 
-// Ctrl+C used to do nothing on a server that had been up a while: shutdown
-// called sql.DB.Close, which waits for every in-flight query, and on a busy
-// database there is always one. Cleanup is now given a deadline and the
-// process leaves regardless.
+// Ctrl+C used to do nothing on a server that had been up a while: cleanup
+// stops plugins one at a time, and each runtime may take up to 10s to give up
+// its event loop. Cleanup is now given a deadline and the process leaves
+// regardless of what is still holding on.
 func TestShutdownGivesUpOnWorkThatOverrunsItsDeadline(t *testing.T) {
 	started := time.Now()
 
