@@ -38,6 +38,12 @@ const statsHourBucketRange = 30 * 24 * time.Hour
 // longer uses the 30-day hourly buckets.
 const statsFineBucketRange = 48 * time.Hour
 
+// statsMicroBucket* — 5-minute grain over the last 6 hours, for the 1-hour
+// filter. Tallied from the scan GetCallFineBuckets already runs, so it adds
+// no query; 72 buckets is a negligible payload.
+const statsMicroBucketRange = 6 * time.Hour
+const statsMicroBucketInterval = 5 * time.Minute
+
 type Stats struct {
 	Controller *Controller
 
@@ -170,6 +176,9 @@ type StatsResponse struct {
 	// for the short filter ranges. Zeros are pre-seeded like HourBuckets: a
 	// zero genuinely means no calls.
 	CallFineBuckets    []StatsHourBucket        `json:"callFineBuckets,omitempty"`
+	// CallMicroBuckets — dense 5-minute counts for the last 6 hours, for the
+	// by-time chart on the 1-hour range.
+	CallMicroBuckets   []StatsHourBucket        `json:"callMicroBuckets,omitempty"`
 	TopTalkgroups      []StatsTopTalkgroup      `json:"topTalkgroups"`
 	TopSystems         []StatsTopSystem         `json:"topSystems"`
 	// TopCategories is what the "Top ..." chart renders: by group when
@@ -287,17 +296,25 @@ func (stats *Stats) GetHourBuckets(db *Database) ([]StatsHourBucket, error) {
 // over a shorter window so the 1h–48h filter ranges have real curves
 // instead of one or two hourly points. The seed loop runs one slot past
 // the window so the current in-progress slot is included.
-func (stats *Stats) GetCallFineBuckets(db *Database) ([]StatsHourBucket, error) {
+// It also returns a 5-minute series over the last 6 hours, tallied in the
+// same pass: the 1-hour filter only covers six 10-minute slots, which is too
+// coarse to show a shape. Sharing the scan means the finer series costs no
+// extra query.
+func (stats *Stats) GetCallFineBuckets(db *Database) ([]StatsHourBucket, []StatsHourBucket, error) {
 	now := time.Now().UTC().Truncate(listenerBucketInterval)
 	since := now.Add(-statsFineBucketRange)
 
+	microSince := time.Now().UTC().Truncate(statsMicroBucketInterval).Add(-statsMicroBucketRange)
+
 	tally := map[time.Time]uint{}
+	microTally := map[time.Time]uint{}
+
 	rows, err := db.Query(
 		"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
 		since.Format(db.DateTimeFormat),
 	)
 	if err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("stats.callFineBuckets: %v", err)
+		return nil, nil, fmt.Errorf("stats.callFineBuckets: %v", err)
 	}
 	defer rows.Close()
 
@@ -310,7 +327,12 @@ func (stats *Stats) GetCallFineBuckets(db *Database) ([]StatsHourBucket, error) 
 		if err != nil {
 			continue
 		}
-		tally[t.UTC().Truncate(listenerBucketInterval)]++
+		utc := t.UTC()
+		tally[utc.Truncate(listenerBucketInterval)]++
+
+		if !utc.Before(microSince) {
+			microTally[utc.Truncate(statsMicroBucketInterval)]++
+		}
 	}
 
 	n := int(statsFineBucketRange / listenerBucketInterval)
@@ -322,7 +344,18 @@ func (stats *Stats) GetCallFineBuckets(db *Database) ([]StatsHourBucket, error) 
 			Count:    tally[t],
 		})
 	}
-	return result, nil
+
+	micro := int(statsMicroBucketRange / statsMicroBucketInterval)
+	microResult := make([]StatsHourBucket, 0, micro+1)
+	for i := 0; i <= micro; i++ {
+		t := microSince.Add(time.Duration(i) * statsMicroBucketInterval)
+		microResult = append(microResult, StatsHourBucket{
+			StartUtc: t.Format(time.RFC3339),
+			Count:    microTally[t],
+		})
+	}
+
+	return result, microResult, nil
 }
 
 // GetListenerBuckets returns 10-minute-grain listener averages/peaks over
@@ -854,10 +887,11 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 		}
 	})
 	run(func() {
-		if v, err := stats.GetCallFineBuckets(db); err != nil {
+		if v, micro, err := stats.GetCallFineBuckets(db); err != nil {
 			logErr(err)
 		} else {
 			resp.CallFineBuckets = v
+			resp.CallMicroBuckets = micro
 		}
 	})
 	run(func() {

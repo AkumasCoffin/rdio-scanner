@@ -170,6 +170,7 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         const avgPerDay = rangeDays.size ? rangeCalls / rangeDays.size : 0;
 
         // Stash the binned arrays for the chart builders.
+        this._rangeDayCount = rangeDays.size;
         this._hourOfDayLast7d = hourOfDay;
         this._dayCountsLast30d = dayCounts;
 
@@ -196,22 +197,47 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         return (STATS_RANGES.find((r) => r.key === this.range)?.label ?? '') + ' calls';
     }
 
+    private _rangeDayCount = 1;
     private _hourOfDayLast7d: number[] = new Array(24).fill(0);
     private _dayCountsLast30d: Map<string, number> = new Map();
 
     private buildHourlyChart(): void {
-        const labels = this._hourOfDayLast7d.map((_, h) => `${h.toString().padStart(2, '0')}:00`);
-        const data = this._hourOfDayLast7d;
+        const rangeLabel = STATS_RANGES.find((r) => r.key === this.range)?.label ?? '';
+
+        // Three modes, because one shape doesn't fit every window:
+        //  1h        — a 5-minute timeline; hour-of-day bins would give one bar.
+        //  ≤ 24h     — hour-of-day totals; each hour occurs once, so a total
+        //              and an average are the same number.
+        //  > 24h     — hour-of-day averaged over the days covered, otherwise
+        //              a month's bars are just 30x a day's and unreadable.
+        let labels: string[];
+        let data: number[];
+        let title: string;
+
+        if (this.range === '1h') {
+            const cutoff = Date.now() - 3600 * 1000;
+            const slots = (this.stats?.callMicroBuckets ?? []).filter((b) => {
+                const t = new Date(b.startUtc).getTime();
+                return !isNaN(t) && t >= cutoff;
+            });
+            labels = slots.map((b) => new Date(b.startUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            data = slots.map((b) => b.count);
+            title = 'Calls per 5 Minutes (1H)';
+        } else {
+            const days = this._rangeDayCount;
+            const average = days > 1;
+            labels = this._hourOfDayLast7d.map((_, h) => `${h.toString().padStart(2, '0')}:00`);
+            data = average
+                ? this._hourOfDayLast7d.map((v) => Math.round((v / days) * 10) / 10)
+                : this._hourOfDayLast7d;
+            title = `${average ? 'Average ' : ''}Calls by Hour of Day (${rangeLabel})`;
+        }
 
         this.hourlyChartOptions = {
             ...this.hourlyChartOptions,
             plugins: {
                 ...(this.hourlyChartOptions?.plugins ?? {}),
-                title: {
-                    display: true,
-                    text: `Calls by Hour of Day (${STATS_RANGES.find((r) => r.key === this.range)?.label ?? ''})`,
-                    color: '#e0e0e0',
-                },
+                title: { display: true, text: title, color: '#e0e0e0' },
             },
         };
 

@@ -431,6 +431,8 @@ export interface StatsResponse {
      * short filter ranges. Zeros mean no calls, same as hourBuckets.
      */
     callFineBuckets?: StatsHourBucket[];
+    /** 5-minute counts over the last 6 hours, for the 1-hour range. */
+    callMicroBuckets?: StatsHourBucket[];
     topTalkgroups: StatsTopTalkgroup[];
     topSystems: StatsTopSystem[];
     /**
