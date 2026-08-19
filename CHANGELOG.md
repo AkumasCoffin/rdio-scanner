@@ -110,6 +110,17 @@ Nothing changes in the Android app.
   system's talkgroup — where edits, Delete and Blacklist all acted on the wrong
   system.
 
+- **Fixed:** the header no longer squashes the title on a phone. Restart shows
+  as its icon alone at phone widths, the way Logout already did, and below
+  440px the version gives way as well, so the name reads in full instead of
+  "Rdio Scann…".
+
+- **Fixed:** the statistics dashboard no longer scrolls sideways on a phone
+  with nothing out there to see. The "This Month" tile asked for an icon the
+  bundled font does not carry, and a missing icon renders as its own name —
+  336px of invisible text, pushing the page. The dashboard's tables now scroll
+  within themselves rather than shoving the page along with them.
+
 ### LED colours
 
 - **New: twelve LED colours instead of eight,** and an optional second colour
