@@ -220,7 +220,7 @@ export class RdioScannerAdminStatsComponent implements OnInit {
             callsCard,
             { label: 'Today', value: this.formatNumber(todayCalls), icon: 'today', color: '#4caf50' },
             { label: 'This Week', value: this.formatNumber(weekCalls), icon: 'date_range', color: '#ff9800' },
-            { label: 'This Month', value: this.formatNumber(monthCalls), icon: 'calendar_month', color: '#9c27b0' },
+            { label: 'This Month', value: this.formatNumber(monthCalls), icon: 'calendar_today', color: '#9c27b0' },
             { label: 'Active Systems', value: overview.activeSystems, icon: 'settings_input_antenna', color: '#2196f3' },
             { label: 'Active Talkgroups', value: overview.activeTalkgroups, icon: 'groups', color: '#e91e63' },
             { label: 'Avg/Day', value: Math.round(avgPerDay), icon: 'trending_up', color: '#607d8b' },

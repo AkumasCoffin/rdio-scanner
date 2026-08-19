@@ -440,3 +440,13 @@ mat-expansion-panel.table-panel {
         color: var(--stats-text-dim);
     }
 }
+
+// A ligature the bundled Material Icons font does not carry renders as its
+// own literal name — "calendar_month" came out as 336px of text rather than a
+// 24px glyph. The text sat outside the card with nothing to clip it, so the
+// dashboard scrolled sideways on a phone with nothing out there to look at.
+// Clipping here means the worst a missing icon can do is show nothing, rather
+// than quietly reshape the page.
+.stat-icon mat-icon {
+    overflow: hidden;
+}

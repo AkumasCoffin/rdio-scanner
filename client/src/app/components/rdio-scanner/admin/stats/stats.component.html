@@ -36,6 +36,7 @@
                 <mat-icon>info</mat-icon>
                 <span>No calls in the last hour</span>
             </div>
+            <div class="table-scroll">
             <table mat-table *ngIf="stats.lastHourTalkgroups?.length" [dataSource]="stats.lastHourTalkgroups"
                 class="talkgroups-table clickable-table">
                 <ng-container matColumnDef="talkgroup">
@@ -60,6 +61,7 @@
                 <tr mat-row *matRowDef="let row; columns: ['talkgroup', 'system', 'lastCall', 'count']"
                     (click)="showTalkgroupUnits(row)" class="clickable-row"></tr>
             </table>
+            </div>
         </mat-expansion-panel>
 
         <!-- Time Range Filter (calls + listeners time series) -->
@@ -138,6 +140,7 @@
                     Top Talkgroups (Last 7 Days)
                 </mat-panel-title>
             </mat-expansion-panel-header>
+            <div class="table-scroll">
             <table mat-table [dataSource]="stats.topTalkgroups" class="talkgroups-table">
                     <ng-container matColumnDef="rank">
                         <th mat-header-cell *matHeaderCellDef>#</th>
@@ -164,6 +167,7 @@
                     <tr mat-header-row *matHeaderRowDef="['rank', 'system', 'talkgroup', 'name', 'count']"></tr>
                     <tr mat-row *matRowDef="let row; columns: ['rank', 'system', 'talkgroup', 'name', 'count']"></tr>
                 </table>
+            </div>
             <div *ngIf="!stats.topTalkgroups?.length" class="no-data">
                 <mat-icon>info</mat-icon>
                 <span>No talkgroup data available</span>
@@ -191,6 +195,7 @@
                     Top Units (Last 7 Days)
                 </mat-panel-title>
             </mat-expansion-panel-header>
+            <div class="table-scroll">
             <table mat-table [dataSource]="stats.topUnits" class="talkgroups-table">
                     <ng-container matColumnDef="rank">
                         <th mat-header-cell *matHeaderCellDef>#</th>
@@ -213,6 +218,7 @@
                     <tr mat-header-row *matHeaderRowDef="['rank', 'system', 'unit', 'count']"></tr>
                     <tr mat-row *matRowDef="let row; columns: ['rank', 'system', 'unit', 'count']"></tr>
                 </table>
+            </div>
         </mat-expansion-panel>
     </div>
 
@@ -238,6 +244,7 @@
                     <mat-icon>info</mat-icon>
                     <p>No units found for this talkgroup</p>
                 </div>
+                <div class="table-scroll">
                 <table mat-table [dataSource]="talkgroupUnits" class="units-table" *ngIf="!loadingUnits && talkgroupUnits.length > 0">
                     <ng-container matColumnDef="rank">
                         <th mat-header-cell *matHeaderCellDef>#</th>
@@ -260,6 +267,7 @@
                     <tr mat-header-row *matHeaderRowDef="['rank', 'unit', 'lastCall', 'count']"></tr>
                     <tr mat-row *matRowDef="let row; columns: ['rank', 'unit', 'lastCall', 'count']"></tr>
                 </table>
+                </div>
             </mat-card-content>
         </mat-card>
     </div>

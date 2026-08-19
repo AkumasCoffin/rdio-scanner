@@ -474,4 +474,41 @@ mat-expansion-panel.table-panel {
     .stats-header h2 {
         font-size: 1.1rem;
     }
+
+    // The cells give up some padding, which is enough for these tables to fit
+    // outright at most phone widths. .table-scroll below is the fallback for
+    // the rest.
+    .talkgroups-table,
+    .units-table {
+        th,
+        td {
+            padding-left: 8px;
+            padding-right: 8px;
+        }
+    }
+}
+
+// The dashboard's tables are the one thing here with a width of their own:
+// their columns want more than a phone has, and the overflow pushed the whole
+// admin pane sideways — the page scrolled left and right with nothing out
+// there to see, because the thing that was too wide sat in a panel that had no
+// opinion about it.
+//
+// The wrapper exists because the obvious target does not work: the panel body
+// is Material's own element, not part of this component's template, so an
+// emulated-encapsulation rule never reaches it. A div this template owns does
+// get styled, and a table that cannot fit now takes its scrolling with it
+// instead of handing it to the page.
+.table-scroll {
+    overflow-x: auto;
+}
+
+// A ligature the bundled Material Icons font does not carry renders as its
+// own literal name — "calendar_month" came out as 336px of text rather than a
+// 24px glyph. The text sat outside the card with nothing to clip it, so the
+// dashboard scrolled sideways on a phone with nothing out there to look at.
+// Clipping here means the worst a missing icon can do is show nothing, rather
+// than quietly reshape the page.
+.stat-icon mat-icon {
+    overflow: hidden;
 }
