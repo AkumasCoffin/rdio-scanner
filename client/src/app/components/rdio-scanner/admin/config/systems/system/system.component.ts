@@ -62,11 +62,14 @@ export class RdioScannerAdminSystemComponent {
         // Carrying a selection across the swap left the editor pointed at the
         // previous system's talkgroup: edits went to the old system, and
         // Delete/Blacklist acted on an id the new system doesn't contain.
+        //
+        // The active tab is deliberately NOT reset: comparing the same tab
+        // across systems is the reason to click through the list, and being
+        // thrown back to Settings each time makes that a chore.
         this.selectedTalkgroup = undefined;
         this.selectedUnit = undefined;
         this.talkgroupQuery = '';
         this.unitQuery = '';
-        this.tab = 'settings';
 
         this.refreshLists();
     }
