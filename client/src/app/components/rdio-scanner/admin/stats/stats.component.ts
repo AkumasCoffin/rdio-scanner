@@ -174,9 +174,17 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         this._hourOfDayLast7d = hourOfDay;
         this._dayCountsLast30d = dayCounts;
 
+        // On 'all' the two cards would disagree: this one is summed from the
+        // 30-day buckets, while Total Calls is a straight count over the whole
+        // table, so a longer-retained database shows a smaller "all". Total
+        // Calls already *is* the answer for that range, so there is one card.
+        const rangeCards = this.range === 'all' ? [] : [
+            { label: this.rangeLabel(), value: this.formatNumber(rangeCalls), icon: 'filter_alt', color: '#00bcd4' },
+        ];
+
         this.overviewCards = [
             { label: 'Total Calls', value: this.formatNumber(overview.totalCalls), icon: 'call', color: '#00bcd4' },
-            { label: this.rangeLabel(), value: this.formatNumber(rangeCalls), icon: 'filter_alt', color: '#00bcd4' },
+            ...rangeCards,
             { label: 'Today', value: this.formatNumber(todayCalls), icon: 'today', color: '#4caf50' },
             { label: 'This Week', value: this.formatNumber(weekCalls), icon: 'date_range', color: '#ff9800' },
             { label: 'This Month', value: this.formatNumber(monthCalls), icon: 'calendar_month', color: '#9c27b0' },

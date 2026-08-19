@@ -237,18 +237,37 @@ export function buildCallsSeries(
         return { title: `Calls (${title})`, labels, data, pointRadius: 2 };
     }
 
-    // Day bins. Calls ship as a 30-day window, so 'all' and '1m' both
-    // render the full shipped window.
-    const today = new Date();
-    const dayCount = Math.min(Math.round(hours / 24), 30);
-    for (let i = dayCount - 1; i >= 0; i--) {
-        const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
-        const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
-        labels.push(`${MONTHS[d.getMonth()]} ${d.getDate()} (${DAYS[d.getDay()]})`);
-        data.push(dayCounts.get(key) || 0);
+    // Longer windows still render from the hourly buckets, binned just
+    // coarsely enough to keep the point count sane. Day bins gave a week
+    // seven points, which the line's curve then smoothed into a wave —
+    // every daily peak and quiet spell in the data was invisible.
+    // Calls ship as a 30-day window, so 'all' and '1m' both render that.
+    const spanHours = Math.min(hours, 30 * 24);
+    const binHours = spanHours <= 7 * 24 ? 1 : 2;
+
+    const byMs = new Map<number, number>();
+    for (const b of hourBuckets) {
+        const t = new Date(b.startUtc);
+        if (!isNaN(t.getTime())) byMs.set(t.getTime(), b.count);
     }
+
+    const now = new Date();
+    const currentHour = new Date(
+        now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(),
+    ).getTime();
+
+    for (let i = Math.floor(spanHours / binHours) - 1; i >= 0; i--) {
+        const slotMs = currentHour - i * binHours * HOUR_MS;
+        let count = 0;
+        for (let h = 0; h < binHours; h++) {
+            count += byMs.get(slotMs + h * HOUR_MS) || 0;
+        }
+        labels.push(dateTime(new Date(slotMs)));
+        data.push(count);
+    }
+
     const title = range === 'all' ? 'Last 30 Days' : rangeTitle(range);
-    return { title: `Calls (${title})`, labels, data, pointRadius: 2 };
+    return { title: `Calls (${title})`, labels, data, pointRadius: 0 };
 }
 
 export function callsDatasets(series: CallsSeries): ChartConfiguration<'line'>['data']['datasets'] {
@@ -257,7 +276,10 @@ export function callsDatasets(series: CallsSeries): ChartConfiguration<'line'>['
         fill: true,
         backgroundColor: 'rgba(255, 152, 0, 0.2)',
         borderColor: 'rgba(255, 152, 0, 1)',
-        tension: 0.3,
+        // Only smooth a sparse series. On a dense one the curve rounds real
+        // peaks away, which is the difference between "quiet afternoon" and
+        // "nothing happened".
+        tension: series.data.length > 60 ? 0 : 0.3,
         pointRadius: series.pointRadius,
         pointBackgroundColor: 'rgba(255, 152, 0, 1)',
     }];
