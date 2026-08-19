@@ -135,6 +135,8 @@
                         option is enabled.</p>
                     <button type="button" mat-button color="accent" (click)="addTalkgroup()">New talkgroup</button>
                 </div>
+                <div class="entity-split">
+                <div class="entity-list">
                 <div class="admin-config-list-toolbar">
                     <mat-form-field floatLabel="never">
                         <mat-icon matPrefix>search</mat-icon>
@@ -143,7 +145,7 @@
                     </mat-form-field>
                     <span class="mat-caption">{{ filteredTalkgroups.length }} of {{ talkgroups.length }}</span>
                 </div>
-                <cdk-virtual-scroll-viewport #talkgroupViewport class="admin-config-virtual-list" itemSize="52"
+                <cdk-virtual-scroll-viewport #talkgroupViewport class="admin-config-virtual-list" itemSize="40"
                     cdkDropList [cdkDropListData]="filteredTalkgroups" [cdkDropListDisabled]="!!talkgroupQuery"
                     (cdkDropListDropped)="dropTalkgroup($event)">
                     <button type="button" class="admin-config-virtual-row"
@@ -156,6 +158,8 @@
                         <mat-icon *ngIf="talkgroup.invalid" color="warn">error</mat-icon>
                     </button>
                 </cdk-virtual-scroll-viewport>
+                </div>
+                <div class="entity-detail">
                 <div *ngIf="selectedTalkgroup" class="admin-config-selected-editor" [formGroup]="selectedTalkgroup">
                     <div class="admin-config-editor-title">
                         <strong>{{ selectedTalkgroup.value.label?.trim() || 'NewTalkgroup' }}</strong>
@@ -169,6 +173,9 @@
                         (remove)="removeTalkgroup(selectedTalkgroup)">
                     </rdio-scanner-admin-talkgroup>
                 </div>
+                <p class="mat-caption entity-empty" *ngIf="!selectedTalkgroup">Select a talkgroup to edit it.</p>
+                </div>
+                </div>
     </div>
     <div class="system-pane" *ngIf="tab === 'units'">
                 <div class="row top">
@@ -176,6 +183,8 @@
                         screen. Select one to edit it.<br>You can drag and drop them when the list is not filtered.</p>
                     <button type="button" mat-button color="accent" (click)="addUnit()">New unit</button>
                 </div>
+                <div class="entity-split">
+                <div class="entity-list">
                 <div class="admin-config-list-toolbar">
                     <mat-form-field floatLabel="never">
                         <mat-icon matPrefix>search</mat-icon>
@@ -184,7 +193,7 @@
                     </mat-form-field>
                     <span class="mat-caption">{{ filteredUnits.length }} of {{ units.length }}</span>
                 </div>
-                <cdk-virtual-scroll-viewport #unitViewport class="admin-config-virtual-list" itemSize="52"
+                <cdk-virtual-scroll-viewport #unitViewport class="admin-config-virtual-list" itemSize="40"
                     cdkDropList [cdkDropListData]="filteredUnits" [cdkDropListDisabled]="!!unitQuery"
                     (cdkDropListDropped)="dropUnit($event)">
                     <button type="button" class="admin-config-virtual-row"
@@ -197,6 +206,8 @@
                         <mat-icon *ngIf="unit.invalid" color="warn">error</mat-icon>
                     </button>
                 </cdk-virtual-scroll-viewport>
+                </div>
+                <div class="entity-detail">
                 <div *ngIf="selectedUnit" class="admin-config-selected-editor" [formGroup]="selectedUnit">
                     <div class="admin-config-editor-title">
                         <strong>{{ selectedUnit.value.label?.trim() || 'NewUnit' }}</strong>
@@ -207,6 +218,9 @@
                     </div>
                     <rdio-scanner-admin-unit [form]="selectedUnit" (remove)="removeUnit(selectedUnit)">
                     </rdio-scanner-admin-unit>
+                </div>
+                <p class="mat-caption entity-empty" *ngIf="!selectedUnit">Select a unit to edit it.</p>
+                </div>
                 </div>
     </div>
     <div class="row bottom">
