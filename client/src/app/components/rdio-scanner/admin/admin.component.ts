@@ -18,9 +18,12 @@
  */
 
 import { Component, OnDestroy, ViewChild, ViewEncapsulation } from '@angular/core';
+import { MatDialog } from '@angular/material/dialog';
+import { firstValueFrom } from 'rxjs';
 import packageInfo from '../../../../../package.json';
 import { AdminEvent, RdioScannerAdminService } from './admin.service';
 import { ConfigSection, RdioScannerAdminConfigComponent } from './config/config.component';
+import { RdioScannerAdminRestartDialogComponent } from './restart-dialog.component';
 
 export type AdminTab = ConfigSection | 'dashboard' | 'plugins' | 'logs' | 'tools';
 
@@ -62,6 +65,12 @@ export class RdioScannerAdminComponent implements OnDestroy {
 
     version = packageInfo.version;
 
+    /** True from asking for a restart until the server answers again. */
+    restarting = false;
+
+    /** Set only when a restart was asked for and the server never returned. */
+    restartError = '';
+
     activeTab: AdminTab = 'dashboard';
 
     // The section the always-alive config host shows. Kept separate from
@@ -79,7 +88,44 @@ export class RdioScannerAdminComponent implements OnDestroy {
         }
     });
 
-    constructor(private adminService: RdioScannerAdminService) { }
+    constructor(
+        private adminService: RdioScannerAdminService,
+        private matDialog: MatDialog,
+    ) { }
+
+    /**
+     * Restarts the server, waits for it to answer again, then reloads.
+     *
+     * Lives in the header rather than on the Plugins tab: plugins are the
+     * usual reason to want it, but it restarts the whole server, and a
+     * control's home should be the thing it acts on. The reload lands on the
+     * login screen — admin sessions are held in memory, so none survives.
+     */
+    async restartServer(): Promise<void> {
+        const confirmed = await firstValueFrom(
+            this.matDialog.open(RdioScannerAdminRestartDialogComponent, {
+                width: '28rem',
+                maxWidth: '95vw',
+            }).afterClosed(),
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        this.restarting = true;
+
+        try {
+            await this.adminService.restartServer();
+            await this.adminService.waitForServer();
+            window.location.reload();
+        } catch (err) {
+            this.restarting = false;
+            // Either the request failed or the server never came back. The
+            // second needs saying out loud rather than a spinner that stops.
+            this.restartError = 'The server did not come back. Check it on the host.';
+        }
+    }
 
     get visibleTabs(): AdminTabDef[] {
         return ADMIN_TABS.filter((tab) => tab.id !== 'dirWatch' || !this.configComponent?.docker);

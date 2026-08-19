@@ -19,11 +19,21 @@
             <button type="button" mat-raised-button color="primary"
                 [disabled]="!configComponent?.form || configComponent?.form?.disabled || configComponent?.form?.pristine || configComponent?.form?.invalid"
                 (click)="configComponent?.save()">Save</button>
+            <button type="button" mat-button [disabled]="restarting" (click)="restartServer()"
+                matTooltip="Stops and starts the server on this version. Plugin changes take effect when it comes back.">
+                <mat-icon>restart_alt</mat-icon>
+                {{ restarting ? 'Restarting…' : 'Restart' }}
+            </button>
             <button type="button" mat-button data-rdio="admin-logout" (click)="logout()">
                 <mat-icon>logout</mat-icon>
                 Logout
             </button>
         </header>
+
+        <div class="admin-restart-error" *ngIf="restartError">
+            <mat-icon>error_outline</mat-icon>
+            <span>{{ restartError }}</span>
+        </div>
 
         <nav class="admin-tabs">
             <button *ngFor="let tab of visibleTabs" type="button" class="admin-tab"
