@@ -94,6 +94,10 @@
                 <span class="chip missing" *ngIf="updateError(plugin)" [matTooltip]="updateError(plugin)">
                     Not checked
                 </span>
+                <span class="chip" *ngIf="upToDate(plugin) as checked"
+                    [matTooltip]="'Checked ' + checked.repo + ' on ' + checked.branch + ', which offers v' + checked.latestVersion">
+                    Up to date
+                </span>
                 <span class="chip" *ngIf="costFor(plugin) as cost"
                     [class.warn]="costIsConcerning(cost)"
                     [matTooltip]="'Longest single run ' + (cost.maxMs | number:'1.0-1') + ' ms'">

@@ -222,3 +222,18 @@
         font-size: 0.72rem;
     }
 }
+
+/* Two-up plugin cards on wide screens. The cards sit directly in the
+   expansion panel body next to headings and toolbars, so the grid lives on
+   the body and everything that isn't a card spans the full width. */
+@media (min-width: 1100px) {
+    :host ::ng-deep .mat-expansion-panel-body {
+        column-gap: 0.75rem;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+
+        > :not(.plugin-card) {
+            grid-column: 1 / -1;
+        }
+    }
+}

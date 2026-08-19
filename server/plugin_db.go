@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -217,7 +218,22 @@ func (pluginDb *PluginDb) Query(query string, args []any) ([]map[string]any, err
 		return nil, err
 	}
 
-	rows, err := pluginDb.database.Query(rewritten, args...)
+	// Bounded, unlike the bare Query most of the server uses.
+	//
+	// rdio.db.query is synchronous on the plugin's event loop, and that loop is
+	// shared by everything the plugin does — its routes, its observers, its
+	// timers. An unbounded wait for a pooled connection therefore does not
+	// stall one query, it stalls the whole plugin, and no watchdog can help:
+	// goja can only interrupt at a JS instruction boundary, and this is a Go
+	// call that has not returned. An error the plugin can catch is a far better
+	// outcome than a runtime that has silently stopped answering.
+	//
+	// Safe to cancel on return because the rows are fully drained below and
+	// never handed to a caller.
+	ctx, cancel := context.WithTimeout(context.Background(), statementTimeout)
+	defer cancel()
+
+	rows, err := pluginDb.database.QueryContext(ctx, rewritten, args...)
 	if err != nil {
 		return nil, err
 	}

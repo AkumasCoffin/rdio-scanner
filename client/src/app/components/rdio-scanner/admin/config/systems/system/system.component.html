@@ -1,4 +1,21 @@
 <ng-container [formGroup]="form">
+    <nav class="system-tabs">
+        <button type="button" class="system-tab" [class.active]="tab === 'settings'" (click)="tab = 'settings'">
+            Settings
+            <mat-icon class="warn" *ngIf="settingsInvalid" color="warn">error</mat-icon>
+        </button>
+        <button type="button" class="system-tab" [class.active]="tab === 'talkgroups'" (click)="tab = 'talkgroups'">
+            Talkgroups
+            <span class="count">{{ talkgroups.length }}</span>
+            <mat-icon class="warn" *ngIf="form.get('talkgroups')?.invalid" color="warn">error</mat-icon>
+        </button>
+        <button type="button" class="system-tab" [class.active]="tab === 'units'" (click)="tab = 'units'">
+            Units
+            <span class="count">{{ units.length }}</span>
+            <mat-icon class="warn" *ngIf="form.get('units')?.invalid" color="warn">error</mat-icon>
+        </button>
+    </nav>
+    <div class="system-pane" *ngIf="tab === 'settings'">
     <div class="row">
         <p>
             <span class="mat-body">Id</span><br>
@@ -109,15 +126,8 @@
             </mat-select>
         </mat-form-field>
     </div>
-    <mat-accordion displayMode="flat">
-        <mat-expansion-panel>
-            <mat-expansion-panel-header>
-                <mat-panel-title>
-                    Talkgroups
-                    <mat-icon *ngIf="form.get('talkgroups')?.invalid" color="warn">error</mat-icon>
-                </mat-panel-title>
-            </mat-expansion-panel-header>
-            <ng-template matExpansionPanelContent>
+    </div>
+    <div class="system-pane" *ngIf="tab === 'talkgroups'">
                 <div class="row top">
                     <p class="mat-caption">System talkgroups. Select one to edit it. You can drag and drop talkgroups
                         when the list is not filtered. They
@@ -125,6 +135,8 @@
                         option is enabled.</p>
                     <button type="button" mat-button color="accent" (click)="addTalkgroup()">New talkgroup</button>
                 </div>
+                <div class="entity-split">
+                <div class="entity-list">
                 <div class="admin-config-list-toolbar">
                     <mat-form-field floatLabel="never">
                         <mat-icon matPrefix>search</mat-icon>
@@ -133,7 +145,7 @@
                     </mat-form-field>
                     <span class="mat-caption">{{ filteredTalkgroups.length }} of {{ talkgroups.length }}</span>
                 </div>
-                <cdk-virtual-scroll-viewport #talkgroupViewport class="admin-config-virtual-list" itemSize="52"
+                <cdk-virtual-scroll-viewport #talkgroupViewport class="admin-config-virtual-list" itemSize="40"
                     cdkDropList [cdkDropListData]="filteredTalkgroups" [cdkDropListDisabled]="!!talkgroupQuery"
                     (cdkDropListDropped)="dropTalkgroup($event)">
                     <button type="button" class="admin-config-virtual-row"
@@ -146,6 +158,8 @@
                         <mat-icon *ngIf="talkgroup.invalid" color="warn">error</mat-icon>
                     </button>
                 </cdk-virtual-scroll-viewport>
+                </div>
+                <div class="entity-detail">
                 <div *ngIf="selectedTalkgroup" class="admin-config-selected-editor" [formGroup]="selectedTalkgroup">
                     <div class="admin-config-editor-title">
                         <strong>{{ selectedTalkgroup.value.label?.trim() || 'NewTalkgroup' }}</strong>
@@ -159,23 +173,18 @@
                         (remove)="removeTalkgroup(selectedTalkgroup)">
                     </rdio-scanner-admin-talkgroup>
                 </div>
-            </ng-template>
-        </mat-expansion-panel>
-    </mat-accordion>
-    <mat-accordion displayMode="flat">
-        <mat-expansion-panel>
-            <mat-expansion-panel-header>
-                <mat-panel-title>
-                    Units
-                    <mat-icon *ngIf="form.get('units')?.invalid" color="warn">error</mat-icon>
-                </mat-panel-title>
-            </mat-expansion-panel-header>
-            <ng-template matExpansionPanelContent>
+                <p class="mat-caption entity-empty" *ngIf="!selectedTalkgroup">Select a talkgroup to edit it.</p>
+                </div>
+                </div>
+    </div>
+    <div class="system-pane" *ngIf="tab === 'units'">
                 <div class="row top">
                     <p class="mat-caption">Create units to display the label instead of showing the unit id on the main
                         screen. Select one to edit it.<br>You can drag and drop them when the list is not filtered.</p>
                     <button type="button" mat-button color="accent" (click)="addUnit()">New unit</button>
                 </div>
+                <div class="entity-split">
+                <div class="entity-list">
                 <div class="admin-config-list-toolbar">
                     <mat-form-field floatLabel="never">
                         <mat-icon matPrefix>search</mat-icon>
@@ -184,7 +193,7 @@
                     </mat-form-field>
                     <span class="mat-caption">{{ filteredUnits.length }} of {{ units.length }}</span>
                 </div>
-                <cdk-virtual-scroll-viewport #unitViewport class="admin-config-virtual-list" itemSize="52"
+                <cdk-virtual-scroll-viewport #unitViewport class="admin-config-virtual-list" itemSize="40"
                     cdkDropList [cdkDropListData]="filteredUnits" [cdkDropListDisabled]="!!unitQuery"
                     (cdkDropListDropped)="dropUnit($event)">
                     <button type="button" class="admin-config-virtual-row"
@@ -197,6 +206,8 @@
                         <mat-icon *ngIf="unit.invalid" color="warn">error</mat-icon>
                     </button>
                 </cdk-virtual-scroll-viewport>
+                </div>
+                <div class="entity-detail">
                 <div *ngIf="selectedUnit" class="admin-config-selected-editor" [formGroup]="selectedUnit">
                     <div class="admin-config-editor-title">
                         <strong>{{ selectedUnit.value.label?.trim() || 'NewUnit' }}</strong>
@@ -208,9 +219,10 @@
                     <rdio-scanner-admin-unit [form]="selectedUnit" (remove)="removeUnit(selectedUnit)">
                     </rdio-scanner-admin-unit>
                 </div>
-            </ng-template>
-        </mat-expansion-panel>
-    </mat-accordion>
+                <p class="mat-caption entity-empty" *ngIf="!selectedUnit">Select a unit to edit it.</p>
+                </div>
+                </div>
+    </div>
     <div class="row bottom">
         <button type="button" mat-button color="warn" (click)="remove.emit()">
             Delete system

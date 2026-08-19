@@ -336,7 +336,7 @@ func (rt *PluginRuntime) readUdp(listener *pluginListener, handler goja.Callable
 // until the process dies. The reply is written on the socket's goroutine rather
 // than the loop, so a slow peer cannot stall the runtime.
 func (rt *PluginRuntime) deliverNet(handler goja.Callable, payload []byte, remote string, reply func([]byte)) {
-	rt.runOnLoop(func(vm *goja.Runtime) {
+	rt.runOnLoop("net", func(vm *goja.Runtime) {
 		stop := rt.armWatchdog(vm, "net", pluginCallTimeout)
 		defer stop()
 

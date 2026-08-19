@@ -81,9 +81,68 @@ Nothing changes in the Android app.
   See the [plugin documentation](https://github.com/AkumasCoffin/rdio-scanner-plugins)
   for how to write one.
 
+### Admin panel
+
+- **Changed: the admin panel is a full-width app rather than a column down the
+  middle of the screen.** Config sections are top-level tabs instead of
+  accordions inside accordions, the header and tabs stay put while the content
+  scrolls, and the landing page is a dashboard. Systems are edited in two panes
+  — the list beside the editor — with Settings, Talkgroups and Units as tabs
+  that stay put as you move between systems. Phones get a layout of their own
+  rather than a squeezed copy of the desktop one.
+
+- **New: a Restart button in the header.** Plugins load once at startup, so
+  installing, updating, enabling or disabling one only takes effect on the next
+  start. The panel said so and left you to do it by hand; now it can do it,
+  waits for the server to come back, and reloads.
+
+- **Changed: uninstalling a plugin asks once, with named buttons.** It used to
+  ask twice through browser prompts, the second answering "delete this
+  plugin's data?" with OK and Cancel — where Cancel meant keep the data and
+  carry on uninstalling. The buttons now say Keep data and Remove data.
+
+- **Fixed:** the dashboard's counters and charts follow the selected time
+  range, the hour they are currently in is no longer missing from every total,
+  and a one-hour view is drawn in five-minute steps instead of a single point.
+
+- **Fixed:** switching between systems no longer throws you back to the
+  Settings tab, and no longer leaves the editor pointed at the previous
+  system's talkgroup — where edits, Delete and Blacklist all acted on the wrong
+  system.
+
+### LED colours
+
+- **New: twelve LED colours instead of eight,** and an optional second colour
+  per system or talkgroup that renders as a two-piece lightbar, with a wig-wag
+  flash if you want it. Existing colours are untouched, and anything using a
+  new colour falls back to the nearest original when read by an older client.
+  The Android app renders the same lightbar.
+
 ### Server
 
 - **Changed:** building from source now requires Go 1.25 or newer.
+
+- **Fixed: Ctrl+C stops the server.** Shutdown walks the plugins one at a time
+  and each may take up to ten seconds, so a server with a few plugins loaded
+  could sit there for a minute looking like it had ignored the signal — and a
+  second Ctrl+C did nothing, because nothing was listening for it any more.
+  Cleanup is now bounded, a second signal exits immediately, and a shutdown
+  that overruns says which step it was on.
+
+- **Fixed: the statistics page no longer times out on a large database.** The
+  dashboard serves the last snapshot and rebuilds in the background instead of
+  making the request wait, and where the database can group the counts itself,
+  it does.
+
+- **Fixed: a busy plugin no longer starves its own HTTP routes.** Everything a
+  plugin does shares one event loop, so slow work in it could stall the
+  plugin's own endpoints until they timed out. Slow work is now reported with
+  the name of what was doing it, plugin database reads are bounded, and a
+  request to a plugin that is too far behind is refused promptly rather than
+  held.
+
+- **Fixed:** plugins now load on MySQL and MariaDB. Reading the plugin registry
+  failed on those backends, so no plugin ever started.
 
 ---
 

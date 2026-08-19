@@ -1,66 +1,75 @@
+<!--
+    data-rdio attributes are stable anchor points for plugins — see
+    server/plugin_anchors_test.go. The tab shell keeps every anchor the old
+    accordion published.
+-->
 <ng-container *ngIf="!authenticated">
     <rdio-scanner-admin-login data-rdio="admin-login"></rdio-scanner-admin-login>
 </ng-container>
 <ng-container *ngIf="authenticated">
-    <rdio-scanner-admin-todos></rdio-scanner-admin-todos>
-    <mat-accordion displayMode="flat" data-rdio="admin">
-        <mat-expansion-panel data-rdio="admin-stats" (afterExpand)="statsComponent.refresh()">
-            <mat-expansion-panel-header>
-                <mat-panel-title>
-                    <mat-icon>analytics</mat-icon>
-                    Statistics
-                </mat-panel-title>
-            </mat-expansion-panel-header>
-            <rdio-scanner-admin-stats #statsComponent></rdio-scanner-admin-stats>
-        </mat-expansion-panel>
-        <mat-expansion-panel #configPanel data-rdio="admin-config" (afterExpand)="configComponent.load()"
-            (afterCollapse)="configComponent?.closeAll()">
-            <mat-expansion-panel-header>
-                <mat-panel-title>
-                    <mat-icon>settings</mat-icon>
-                    Config
-                </mat-panel-title>
-            </mat-expansion-panel-header>
-            <rdio-scanner-admin-config #configComponent></rdio-scanner-admin-config>
-        </mat-expansion-panel>
-        <mat-expansion-panel data-rdio="admin-plugins" (afterExpand)="pluginsComponent.load()">
-            <mat-expansion-panel-header>
-                <mat-panel-title>
-                    <mat-icon>extension</mat-icon>
-                    Plugins
-                </mat-panel-title>
-            </mat-expansion-panel-header>
-            <rdio-scanner-admin-plugins #pluginsComponent></rdio-scanner-admin-plugins>
-        </mat-expansion-panel>
-        <mat-expansion-panel data-rdio="admin-logs" (afterExpand)="logsComponent.reload()">
-            <mat-expansion-panel-header>
-                <mat-panel-title>
-                    <mat-icon>article</mat-icon>
-                    Logs
-                </mat-panel-title>
-            </mat-expansion-panel-header>
-            <rdio-scanner-admin-logs #logsComponent></rdio-scanner-admin-logs>
-        </mat-expansion-panel>
-        <mat-expansion-panel data-rdio="admin-tools" (afterCollapse)="toolsComponent?.closeAll()">
-            <mat-expansion-panel-header>
-                <mat-panel-title>
-                    <mat-icon>build</mat-icon>
-                    Tools
-                </mat-panel-title>
-            </mat-expansion-panel-header>
-            <rdio-scanner-admin-tools #toolsComponent (config)="configComponent.reset($event, { dirty: true }); configPanel.open()"></rdio-scanner-admin-tools>
-        </mat-expansion-panel>
-        <!-- Plugins add their own sections here. Placed before Logout so a
-             plugin panel never appears below it, which would read as being part
-             of logging out. -->
-        <rdio-plugin-slot name="admin-panel"></rdio-plugin-slot>
-        <mat-expansion-panel data-rdio="admin-logout" hideToggle (click)="logout()">
-            <mat-expansion-panel-header>
-                <mat-panel-title>
-                    <mat-icon>logout</mat-icon>
-                    Logout
-                </mat-panel-title>
-            </mat-expansion-panel-header>
-        </mat-expansion-panel>
-    </mat-accordion>
+    <div class="admin-shell" data-rdio="admin">
+        <header class="admin-header">
+            <span class="admin-title">Rdio Scanner Admin</span>
+            <span class="admin-version">v{{ version }}</span>
+            <span class="admin-spacer"></span>
+            <rdio-scanner-admin-todos></rdio-scanner-admin-todos>
+            <span class="admin-dirty" *ngIf="configComponent?.form?.dirty">unsaved changes</span>
+            <button type="button" mat-button [disabled]="!configComponent?.form || configComponent?.form?.disabled || configComponent?.form?.pristine"
+                (click)="configComponent?.reset()">Reset</button>
+            <button type="button" mat-raised-button color="primary"
+                [disabled]="!configComponent?.form || configComponent?.form?.disabled || configComponent?.form?.pristine || configComponent?.form?.invalid"
+                (click)="configComponent?.save()">Save</button>
+            <button type="button" mat-button [disabled]="restarting" (click)="restartServer()"
+                matTooltip="Stops and starts the server on this version. Plugin changes take effect when it comes back.">
+                <mat-icon>restart_alt</mat-icon>
+                {{ restarting ? 'Restarting…' : 'Restart' }}
+            </button>
+            <button type="button" mat-button data-rdio="admin-logout" (click)="logout()">
+                <mat-icon>logout</mat-icon>
+                Logout
+            </button>
+        </header>
+
+        <div class="admin-restart-error" *ngIf="restartError">
+            <mat-icon>error_outline</mat-icon>
+            <span>{{ restartError }}</span>
+        </div>
+
+        <nav class="admin-tabs">
+            <button *ngFor="let tab of visibleTabs" type="button" class="admin-tab"
+                [class.active]="activeTab === tab.id" (click)="select(tab.id)">
+                <mat-icon>{{ tab.icon }}</mat-icon>
+                {{ tab.label }}
+                <mat-icon class="warn" *ngIf="tabInvalid(tab.id)" color="warn">error</mat-icon>
+            </button>
+        </nav>
+
+        <main class="admin-content">
+            <section *ngIf="activeTab === 'dashboard'" data-rdio="admin-stats">
+                <rdio-scanner-admin-stats></rdio-scanner-admin-stats>
+            </section>
+
+            <!-- One always-alive config host: the reactive form (and any
+                 unsaved edits) survives switching between config tabs. Hidden
+                 rather than destroyed when a non-config tab is active. -->
+            <section [hidden]="!isConfigTab" data-rdio="admin-config">
+                <rdio-scanner-admin-config #configComponent [section]="configSection"></rdio-scanner-admin-config>
+            </section>
+
+            <section *ngIf="activeTab === 'plugins'" data-rdio="admin-plugins">
+                <rdio-scanner-admin-plugins></rdio-scanner-admin-plugins>
+                <!-- Plugin-provided admin panels live with the plugin manager. -->
+                <rdio-plugin-slot name="admin-panel"></rdio-plugin-slot>
+            </section>
+
+            <section *ngIf="activeTab === 'logs'" data-rdio="admin-logs">
+                <rdio-scanner-admin-logs></rdio-scanner-admin-logs>
+            </section>
+
+            <section *ngIf="activeTab === 'tools'" data-rdio="admin-tools">
+                <rdio-scanner-admin-tools
+                    (config)="configComponent?.reset($event, { dirty: true }); select('systems')"></rdio-scanner-admin-tools>
+            </section>
+        </main>
+    </div>
 </ng-container>

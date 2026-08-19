@@ -27,6 +27,10 @@ import (
 
 const statsCacheTTL = 2 * time.Minute
 
+// statsSlowBuildThreshold — past this, a build is worth a log line. It is not
+// an error: the dashboard keeps serving the previous snapshot either way.
+const statsSlowBuildThreshold = 3 * time.Second
+
 // statsHourBucketRange — how far back hour-grain buckets cover. 30 days
 // is the longest period any client chart needs; everything narrower
 // (week, 24-hour view, today) is derived client-side by filtering the
@@ -38,12 +42,47 @@ const statsHourBucketRange = 30 * 24 * time.Hour
 // longer uses the 30-day hourly buckets.
 const statsFineBucketRange = 48 * time.Hour
 
+// statsMicroBucket* — 5-minute grain over the last 6 hours, for the 1-hour
+// filter. Tallied from the scan GetCallFineBuckets already runs, so it adds
+// no query; 72 buckets is a negligible payload.
+const statsMicroBucketRange = 6 * time.Hour
+const statsMicroBucketInterval = 5 * time.Minute
+
 type Stats struct {
 	Controller *Controller
 
 	mu       sync.Mutex
 	cached   *StatsResponse
 	cachedAt time.Time
+	// building guards the background refresh so a burst of viewers triggers
+	// one rebuild, not one each.
+	building bool
+}
+
+// statsRangeSince maps a filter key from the dashboard to the start of its
+// window. An unknown key (or "all") means no lower bound — the epoch keeps
+// the query shape identical so the dateTime index is still used.
+func statsRangeSince(rng string) time.Time {
+	now := time.Now().UTC()
+
+	switch rng {
+	case "1h":
+		return now.Add(-time.Hour)
+	case "6h":
+		return now.Add(-6 * time.Hour)
+	case "12h":
+		return now.Add(-12 * time.Hour)
+	case "24h":
+		return now.Add(-24 * time.Hour)
+	case "48h":
+		return now.Add(-48 * time.Hour)
+	case "1w":
+		return now.AddDate(0, 0, -7)
+	case "1m":
+		return now.AddDate(0, 0, -30)
+	default:
+		return time.Unix(0, 0).UTC()
+	}
 }
 
 type StatsOverview struct {
@@ -133,6 +172,9 @@ type StatsResponse struct {
 	// for the short filter ranges. Zeros are pre-seeded like HourBuckets: a
 	// zero genuinely means no calls.
 	CallFineBuckets    []StatsHourBucket        `json:"callFineBuckets,omitempty"`
+	// CallMicroBuckets — dense 5-minute counts for the last 6 hours, for the
+	// by-time chart on the 1-hour range.
+	CallMicroBuckets   []StatsHourBucket        `json:"callMicroBuckets,omitempty"`
 	TopTalkgroups      []StatsTopTalkgroup      `json:"topTalkgroups"`
 	TopSystems         []StatsTopSystem         `json:"topSystems"`
 	// TopCategories is what the "Top ..." chart renders: by group when
@@ -146,6 +188,12 @@ type StatsResponse struct {
 	// the public handler strips it from a shallow copy of the cached
 	// response. omitempty also hides it on a fresh install with no samples.
 	ListenerBuckets []StatsListenerBucket `json:"listenerBuckets,omitempty"`
+	// Configured inventory, counted from the in-memory config rather than
+	// the database — no query cost, and "configured" is a different fact
+	// than the activity-based counts in Overview.
+	ConfiguredSystems    uint `json:"configuredSystems"`
+	ConfiguredTalkgroups uint `json:"configuredTalkgroups"`
+	ConfiguredUnits      uint `json:"configuredUnits"`
 }
 
 func NewStats(controller *Controller) *Stats {
@@ -190,6 +238,104 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 	return overview, nil
 }
 
+// statsBucketExpr renders SQL that truncates `dateTime` down to a bucket of
+// the given size in minutes, formatted as 'YYYY-MM-DD HH:MM:SS'.
+//
+// It subtracts (minute % size) minutes from the minute-truncated value, which
+// gives the hour start when size is 60 and works for any divisor of 60. No
+// epoch or timezone conversion is involved: every backend stores these
+// columns already in UTC, so arithmetic on the stored value stays in UTC.
+//
+// Returns "" for backends where grouping in SQL is not worth it — see
+// statsBucketCounts.
+func statsBucketExpr(dbType string, minutes int) string {
+	switch dbType {
+	case DbTypePostgres:
+		return fmt.Sprintf(
+			`to_char(date_trunc('minute', "dateTime") - ((extract(minute from "dateTime")::int %% %d) * interval '1 minute'), 'YYYY-MM-DD HH24:MI:00')`,
+			minutes,
+		)
+
+	case DbTypeMariadb, DbTypeMysql:
+		// Nothing after Sprintf re-processes '%', so date_format specifiers
+		// need exactly one escaping here. A doubled modulo ('%%' in the SQL)
+		// is a syntax error MySQL reports and the caller quietly falls back
+		// from — which disabled this path entirely without failing anything.
+		return fmt.Sprintf(
+			"date_format(date_sub(`dateTime`, interval (minute(`dateTime`) %% %d) minute), '%%Y-%%m-%%d %%H:%%i:00')",
+			minutes,
+		)
+
+	default:
+		// SQLite keeps these columns as text, so any date function parses a
+		// string per row — measured slower than streaming the rows and
+		// bucketing in Go, which is what the caller falls back to.
+		return ""
+	}
+}
+
+// statsBucketCounts asks the database for one row per bucket instead of one
+// row per call. Returns ok == false when the caller should bucket the rows
+// itself: either the backend is one where that is faster (SQLite), or the
+// grouped query failed and falling back beats failing.
+//
+// On a server-backed database this is the difference between transferring
+// every call in the window across the network and transferring a few hundred
+// counts.
+func statsBucketCounts(db *Database, since time.Time, minutes int) (map[time.Time]uint, bool) {
+	expr := statsBucketExpr(db.Config.DbType, minutes)
+	if expr == "" {
+		return nil, false
+	}
+
+	rows, err := db.Query(
+		"select "+expr+" as bucket, count(*) from `rdioScannerCalls` where `dateTime` >= ? group by bucket",
+		since.Format(db.DateTimeFormat),
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return map[time.Time]uint{}, true
+		}
+		return nil, false
+	}
+	defer rows.Close()
+
+	// Sanity bounds. A backend that formatted the bucket in a session
+	// timezone rather than UTC would still return plausible-looking rows,
+	// just shifted by hours — silently wrong data on a chart nobody can
+	// cross-check. A shifted bucket lands outside the window that was asked
+	// for, so bounds-checking catches it where a row count never would.
+	slack := time.Duration(minutes) * time.Minute
+	lower := since.Add(-slack)
+	upper := time.Now().UTC().Add(slack)
+
+	tally := map[time.Time]uint{}
+	for rows.Next() {
+		var bucket sql.NullString
+		var count uint
+		if err := rows.Scan(&bucket, &count); err != nil {
+			return nil, false
+		}
+		if !bucket.Valid {
+			continue
+		}
+		t, err := time.ParseInLocation("2006-01-02 15:04:05", bucket.String, time.UTC)
+		if err != nil {
+			return nil, false
+		}
+		if t.Before(lower) || t.After(upper) {
+			return nil, false
+		}
+		tally[t] = count
+	}
+
+	if rows.Err() != nil {
+		return nil, false
+	}
+
+	return tally, true
+}
+
 // GetHourBuckets returns hour-grain UTC counts for the last 30 days.
 //
 // 720 buckets max, each `{startUtc, count}`. The client derives every
@@ -200,36 +346,44 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 //
 // Implementation: scan dateTime for the period, round each to the hour
 // it falls in (UTC), tally. Pre-seeds zero counts for every hour in the
-// window so the client gets a stable axis without gaps.
+// window so the client gets a stable axis without gaps. The seed loop
+// runs one slot past the window so the current in-progress hour is
+// included — calls land in it from the moment the hour starts, and
+// leaving it out made every "since <recent moment>" rollup on the client
+// miss the newest calls entirely.
 func (stats *Stats) GetHourBuckets(db *Database) ([]StatsHourBucket, error) {
 	now := time.Now().UTC().Truncate(time.Hour)
 	since := now.Add(-statsHourBucketRange).Truncate(time.Hour)
 
-	tally := map[time.Time]uint{}
-	rows, err := db.Query(
-		"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
-		since.Format(db.DateTimeFormat),
-	)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("stats.hourBuckets: %v", err)
-	}
-	defer rows.Close()
+	tally, ok := statsBucketCounts(db, since, 60)
+	if !ok {
+		tally = map[time.Time]uint{}
 
-	for rows.Next() {
-		var raw any
-		if err := rows.Scan(&raw); err != nil {
-			continue
+		rows, err := db.Query(
+			"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
+			since.Format(db.DateTimeFormat),
+		)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("stats.hourBuckets: %v", err)
 		}
-		t, err := db.ParseDateTime(raw)
-		if err != nil {
-			continue
+		defer rows.Close()
+
+		for rows.Next() {
+			var raw any
+			if err := rows.Scan(&raw); err != nil {
+				continue
+			}
+			t, err := db.ParseDateTime(raw)
+			if err != nil {
+				continue
+			}
+			tally[t.UTC().Truncate(time.Hour)]++
 		}
-		tally[t.UTC().Truncate(time.Hour)]++
 	}
 
 	hours := int(statsHourBucketRange / time.Hour)
-	result := make([]StatsHourBucket, 0, hours)
-	for i := 0; i < hours; i++ {
+	result := make([]StatsHourBucket, 0, hours+1)
+	for i := 0; i <= hours; i++ {
 		t := since.Add(time.Duration(i) * time.Hour)
 		result = append(result, StatsHourBucket{
 			StartUtc: t.Format(time.RFC3339),
@@ -244,30 +398,55 @@ func (stats *Stats) GetHourBuckets(db *Database) ([]StatsHourBucket, error) {
 // over a shorter window so the 1h–48h filter ranges have real curves
 // instead of one or two hourly points. The seed loop runs one slot past
 // the window so the current in-progress slot is included.
-func (stats *Stats) GetCallFineBuckets(db *Database) ([]StatsHourBucket, error) {
+// It also returns a 5-minute series over the last 6 hours, tallied in the
+// same pass: the 1-hour filter only covers six 10-minute slots, which is too
+// coarse to show a shape. Sharing the scan means the finer series costs no
+// extra query.
+func (stats *Stats) GetCallFineBuckets(db *Database) ([]StatsHourBucket, []StatsHourBucket, error) {
 	now := time.Now().UTC().Truncate(listenerBucketInterval)
 	since := now.Add(-statsFineBucketRange)
 
-	tally := map[time.Time]uint{}
-	rows, err := db.Query(
-		"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
-		since.Format(db.DateTimeFormat),
-	)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("stats.callFineBuckets: %v", err)
-	}
-	defer rows.Close()
+	microSince := time.Now().UTC().Truncate(statsMicroBucketInterval).Add(-statsMicroBucketRange)
 
-	for rows.Next() {
-		var raw any
-		if err := rows.Scan(&raw); err != nil {
-			continue
+	// Two grouped queries over small windows, or one row scan — see
+	// statsBucketCounts. Both series come from the same scan in the fallback,
+	// so the finer one still costs nothing extra there.
+	tally, ok := statsBucketCounts(db, since, int(listenerBucketInterval/time.Minute))
+	microTally, microOk := map[time.Time]uint{}, false
+
+	if ok {
+		microTally, microOk = statsBucketCounts(db, microSince, int(statsMicroBucketInterval/time.Minute))
+	}
+
+	if !ok || !microOk {
+		tally = map[time.Time]uint{}
+		microTally = map[time.Time]uint{}
+
+		rows, err := db.Query(
+			"select `dateTime` from `rdioScannerCalls` where `dateTime` >= ?",
+			since.Format(db.DateTimeFormat),
+		)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, nil, fmt.Errorf("stats.callFineBuckets: %v", err)
 		}
-		t, err := db.ParseDateTime(raw)
-		if err != nil {
-			continue
+		defer rows.Close()
+
+		for rows.Next() {
+			var raw any
+			if err := rows.Scan(&raw); err != nil {
+				continue
+			}
+			t, err := db.ParseDateTime(raw)
+			if err != nil {
+				continue
+			}
+			utc := t.UTC()
+			tally[utc.Truncate(listenerBucketInterval)]++
+
+			if !utc.Before(microSince) {
+				microTally[utc.Truncate(statsMicroBucketInterval)]++
+			}
 		}
-		tally[t.UTC().Truncate(listenerBucketInterval)]++
 	}
 
 	n := int(statsFineBucketRange / listenerBucketInterval)
@@ -279,7 +458,18 @@ func (stats *Stats) GetCallFineBuckets(db *Database) ([]StatsHourBucket, error) 
 			Count:    tally[t],
 		})
 	}
-	return result, nil
+
+	micro := int(statsMicroBucketRange / statsMicroBucketInterval)
+	microResult := make([]StatsHourBucket, 0, micro+1)
+	for i := 0; i <= micro; i++ {
+		t := microSince.Add(time.Duration(i) * statsMicroBucketInterval)
+		microResult = append(microResult, StatsHourBucket{
+			StartUtc: t.Format(time.RFC3339),
+			Count:    microTally[t],
+		})
+	}
+
+	return result, microResult, nil
 }
 
 // GetListenerBuckets returns 10-minute-grain listener averages/peaks over
@@ -347,10 +537,11 @@ func (stats *Stats) annotateTalkgroup(item *StatsTopTalkgroup) {
 	}
 }
 
-// GetTopSystems: top N systems by call count over the last 7 days.
-func (stats *Stats) GetTopSystems(db *Database, limit int) ([]StatsTopSystem, error) {
+// GetTopSystems: top N systems by call count since the given time. The
+// window comes from the dashboard's range filter, so the ranking matches the
+// period the rest of the dashboard is showing.
+func (stats *Stats) GetTopSystems(db *Database, limit int, since time.Time) ([]StatsTopSystem, error) {
 	result := []StatsTopSystem{}
-	since := time.Now().UTC().AddDate(0, 0, -7)
 
 	q := fmt.Sprintf(
 		"select `system`, count(*) as c from `rdioScannerCalls` where `dateTime` >= ? group by `system` order by c desc limit %d",
@@ -395,13 +586,12 @@ func (stats *Stats) topCategoriesKind() string {
 	return "systems"
 }
 
-// getTopCategoriesGrouped returns the last 7 days ranked by group or tag:
+// getTopCategoriesGrouped returns the given window ranked by group or tag:
 // tally per (system, talkgroup) in SQL, then resolve each pair to its label
 // via the systems config; talkgroups without a resolvable group or tag land
 // in "Other". The systems lens never comes here — build() derives it from
 // the TopSystems aggregation it already ran.
-func (stats *Stats) getTopCategoriesGrouped(db *Database, limit int, kind string) ([]StatsTopCategory, error) {
-	since := time.Now().UTC().AddDate(0, 0, -7)
+func (stats *Stats) getTopCategoriesGrouped(db *Database, limit int, kind string, since time.Time) ([]StatsTopCategory, error) {
 	rows, err := db.Query(
 		"select `system`, `talkgroup`, count(*) as c from `rdioScannerCalls` where `dateTime` >= ? group by `system`, `talkgroup`",
 		since.Format(db.DateTimeFormat),
@@ -777,7 +967,7 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 		}
 	})
 	run(func() {
-		if v, err := stats.GetTopSystems(db, 10); err != nil {
+		if v, err := stats.GetTopSystems(db, 10, statsRangeSince("1w")); err != nil {
 			logErr(err)
 		} else {
 			resp.TopSystems = v
@@ -789,7 +979,7 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 	topKind := stats.topCategoriesKind()
 	if topKind != "systems" {
 		run(func() {
-			if v, err := stats.getTopCategoriesGrouped(db, 10, topKind); err != nil {
+			if v, err := stats.getTopCategoriesGrouped(db, 10, topKind, statsRangeSince("1w")); err != nil {
 				logErr(err)
 			} else {
 				resp.TopCategories = v
@@ -811,10 +1001,11 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 		}
 	})
 	run(func() {
-		if v, err := stats.GetCallFineBuckets(db); err != nil {
+		if v, micro, err := stats.GetCallFineBuckets(db); err != nil {
 			logErr(err)
 		} else {
 			resp.CallFineBuckets = v
+			resp.CallMicroBuckets = micro
 		}
 	})
 	run(func() {
@@ -842,21 +1033,74 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 // cachedBuild returns a stats response, building + caching for 2 minutes.
 // Single shared cache — the response is TZ-independent (everything time-
 // bucketed is UTC) so all viewers can share it.
+//
+// A stale snapshot is served immediately and refreshed in the background.
+// Rebuild cost grows with the calls table, and making a request wait for one
+// is what turns a slow database into a gateway timeout: the viewer waits,
+// their connection is held, and concurrent viewers each queue another build.
+// Serving data up to a TTL stale costs nothing anyone can perceive on a
+// dashboard; blocking costs the whole page. Only the very first build (before
+// any snapshot exists) waits, and startup pre-warms that.
 func (stats *Stats) cachedBuild(db *Database) *StatsResponse {
 	stats.mu.Lock()
-	if stats.cached != nil && time.Since(stats.cachedAt) < statsCacheTTL {
-		cached := stats.cached
+	cached, cachedAt, building := stats.cached, stats.cachedAt, stats.building
+
+	if cached != nil {
+		stale := time.Since(cachedAt) >= statsCacheTTL
+
+		if stale && !building {
+			// Single-flight: one refresh at a time however many viewers ask.
+			stats.building = true
+			go stats.rebuild(db)
+		}
+
 		stats.mu.Unlock()
+
 		return cached
 	}
 	stats.mu.Unlock()
 
-	resp := stats.build(db)
+	// Nothing to serve yet — this one has to wait.
+	return stats.rebuild(db)
+}
+
+// rebuild runs a build and replaces the snapshot. A panic clears the
+// single-flight flag and is swallowed rather than propagated: the background
+// refresh runs in a bare goroutine, where an escaped panic is no longer a
+// dropped request but the whole process going down. The caller gets nil,
+// which only the very first build can even observe.
+func (stats *Stats) rebuild(db *Database) (resp *StatsResponse) {
+	started := time.Now()
+
+	defer func() {
+		stats.mu.Lock()
+		stats.building = false
+		stats.mu.Unlock()
+
+		if r := recover(); r != nil {
+			stats.Controller.Logs.LogEvent(
+				LogLevelError,
+				fmt.Sprintf("stats build panic: %v", r),
+			)
+		}
+	}()
+
+	resp = stats.build(db)
+	elapsed := time.Since(started)
 
 	stats.mu.Lock()
 	stats.cached = resp
 	stats.cachedAt = time.Now()
 	stats.mu.Unlock()
+
+	// Logged so a slow database is visible as a number rather than as a
+	// mysteriously stale dashboard.
+	if elapsed > statsSlowBuildThreshold {
+		stats.Controller.Logs.LogEvent(
+			LogLevelWarn,
+			fmt.Sprintf("stats build took %s; the dashboard is serving cached data while it refreshes", elapsed.Round(time.Millisecond)),
+		)
+	}
 
 	return resp
 }
@@ -876,22 +1120,79 @@ func (stats *Stats) PublicHandler(w http.ResponseWriter, r *http.Request) {
 	stats.handleStatsRequest(w, r, stats.Controller.Options.GetShowListenerStats())
 }
 
+// configuredInventory counts what is configured, as opposed to what has been
+// heard — the activity counts in Overview come from the calls table.
+//
+// Talkgroups and Units carry their own mutexes and the call-ingest path
+// appends to them under auto-populate, so each is locked in turn rather than
+// read behind the Systems lock alone. Systems first, then the child, matching
+// the order Systems.Read uses.
+func (stats *Stats) configuredInventory() (systems uint, talkgroups uint, units uint) {
+	// A controller without a systems collection is only ever a partially
+	// built one in a test; report zeroes rather than panicking a request.
+	if stats.Controller == nil || stats.Controller.Systems == nil {
+		return 0, 0, 0
+	}
+
+	// TryLock, not Lock: a config save holds this mutex for the whole write
+	// of every system, talkgroup and unit. Waiting on it made a stats request
+	// hang for the length of a save, and those requests hold a connection
+	// while they wait. Reporting nothing for one poll is the better trade.
+	if !stats.Controller.Systems.mutex.TryLock() {
+		return 0, 0, 0
+	}
+	defer stats.Controller.Systems.mutex.Unlock()
+
+	for _, system := range stats.Controller.Systems.List {
+		if system == nil {
+			continue
+		}
+
+		systems++
+
+		if system.Talkgroups != nil && system.Talkgroups.mutex.TryLock() {
+			talkgroups += uint(len(system.Talkgroups.List))
+			system.Talkgroups.mutex.Unlock()
+		}
+
+		if system.Units != nil && system.Units.mutex.TryLock() {
+			units += uint(len(system.Units.List))
+			system.Units.mutex.Unlock()
+		}
+	}
+
+	return systems, talkgroups, units
+}
+
 func (stats *Stats) handleStatsRequest(w http.ResponseWriter, r *http.Request, includeListeners bool) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	resp := stats.cachedBuild(stats.Controller.Database)
+	cached := stats.cachedBuild(stats.Controller.Database)
 
-	if !includeListeners && resp.ListenerBuckets != nil {
-		// Shallow copy — the cached response is shared by every caller, so
-		// stripping the field in place would hide it from admins too until
-		// the next rebuild.
-		shaped := *resp
-		shaped.ListenerBuckets = nil
-		resp = &shaped
+	// Only a first build that panicked can leave this nil — see rebuild.
+	if cached == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
+
+	// Shallow copy — the cached response is shared by every caller, so
+	// per-request shaping in place would leak between them.
+	shaped := *cached
+
+	// Counted per request rather than inside build(): it costs nothing (no
+	// query, just walking the in-memory config), and folding it into the
+	// cached build left the tiles showing pre-save numbers for the rest of
+	// the cache TTL, which reads as a save that didn't take.
+	shaped.ConfiguredSystems, shaped.ConfiguredTalkgroups, shaped.ConfiguredUnits = stats.configuredInventory()
+
+	if !includeListeners {
+		shaped.ListenerBuckets = nil
+	}
+
+	resp := &shaped
 
 	w.Header().Set("Content-Type", "application/json")
 	if b, err := json.Marshal(resp); err == nil {

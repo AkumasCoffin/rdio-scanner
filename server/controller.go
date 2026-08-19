@@ -31,30 +31,30 @@ import (
 )
 
 type Controller struct {
-	Admin       *Admin
-	Api         *Api
-	PublicApi   *PublicApi
-	Calls       *Calls
-	Config      *Config
-	Database    *Database
-	Delayer     *Delayer
-	Accesses    *Accesses
-	Apikeys     *Apikeys
-	Dirwatches  *Dirwatches
-	Downstreams *Downstreams
-	FFMpeg      *FFMpeg
-	Groups      *Groups
-	Listeners   *Listeners
-	Logs        *Logs
+	Admin          *Admin
+	Api            *Api
+	PublicApi      *PublicApi
+	Calls          *Calls
+	Config         *Config
+	Database       *Database
+	Delayer        *Delayer
+	Accesses       *Accesses
+	Apikeys        *Apikeys
+	Dirwatches     *Dirwatches
+	Downstreams    *Downstreams
+	FFMpeg         *FFMpeg
+	Groups         *Groups
+	Listeners      *Listeners
+	Logs           *Logs
 	Options        *Options
 	Plugins        *Plugins
 	PluginDispatch *PluginDispatch
 	PluginRpc      *PluginRpc
 	PluginStore    *PluginStore
-	Scheduler   *Scheduler
-	Stats       *Stats
-	Systems     *Systems
-	Tags        *Tags
+	Scheduler      *Scheduler
+	Stats          *Stats
+	Systems        *Systems
+	Tags           *Tags
 	// pluginFeatures caches which features each downstream advertises, so a
 	// plugin speaking a server-to-server protocol doesn't re-probe per call.
 	pluginFeatures *PluginFeatureCache
@@ -66,10 +66,10 @@ type Controller struct {
 	// that triggers it is thousands of calls deep, so an unthrottled line would
 	// write a row per call into the database the server is already behind on.
 	emitLogThrottle *LogThrottle
-	Clients            *Clients
-	Register           chan *Client
-	Unregister         chan *Client
-	Ingest             chan *Call
+	Clients         *Clients
+	Register        chan *Client
+	Unregister      chan *Client
+	Ingest          chan *Call
 	// clientEmitQueue serializes broadcasts to live WebSocket listeners so
 	// concurrent EmitCallToClients callers (single ingest goroutine + N
 	// Delayer timer goroutines) can't race each other and reorder calls on
@@ -102,21 +102,21 @@ type configCache struct {
 
 func NewController(config *Config) *Controller {
 	controller := &Controller{
-		Config:      config,
-		Accesses:    NewAccesses(),
-		Apikeys:     NewApikeys(),
-		Calls:       NewCalls(),
-		Dirwatches:  NewDirwatches(),
-		Downstreams: NewDownstreams(),
-		FFMpeg:      NewFFMpeg(),
-		Groups:      NewGroups(),
-		Listeners:   NewListeners(),
-		Logs:        NewLogs(),
-		Options:     NewOptions(),
-		Plugins:     NewPlugins(),
-		Systems:     NewSystems(),
-		Tags:        NewTags(),
-		Clients:     NewClients(),
+		Config:              config,
+		Accesses:            NewAccesses(),
+		Apikeys:             NewApikeys(),
+		Calls:               NewCalls(),
+		Dirwatches:          NewDirwatches(),
+		Downstreams:         NewDownstreams(),
+		FFMpeg:              NewFFMpeg(),
+		Groups:              NewGroups(),
+		Listeners:           NewListeners(),
+		Logs:                NewLogs(),
+		Options:             NewOptions(),
+		Plugins:             NewPlugins(),
+		Systems:             NewSystems(),
+		Tags:                NewTags(),
+		Clients:             NewClients(),
 		Register:            make(chan *Client, 8192),
 		Unregister:          make(chan *Client, 8192),
 		Ingest:              make(chan *Call, 8192),
@@ -1058,8 +1058,15 @@ func (controller *Controller) Start() error {
 		// shutdown, and the database closed by the process dying rather than
 		// by us.
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-		<-c
-		controller.Terminate()
+
+		// Keep receiving rather than handling one signal and blocking in
+		// Terminate. Registering for a signal takes away the runtime's
+		// default kill behaviour, so a second Ctrl+C only means anything if
+		// something is still listening for it; Terminate gets its own
+		// goroutine so this loop stays free to pick that second one up.
+		for range c {
+			go controller.Terminate()
+		}
 	}()
 
 	go func() {
@@ -1073,7 +1080,12 @@ func (controller *Controller) Start() error {
 	// first user hit never waits on a cold count(*) over the whole table.
 	go func() {
 		controller.Calls.WarmSearchMeta(controller.Database)
-		ticker := time.NewTicker(10 * time.Second)
+
+		// Re-warmed a little before the cache expires, rather than every ten
+		// seconds. The warm runs a count(*) over the whole table, so at the
+		// old interval a large database spent a good part of every minute
+		// counting its own rows for a number nobody had asked for.
+		ticker := time.NewTicker(callsSearchMetaTTL - 15*time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
 			controller.Calls.WarmSearchMeta(controller.Database)
@@ -1151,18 +1163,118 @@ func (controller *Controller) Start() error {
 	return nil
 }
 
+// terminateTimeout bounds how long a shutdown waits for cleanup.
+//
+// The known offender is plugin shutdown. PluginRuntime.Stop allows a runtime
+// up to 5s to run its shutdown handlers and another 5s to stop its event
+// loop, and Plugins.Stop walks the plugins one at a time — so a few loaded
+// plugins can hold the process for tens of seconds. That only bites once the
+// server has been up long enough for plugins to be running, which is why
+// stopping it seconds after startup always felt fine.
+//
+// The bound is deliberately on the whole of cleanup rather than on any one
+// step: whatever blocks next gets the same treatment without anyone having to
+// predict it first.
+const terminateTimeout = 5 * time.Second
+
+// terminating makes a second signal mean "now", so an operator who sees a
+// stop take longer than expected can press Ctrl+C again and get out.
+var terminating atomic.Bool
+
 func (controller *Controller) Terminate() {
-	controller.Dirwatches.Stop()
-
-	// Stop plugins before closing the database — a shutdown handler that wants
-	// to flush state needs its tables to still be reachable.
-	controller.Plugins.Stop(controller)
-
-	if err := controller.Database.Sql.Close(); err != nil {
-		log.Println(err)
+	if !terminating.CompareAndSwap(false, true) {
+		log.Println("second signal received, exiting immediately")
+		os.Exit(1)
 	}
+
+	controller.shutdown()
 
 	log.Println("terminated")
 
 	os.Exit(0)
+}
+
+// Restart shuts the server down cleanly and re-executes it.
+//
+// It goes through the same bounded cleanup a Ctrl+C does, rather than
+// re-executing straight away: on Unix restartSelf is syscall.Exec, which
+// replaces the process image on the spot. Plugins would never get their
+// shutdown handlers and the database would be dropped mid-connection —
+// invisible most of the time, and data a plugin meant to flush the rest of
+// it.
+//
+// Never returns: the process is either replaced or exits.
+func (controller *Controller) Restart() {
+	if !terminating.CompareAndSwap(false, true) {
+		log.Println("already shutting down; ignoring the restart request")
+		return
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		// Nothing to re-exec. Better to stop than to carry on in a state the
+		// operator has already been told is restarting; a supervisor brings it
+		// back, and one without a supervisor sees the reason in the log.
+		log.Printf("restart: cannot find my own executable (%v); exiting instead", err)
+		controller.shutdown()
+		os.Exit(1)
+	}
+
+	controller.shutdown()
+
+	log.Println("restarting")
+
+	restartSelf(exe)
+}
+
+// shutdown runs the bounded cleanup and reports what it was doing if the
+// deadline beat it.
+func (controller *Controller) shutdown() {
+	var phase atomic.Value
+	phase.Store("starting")
+
+	if !runWithTimeout(func() { controller.terminateWork(&phase) }, terminateTimeout) {
+		log.Printf("shutdown gave up after %s while %v; continuing anyway", terminateTimeout, phase.Load())
+	}
+}
+
+// terminateWork is the cleanup itself, separated from the exit so it can be
+// bounded (and tested) without taking the process down.
+//
+// Each step records what it is about to do, so if the deadline fires the last
+// recorded phase names the step that hung — otherwise a stuck shutdown tells
+// you only that it was stuck, and whoever debugs it next starts from nothing.
+func (controller *Controller) terminateWork(phase *atomic.Value) {
+	phase.Store("stopping directory watchers")
+	controller.Dirwatches.Stop()
+
+	// Stop plugins before closing the database — a shutdown handler that wants
+	// to flush state needs its tables to still be reachable.
+	phase.Store("stopping plugins")
+	controller.Plugins.Stop(controller)
+
+	phase.Store("closing the database")
+	if err := controller.Database.Sql.Close(); err != nil {
+		log.Println(err)
+	}
+
+	phase.Store("done")
+}
+
+// runWithTimeout reports whether work finished within the timeout. Work that
+// overruns is abandoned, not cancelled — the caller is on its way out.
+func runWithTimeout(work func(), timeout time.Duration) bool {
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		work()
+	}()
+
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }

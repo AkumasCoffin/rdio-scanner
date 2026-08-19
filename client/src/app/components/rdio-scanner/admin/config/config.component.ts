@@ -17,10 +17,13 @@
  * ****************************************************************************
  */
 
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, OnDestroy, QueryList, ViewChildren, ViewEncapsulation } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnDestroy, OnInit, QueryList, ViewChildren, ViewEncapsulation } from '@angular/core';
 import { FormArray, FormControl, FormGroup } from '@angular/forms';
 import { MatExpansionPanel } from '@angular/material/expansion';
 import { AdminEvent, RdioScannerAdminService, Config } from '../admin.service';
+
+/** The config sections the tab shell can point this host at. */
+export type ConfigSection = 'options' | 'systems' | 'groupsTags' | 'access' | 'apiKeys' | 'dirWatch' | 'downstreams';
 
 @Component({
     changeDetection: ChangeDetectionStrategy.OnPush,
@@ -29,7 +32,11 @@ import { AdminEvent, RdioScannerAdminService, Config } from '../admin.service';
     styleUrls: ['./config.component.scss'],
     templateUrl: './config.component.html',
 })
-export class RdioScannerAdminConfigComponent implements OnDestroy {
+export class RdioScannerAdminConfigComponent implements OnDestroy, OnInit {
+    // Which section renders. The single instance (and so the single reactive
+    // form with any unsaved edits) stays alive across section switches.
+    @Input() section: ConfigSection = 'options';
+
     docker = false;
 
     form: FormGroup | undefined;
@@ -111,6 +118,13 @@ export class RdioScannerAdminConfigComponent implements OnDestroy {
         private adminService: RdioScannerAdminService,
         private ngChangeDetectorRef: ChangeDetectorRef,
     ) { }
+
+    // The host is always instantiated once authenticated (the tab shell keeps
+    // it alive behind every tab), so the config loads on init rather than on
+    // an accordion expand as before.
+    ngOnInit(): void {
+        this.load();
+    }
 
     ngOnDestroy(): void {
         this.eventSubscription.unsubscribe();

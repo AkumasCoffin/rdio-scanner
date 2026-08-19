@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,45 @@ const pluginStartupTimeout = 15 * time.Second
 // noticed while the process still has memory: every queued job holds a copy of
 // whatever it was handed.
 const pluginLoopMaxQueued = 4096
+
+// pluginRouteBusyQueue is the backlog past which an HTTP route stops queueing
+// and answers 503 straight away.
+//
+// Far below pluginLoopMaxQueued on purpose: that limit protects the server's
+// memory and is the right place to start shedding notifications, which nobody
+// is waiting on. A caller holding an HTTP connection open is waiting, and a
+// backlog this deep already means it will not be served in time. Better to be
+// told now.
+const pluginRouteBusyQueue = 64
+
+// pluginRouteTimeout bounds a route handler end to end, including any promise
+// it returns.
+//
+// It has to exceed pluginCallTimeout: the watchdog only covers the synchronous
+// part, and a handler that awaits rdio.http is legitimately unfinished when
+// that part returns. It used to be pluginCallTimeout + 5s, which was shorter
+// than rdio.http's own 60s default — so a route doing the single most ordinary
+// async thing a route can do was guaranteed to be abandoned before its own
+// request could come back.
+//
+// A plugin that raises timeoutMs beyond pluginHttpTimeout is still cut off
+// here. That is deliberate: something in front of this server (a proxy, a
+// browser, a retrying uploader) gives up around the two-minute mark, so a
+// route that runs longer is answering into a void.
+const pluginRouteTimeout = pluginHttpTimeout + pluginCallTimeout
+
+// pluginBusyError says the plugin's loop is too far behind to take more work.
+// A distinct type so the HTTP layer can answer 503 with a Retry-After rather
+// than a flat 500 — the difference between "try again shortly" and "this
+// request is broken".
+type pluginBusyError struct {
+	plugin string
+	detail string
+}
+
+func (e *pluginBusyError) Error() string {
+	return fmt.Sprintf("plugin %s is too far behind to take the request (%s)", e.plugin, e.detail)
+}
 
 // observerTimeout is what an observer at a point may take.
 //
@@ -129,6 +169,15 @@ type PluginRuntime struct {
 	// keep up is shed rather than allowed to grow an unbounded backlog.
 	queued atomic.Int64
 
+	// The last job that held the loop past pluginSlowJobThreshold. Everything
+	// a plugin does shares one loop, so when a call times out the useful
+	// question is not "did it time out" but "what was in the way" — and the
+	// caller that times out is never the culprit, it is the victim.
+	slowJobMutex sync.Mutex
+	slowJobLabel string
+	slowJobTook  time.Duration
+	slowJobAt    time.Time
+
 	loopLogThrottle *LogThrottle
 
 	stopped bool
@@ -150,17 +199,17 @@ func NewPluginRuntime(controller *Controller, plugin *Plugin) (*PluginRuntime, e
 	}
 
 	return &PluginRuntime{
-		controller:    controller,
-		plugin:        plugin,
-		manifest:      plugin.Manifest,
-		db:            NewPluginDb(controller.Database, plugin.Manifest),
-		dataDir:       dataDir,
+		controller:      controller,
+		plugin:          plugin,
+		manifest:        plugin.Manifest,
+		db:              NewPluginDb(controller.Database, plugin.Manifest),
+		dataDir:         dataDir,
 		handlers:        map[string][]goja.Callable{},
 		loopLogThrottle: NewLogThrottle(1, time.Minute),
-		wsHandlers:    map[string]goja.Callable{},
-		routes:        []*pluginRoute{},
-		exposedConfig: map[string]any{},
-		config:        config,
+		wsHandlers:      map[string]goja.Callable{},
+		routes:          []*pluginRoute{},
+		exposedConfig:   map[string]any{},
+		config:          config,
 	}, nil
 }
 
@@ -421,7 +470,7 @@ func (rt *PluginRuntime) Emit(event string, payload any) {
 		return
 	}
 
-	rt.runOnLoop(func(vm *goja.Runtime) {
+	rt.runOnLoop(event, func(vm *goja.Runtime) {
 		stop := rt.armWatchdog(vm, event, pluginCallTimeout)
 		defer stop()
 
@@ -461,7 +510,16 @@ func (rt *PluginRuntime) dispatchSync(event string, payload any) {
 
 // runOnLoop schedules work on the plugin's event loop, recovering from panics
 // so a misbehaving plugin cannot take the server down with it.
-func (rt *PluginRuntime) runOnLoop(fn func(vm *goja.Runtime)) bool {
+// pluginSlowJobThreshold is how long one job may hold the event loop before it
+// is worth naming. Everything a plugin does is serialized behind this loop, so
+// a job over the threshold is delaying every other thing that plugin is trying
+// to do — a route handler waiting its turn included.
+const pluginSlowJobThreshold = time.Second
+
+// label describes the work for the slow-job log: "route:/api/x", "ws:command",
+// a dispatch point name. Kept short — it is read in a log line, next to a
+// duration.
+func (rt *PluginRuntime) runOnLoop(label string, fn func(vm *goja.Runtime)) bool {
 	rt.mutex.RLock()
 	stopped := rt.stopped
 	loop := rt.loop
@@ -491,6 +549,8 @@ func (rt *PluginRuntime) runOnLoop(fn func(vm *goja.Runtime)) bool {
 	return loop.RunOnLoop(func(vm *goja.Runtime) {
 		defer rt.queued.Add(-1)
 
+		defer rt.timeLoopJob(label)()
+
 		defer func() {
 			if r := recover(); r != nil {
 				rt.controller.Logs.LogEvent(
@@ -501,6 +561,68 @@ func (rt *PluginRuntime) runOnLoop(fn func(vm *goja.Runtime)) bool {
 		}()
 		fn(vm)
 	})
+}
+
+// timeLoopJob starts the clock on a job and returns the function that stops it,
+// for `defer rt.timeLoopJob(label)()`.
+//
+// Split out from runOnLoop because timers do not go through runOnLoop at all —
+// rdio.schedule hands its callback straight to the event loop. Timing only the
+// jobs that pass through runOnLoop would have left periodic work invisible,
+// and periodic work is the likeliest thing to be quietly doing something
+// expensive: it runs unprompted, so nobody is watching a request while it does.
+//
+// The raw setTimeout and setInterval that goja_nodejs binds into every runtime
+// stay outside this; reaching them means wrapping the bindings themselves.
+func (rt *PluginRuntime) timeLoopJob(label string) func() {
+	started := time.Now()
+
+	return func() {
+		if elapsed := time.Since(started); elapsed >= pluginSlowJobThreshold {
+			rt.recordSlowJob(label, elapsed)
+		}
+	}
+}
+
+// recordSlowJob remembers and reports a job that monopolized the loop.
+//
+// Remembering matters as much as logging: the log is throttled, but a call
+// that times out reads the record unthrottled and can say what it was waiting
+// behind. Without that, a timeout names the victim and nothing else, which is
+// how "the route is slow" gets investigated for a week before anyone looks at
+// the timer beside it.
+func (rt *PluginRuntime) recordSlowJob(label string, elapsed time.Duration) {
+	rt.slowJobMutex.Lock()
+	rt.slowJobLabel = label
+	rt.slowJobTook = elapsed
+	rt.slowJobAt = time.Now()
+	rt.slowJobMutex.Unlock()
+
+	if rt.loopLogThrottle != nil && !rt.loopLogThrottle.Allow(rt.manifest.Id+":slow") {
+		return
+	}
+
+	rt.controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf(
+		"plugin %s held its event loop for %s in %s; everything else that plugin does was waiting. Slow work belongs off the loop — see the async variants of db, calls and http.",
+		rt.manifest.Id, elapsed.Round(time.Millisecond), label,
+	))
+}
+
+// lastSlowJob describes what recently monopolized the loop, for a caller that
+// gave up waiting. Empty when nothing recent is on record.
+func (rt *PluginRuntime) lastSlowJob() string {
+	rt.slowJobMutex.Lock()
+	defer rt.slowJobMutex.Unlock()
+
+	if rt.slowJobLabel == "" || time.Since(rt.slowJobAt) > time.Minute {
+		return ""
+	}
+
+	return fmt.Sprintf("%s held it for %s, %s ago",
+		rt.slowJobLabel,
+		rt.slowJobTook.Round(time.Millisecond),
+		time.Since(rt.slowJobAt).Round(time.Second),
+	)
 }
 
 // reportLoopSaturated says once a minute that a plugin is falling behind.
@@ -595,7 +717,7 @@ func (rt *PluginRuntime) DispatchWs(client *Client, command string, payload any)
 		return
 	}
 
-	rt.runOnLoop(func(vm *goja.Runtime) {
+	rt.runOnLoop("ws:"+command, func(vm *goja.Runtime) {
 		stop := rt.armWatchdog(vm, "ws:"+command, pluginCallTimeout)
 		defer stop()
 
@@ -609,16 +731,35 @@ func (rt *PluginRuntime) DispatchWs(client *Client, command string, payload any)
 
 // DispatchRoute invokes a registered HTTP handler and waits for its result.
 // HTTP handlers are request/response by nature, so unlike events this one does
-// block — bounded by the same per-call timeout.
-func (rt *PluginRuntime) DispatchRoute(route *pluginRoute, request map[string]any) (result any, err error) {
+// block — bounded by pluginRouteTimeout, or by the caller going away first.
+//
+// ctx is the request's, so a client that gives up releases this waiter
+// immediately instead of holding a goroutine and a connection until the
+// deadline. That matters most exactly when it is most likely: a plugin whose
+// loop is congested is also the one whose callers are timing out and retrying.
+func (rt *PluginRuntime) DispatchRoute(ctx context.Context, route *pluginRoute, request map[string]any) (result any, err error) {
 	type outcome struct {
 		value any
 		err   error
 	}
 
+	// Refuse rather than queue when the loop is already deep in arrears.
+	// Waiting the full deadline for a turn that is not coming teaches a caller
+	// nothing except to retry, and every retry lands another job on the queue
+	// that is already the problem. A prompt 503 is the honest answer and the
+	// only one a caller can act on.
+	if queued := rt.queued.Load(); queued >= pluginRouteBusyQueue {
+		detail := fmt.Sprintf("%d jobs queued", queued)
+		if busy := rt.lastSlowJob(); busy != "" {
+			detail += "; " + busy
+		}
+
+		return nil, &pluginBusyError{plugin: rt.manifest.Id, detail: detail}
+	}
+
 	ch := make(chan outcome, 1)
 
-	scheduled := rt.runOnLoop(func(vm *goja.Runtime) {
+	scheduled := rt.runOnLoop("route:"+route.path, func(vm *goja.Runtime) {
 		stop := rt.armWatchdog(vm, "route:"+route.path, pluginCallTimeout)
 		defer stop()
 
@@ -657,8 +798,25 @@ func (rt *PluginRuntime) DispatchRoute(route *pluginRoute, request map[string]an
 	select {
 	case out := <-ch:
 		return out.value, out.err
-	case <-time.After(pluginCallTimeout + 5*time.Second):
-		return nil, fmt.Errorf("plugin %s timed out handling %s", rt.manifest.Id, route.path)
+
+	case <-ctx.Done():
+		// The caller has gone. Saying so distinguishes a client that hung up
+		// from a plugin that could not answer, which otherwise look identical
+		// in the log and lead to opposite investigations.
+		return nil, fmt.Errorf("plugin %s: caller disconnected before %s answered", rt.manifest.Id, route.path)
+
+	case <-time.After(pluginRouteTimeout):
+		// Name the queue depth and whatever was last seen hogging the loop.
+		// A route handler is almost never slow by itself — it is behind
+		// something — and a message that only names the route sends whoever
+		// reads it to look at the one piece of code that is innocent.
+		detail := fmt.Sprintf("%d jobs queued", rt.queued.Load())
+		if busy := rt.lastSlowJob(); busy != "" {
+			detail += "; " + busy
+		}
+
+		return nil, fmt.Errorf("plugin %s timed out handling %s after %s (%s)",
+			rt.manifest.Id, route.path, pluginRouteTimeout, detail)
 	}
 }
 
@@ -687,7 +845,7 @@ func (rt *PluginRuntime) EmitTo(point string, payload any) {
 		return
 	}
 
-	rt.runOnLoop(func(vm *goja.Runtime) {
+	rt.runOnLoop(point, func(vm *goja.Runtime) {
 		// The point's own budget, not a flat thirty seconds. An observer on
 		// call.emit runs once per listener per call against a documented 250ms
 		// ceiling, and giving it two orders of magnitude more than the filter
@@ -757,7 +915,7 @@ func (rt *PluginRuntime) CallSync(point string, timeout time.Duration, callable 
 		}
 	}
 
-	scheduled := rt.runOnLoop(func(vm *goja.Runtime) {
+	scheduled := rt.runOnLoop(point, func(vm *goja.Runtime) {
 		// Disarmed by hand rather than deferred, because a handler that returns
 		// a promise is not finished when this function returns. Deferring meant
 		// the interrupt was cleared the instant the synchronous part ended, so

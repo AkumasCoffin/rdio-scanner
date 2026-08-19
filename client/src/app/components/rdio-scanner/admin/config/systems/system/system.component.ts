@@ -32,10 +32,23 @@ import { LED_HEX } from '../../../../led-colors';
 export class RdioScannerAdminSystemComponent {
     ledHex = LED_HEX;
 
+    // Settings / Talkgroups / Units as tabs rather than stacked dropdowns.
+    // Only the active pane is in the DOM, which keeps the virtual-scroll
+    // lists off the page until asked for — the same laziness the expansion
+    // panels' matExpansionPanelContent gave.
+    tab: 'settings' | 'talkgroups' | 'units' = 'settings';
+
     // The root form is the whole config form, so the Options section's toggle
     // is readable from here — the second color selector follows it live.
     get dualLed(): boolean {
         return this.form.root.get('options')?.value?.dualLed === true;
+    }
+
+    // Marks the Settings panel header when any of the system's own fields are
+    // invalid — talkgroups and units have their own panels and badges.
+    get settingsInvalid(): boolean {
+        return ['id', 'label', 'led', 'led2', 'autoPopulate', 'blacklists', 'delay', 'alert']
+            .some((key) => this.form.get(key)?.invalid === true);
     }
 
     private formValue = new FormGroup({});
@@ -43,6 +56,21 @@ export class RdioScannerAdminSystemComponent {
     @Input()
     set form(form: FormGroup) {
         this.formValue = form;
+
+        // One editor instance now serves every system (the master/detail pane
+        // swaps this input), so per-system view state has to be dropped here.
+        // Carrying a selection across the swap left the editor pointed at the
+        // previous system's talkgroup: edits went to the old system, and
+        // Delete/Blacklist acted on an id the new system doesn't contain.
+        //
+        // The active tab is deliberately NOT reset: comparing the same tab
+        // across systems is the reason to click through the list, and being
+        // thrown back to Settings each time makes that a chore.
+        this.selectedTalkgroup = undefined;
+        this.selectedUnit = undefined;
+        this.talkgroupQuery = '';
+        this.unitQuery = '';
+
         this.refreshLists();
     }
 

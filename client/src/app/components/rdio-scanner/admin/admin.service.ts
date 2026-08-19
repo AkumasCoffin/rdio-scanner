@@ -431,6 +431,8 @@ export interface StatsResponse {
      * short filter ranges. Zeros mean no calls, same as hourBuckets.
      */
     callFineBuckets?: StatsHourBucket[];
+    /** 5-minute counts over the last 6 hours, for the 1-hour range. */
+    callMicroBuckets?: StatsHourBucket[];
     topTalkgroups: StatsTopTalkgroup[];
     topSystems: StatsTopSystem[];
     /**
@@ -448,6 +450,10 @@ export interface StatsResponse {
      * showListenerStats is on.
      */
     listenerBuckets?: StatsListenerBucket[];
+    /** Configured inventory counts, from the server's in-memory config. */
+    configuredSystems?: number;
+    configuredTalkgroups?: number;
+    configuredUnits?: number;
 }
 
 enum url {
@@ -583,7 +589,9 @@ export class RdioScannerAdminService implements OnDestroy {
         try {
             // Server response is pure UTC — hourBuckets carry RFC3339
             // startUtc and the client bins them in the browser's TZ for
-            // display.
+            // display. One shared snapshot regardless of the dashboard's
+            // range filter: every range is sliced client-side, so switching
+            // ranges costs no request.
             const res = await firstValueFrom(this.ngHttpClient.get<StatsResponse>(
                 this.getUrl(url.stats),
                 { headers: this.getHeaders(), responseType: 'json' },
@@ -1000,6 +1008,50 @@ export class RdioScannerAdminService implements OnDestroy {
             {},
             { headers: this.getHeaders(), responseType: 'json' },
         ));
+    }
+
+    /**
+     * Restarts the server on the binary it is already running.
+     *
+     * Plugins load once at startup, so anything installed, updated, enabled or
+     * disabled needs this before it takes effect.
+     */
+    async restartServer(): Promise<{ ok: boolean; restarting: boolean }> {
+        return await firstValueFrom(this.ngHttpClient.post<{ ok: boolean; restarting: boolean }>(
+            `${window.location.href}/../api/admin/restart`,
+            {},
+            { headers: this.getHeaders(), responseType: 'json' },
+        ));
+    }
+
+    /**
+     * Resolves once the server answers again, or rejects when it has not come
+     * back in time.
+     *
+     * A restart drops this connection, so the page cannot simply wait on the
+     * request it sent. Polling something cheap and unauthenticated is what
+     * turns "the page went blank" into a wait with an end to it.
+     */
+    async waitForServer(timeoutMs = 60000): Promise<void> {
+        const deadline = Date.now() + timeoutMs;
+
+        // The server is still up for a moment after answering, so a poll that
+        // starts immediately would succeed against the instance on its way out.
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        while (Date.now() < deadline) {
+            try {
+                await firstValueFrom(this.ngHttpClient.get(
+                    `${window.location.href}/../api/capabilities`,
+                    { responseType: 'text' },
+                ));
+                return;
+            } catch (err) {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+        }
+
+        throw new Error('the server did not come back');
     }
 
     async cancelUpdate(): Promise<{ ok: boolean }> {

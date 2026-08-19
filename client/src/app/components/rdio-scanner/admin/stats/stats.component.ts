@@ -119,10 +119,22 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfWeek.getDate() - 6);
         const startOfMonth = new Date(startOfToday); startOfMonth.setDate(startOfMonth.getDate() - 29);
 
+        // Start of the selected filter range. 'all' has no lower bound, so
+        // every bucket the server sent (30 days) counts.
+        const rangeHours: { [key: string]: number } = {
+            '1h': 1, '6h': 6, '12h': 12, '24h': 24, '48h': 48, '1w': 24 * 7, '1m': 24 * 30,
+        };
+        const rangeStart = this.range === 'all'
+            ? new Date(0)
+            : new Date(now.getTime() - (rangeHours[this.range] ?? 24) * 3600 * 1000);
+
         let todayCalls = 0;
         let weekCalls = 0;
         let monthCalls = 0;
+        let rangeCalls = 0;
+        const rangeDays = new Set<string>();
         const hourOfDay = new Array<number>(24).fill(0);
+        const hourOfDayOccurrences = new Array<number>(24).fill(0);
         const dayCounts = new Map<string, number>(); // local YYYY-MM-DD -> count
 
         for (const b of buckets) {
@@ -135,29 +147,77 @@ export class RdioScannerAdminStatsComponent implements OnInit {
                 const key = `${t.getFullYear()}-${(t.getMonth() + 1).toString().padStart(2, '0')}-${t.getDate().toString().padStart(2, '0')}`;
                 dayCounts.set(key, (dayCounts.get(key) || 0) + b.count);
             }
-            // Hour-of-day rollup uses the last 7 days, matching the
-            // historic "Average Calls Per Hour (over 7 days)" chart.
-            if (t >= startOfWeek) hourOfDay[t.getHours()] += b.count;
+            // Hour-of-day rollup and the range card follow the selected
+            // filter rather than a fixed week, so the whole dashboard
+            // describes one period.
+            if (t >= rangeStart) {
+                hourOfDay[t.getHours()] += b.count;
+                // How many times this hour-of-day actually occurs in the
+                // window. A range rarely covers whole days, so 03:00 can
+                // appear 31 times where 15:00 appears 30 — dividing every
+                // hour by one day count would tilt the whole distribution.
+                hourOfDayOccurrences[t.getHours()]++;
+                rangeCalls += b.count;
+                rangeDays.add(`${t.getFullYear()}-${t.getMonth()}-${t.getDate()}`);
+            }
         }
 
-        // Peak hour = argmax(hourOfDay).
+        // Hour-grain buckets can't resolve a short window: with hour-aligned
+        // starts, a "last 1 hour" cutoff at :40 keeps only the in-progress
+        // bucket's 40 minutes — and before the server shipped that bucket at
+        // all, the card pinned to zero. Short ranges re-sum from the finest
+        // series that spans them (5-minute over 6h, 10-minute over 48h);
+        // guarded so an older server without those series keeps the
+        // hour-grain sum rather than losing the card.
+        if (this.range !== 'all' && (rangeHours[this.range] ?? 24) <= 48) {
+            const fine = (rangeHours[this.range] ?? 24) <= 6
+                ? this.stats.callMicroBuckets
+                : this.stats.callFineBuckets;
+            if (fine?.length) {
+                rangeCalls = fine.reduce((sum, b) => {
+                    const t = new Date(b.startUtc);
+                    return !isNaN(t.getTime()) && t >= rangeStart ? sum + b.count : sum;
+                }, 0);
+            }
+        }
+
+        // Per-hour averages, so hours seen more often than others don't win by
+        // repetition alone.
+        const hourOfDayAverage = hourOfDay.map(
+            (total, h) => (hourOfDayOccurrences[h] ? total / hourOfDayOccurrences[h] : 0),
+        );
+
+        // Peak hour = argmax over the averages, for the same reason.
         let peakHour = 0;
         let peakCount = -1;
         for (let h = 0; h < 24; h++) {
-            if (hourOfDay[h] > peakCount) {
-                peakCount = hourOfDay[h];
+            if (hourOfDayAverage[h] > peakCount) {
+                peakCount = hourOfDayAverage[h];
                 peakHour = h;
             }
         }
 
-        const avgPerDay = monthCalls / 30;
+        // Averaged over the days the range actually spans, not a fixed 30.
+        const avgPerDay = rangeDays.size ? rangeCalls / rangeDays.size : 0;
 
         // Stash the binned arrays for the chart builders.
+        this._rangeDayCount = rangeDays.size;
         this._hourOfDayLast7d = hourOfDay;
+        this._hourOfDayAverage = hourOfDayAverage;
+        this._hourOfDayOccurrences = hourOfDayOccurrences;
         this._dayCountsLast30d = dayCounts;
 
+        // One call counter that follows the filter, rather than a fixed total
+        // plus a range card. On 'all' the two disagreed anyway: the range is
+        // summed from the 30-day buckets while the total counts the whole
+        // table, so a database retaining more than a month showed a smaller
+        // "all" than its own total.
+        const callsCard = this.range === 'all'
+            ? { label: 'Total Calls', value: this.formatNumber(overview.totalCalls), icon: 'call', color: '#00bcd4' }
+            : { label: this.rangeLabel(), value: this.formatNumber(rangeCalls), icon: 'call', color: '#00bcd4' };
+
         this.overviewCards = [
-            { label: 'Total Calls', value: this.formatNumber(overview.totalCalls), icon: 'call', color: '#00bcd4' },
+            callsCard,
             { label: 'Today', value: this.formatNumber(todayCalls), icon: 'today', color: '#4caf50' },
             { label: 'This Week', value: this.formatNumber(weekCalls), icon: 'date_range', color: '#ff9800' },
             { label: 'This Month', value: this.formatNumber(monthCalls), icon: 'calendar_month', color: '#9c27b0' },
@@ -165,15 +225,91 @@ export class RdioScannerAdminStatsComponent implements OnInit {
             { label: 'Active Talkgroups', value: overview.activeTalkgroups, icon: 'groups', color: '#e91e63' },
             { label: 'Avg/Day', value: Math.round(avgPerDay), icon: 'trending_up', color: '#607d8b' },
             { label: 'Peak Hour', value: this.formatHour(peakHour), icon: 'schedule', color: '#795548' },
+            // Configured inventory, distinct from the activity counts above:
+            // these count what exists in the config, not what's been heard.
+            { label: 'Systems', value: this.stats.configuredSystems ?? 0, icon: 'podcasts', color: '#3f51b5' },
+            { label: 'Talkgroups', value: this.formatNumber(this.stats.configuredTalkgroups ?? 0), icon: 'forum', color: '#009688' },
+            { label: 'Units', value: this.formatNumber(this.stats.configuredUnits ?? 0), icon: 'badge', color: '#8bc34a' },
         ];
     }
 
+    // Label for the range-scoped card, e.g. "LAST 24 HOURS".
+    private rangeLabel(): string {
+        return (STATS_RANGES.find((r) => r.key === this.range)?.label ?? '') + ' calls';
+    }
+
+    private _rangeDayCount = 1;
     private _hourOfDayLast7d: number[] = new Array(24).fill(0);
+    private _hourOfDayAverage: number[] = new Array(24).fill(0);
+    private _hourOfDayOccurrences: number[] = new Array(24).fill(0);
     private _dayCountsLast30d: Map<string, number> = new Map();
 
     private buildHourlyChart(): void {
-        const labels = this._hourOfDayLast7d.map((_, h) => `${h.toString().padStart(2, '0')}:00`);
-        const data = this._hourOfDayLast7d;
+        const rangeLabel = STATS_RANGES.find((r) => r.key === this.range)?.label ?? '';
+        const rangeHours: { [key: string]: number } = {
+            '1h': 1, '6h': 6, '12h': 12, '24h': 24, '48h': 48, '1w': 24 * 7, '1m': 24 * 30,
+        };
+        const hours = rangeHours[this.range] ?? 0;
+
+        let labels: string[];
+        let data: number[];
+        let title: string;
+
+        if (this.range === '1h') {
+            // Hour-of-day bins would be a single bar, so draw the minutes.
+            const cutoff = Date.now() - 3600 * 1000;
+            const slots = (this.stats?.callMicroBuckets ?? []).filter((b) => {
+                const t = new Date(b.startUtc).getTime();
+                return !isNaN(t) && t >= cutoff;
+            });
+            labels = slots.map((b) => new Date(b.startUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            data = slots.map((b) => b.count);
+            title = 'Calls per 5 Minutes (1H)';
+
+        } else if (hours && hours <= 24) {
+            // Inside a day, every hour-of-day happens at most once, so a
+            // 24-hour distribution axis is mostly empty columns. Draw the
+            // hours the window actually covers, in the order they happened.
+            const buckets = new Map<number, number>();
+            for (const b of this.stats?.hourBuckets ?? []) {
+                const t = new Date(b.startUtc);
+                if (!isNaN(t.getTime())) buckets.set(t.getTime(), b.count);
+            }
+
+            // Anchored to the epoch, not the local clock's hour: bucket keys
+            // are UTC hour starts, and in a half-hour-offset timezone a grid
+            // built from local hours misses all of them. Labels come from the
+            // slot's local rendering, so they show :30 where the viewer's
+            // clock genuinely sits between UTC hours.
+            const hourMs = 3600 * 1000;
+            const currentHour = Math.floor(Date.now() / hourMs) * hourMs;
+
+            labels = [];
+            data = [];
+            for (let i = hours - 1; i >= 0; i--) {
+                const slot = new Date(currentHour - i * hourMs);
+                labels.push(slot.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+                data.push(buckets.get(slot.getTime()) ?? 0);
+            }
+            title = `Calls by Hour (${rangeLabel})`;
+
+        } else {
+            // Multi-day windows: the distribution across the day, averaged so
+            // a week doesn't just read as seven times a day.
+            const averaged = this._hourOfDayOccurrences.some((n) => n > 1);
+            labels = this._hourOfDayLast7d.map((_, h) => `${h.toString().padStart(2, '0')}:00`);
+            data = (averaged ? this._hourOfDayAverage : this._hourOfDayLast7d)
+                .map((v) => Math.round(v * 10) / 10);
+            title = `${averaged ? 'Average ' : ''}Calls by Hour of Day (${rangeLabel})`;
+        }
+
+        this.hourlyChartOptions = {
+            ...this.hourlyChartOptions,
+            plugins: {
+                ...(this.hourlyChartOptions?.plugins ?? {}),
+                title: { display: true, text: title, color: '#e0e0e0' },
+            },
+        };
 
         this.hourlyChartData = {
             labels,
@@ -190,7 +326,15 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         if (this.range === range) {
             return;
         }
+
         this.range = range;
+
+        // Everything here is derived from buckets already in hand — changing
+        // range costs no request. It used to refetch so the server could
+        // re-rank per range, but that ran a group-by per range and could
+        // saturate the connection pool, timing out unrelated requests.
+        this.buildOverviewCards();
+        this.buildHourlyChart();
         this.buildCallsChart();
         this.buildListenerCharts();
     }
@@ -214,7 +358,7 @@ export class RdioScannerAdminStatsComponent implements OnInit {
             : (this.stats?.topSystems || []).map(s => ({ label: s.systemLabel, count: s.count }));
         if (!categories.length) return;
 
-        const series = buildTopSeries(categories, this.stats?.topCategoriesKind, COSMETICS);
+        const series = buildTopSeries(categories, this.stats?.topCategoriesKind, COSMETICS, 'Last 7 Days');
         this.topChartOptions = topSeriesOptions(series.title);
         this.topChartData = { labels: series.labels, datasets: topDatasets(series) };
     }

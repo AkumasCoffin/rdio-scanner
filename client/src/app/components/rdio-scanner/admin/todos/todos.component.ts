@@ -22,7 +22,9 @@ import { AdminEvent, Config, RdioScannerAdminService } from '../admin.service';
 
 interface Todo {
     level: 'info' | 'warn';
-    message: String;
+    // Short text for the header pill; the full message is its tooltip.
+    label: string;
+    message: string;
 }
 
 @Component({
@@ -69,6 +71,7 @@ export class RdioScannerAdminTodosComponent implements OnDestroy, OnInit {
         if (this.passwordNeedChange) {
             todos.push({
                 level: 'warn',
+                label: 'Default password',
                 message: 'You are using the default admin password, please change it from the tools / admin password menu.'
             });
         }
@@ -76,6 +79,7 @@ export class RdioScannerAdminTodosComponent implements OnDestroy, OnInit {
         if (!this.config?.systems?.length) {
             todos.push({
                 level: 'info',
+                label: 'No systems',
                 message: 'No systems defined. You can define one from the systems menu, or import one from a CSV file from the tools / import menu, or turn on the global auto populate option from the options menu.',
             });
         }
@@ -83,6 +87,7 @@ export class RdioScannerAdminTodosComponent implements OnDestroy, OnInit {
         if (!this.config?.apiKeys?.length && !this.config?.dirWatch?.length) {
             todos.push({
                 level: 'info',
+                label: 'No ingest source',
                 message: 'No apikeys or dirwatch defined. Please set at least one to allow ingesting audio files.',
             });
         }

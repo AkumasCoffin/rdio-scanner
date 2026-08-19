@@ -1,19 +1,13 @@
+/* Fixed-width columns flowing left-to-right — the old space-between flex
+   scattered items unevenly across the full-width layout. */
 .groups {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  justify-content: space-between;
+  display: grid;
+  gap: 0 1.25rem;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 
   > div {
     align-items: center;
     display: flex;
     flex-direction: row;
-    margin-right: 0.5rem;
-  }
-}
-
-@media (max-width: 719px) {
-  .groups > div {
-    flex: 100%;
   }
 }

@@ -219,7 +219,7 @@ func TestRunOnLoopShedsWhenThePluginFallsBehind(t *testing.T) {
 	blocked := make(chan struct{})
 	release := make(chan struct{})
 
-	rt.runOnLoop(func(vm *goja.Runtime) {
+	rt.runOnLoop("test:blocker", func(vm *goja.Runtime) {
 		close(blocked)
 		<-release
 	})
@@ -227,7 +227,7 @@ func TestRunOnLoopShedsWhenThePluginFallsBehind(t *testing.T) {
 
 	accepted := 0
 	for i := 0; i < pluginLoopMaxQueued+64; i++ {
-		if rt.runOnLoop(func(vm *goja.Runtime) {}) {
+		if rt.runOnLoop("test:filler", func(vm *goja.Runtime) {}) {
 			accepted++
 		}
 	}

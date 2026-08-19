@@ -16,7 +16,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -83,33 +85,33 @@ func (controller *Controller) PluginApiHandler(w http.ResponseWriter, r *http.Re
 // This is the list core actually registers in main.go. When an endpoint's
 // handling moves out of core into a plugin, it comes off this list.
 var coreHttpPatterns = map[string]bool{
-	"/":                                 true,
-	"/api/admin/config":                 true,
-	"/api/admin/login":                  true,
-	"/api/admin/logout":                 true,
-	"/api/admin/logs":                   true,
-	"/api/admin/password":               true,
-	"/api/admin/plugins":                true,
-	"/api/admin/plugins/":               true,
-	"/api/admin/stats":                  true,
-	"/api/admin/stats/talkgroup-units":  true,
-	"/api/admin/update/apply":           true,
-	"/api/admin/update/cancel":          true,
-	"/api/admin/update/check":           true,
-	"/api/admin/update/download":        true,
-	"/api/admin/update/source":          true,
-	"/api/admin/updates":                true,
-	"/api/admin/user-add":               true,
-	"/api/admin/user-remove":            true,
-	"/api/call-upload":                  true,
-	"/api/capabilities":                 true,
-	"/api/plugin/":                      true,
-	"/api/stats":                        true,
-	"/api/stats/talkgroup-units":        true,
-	"/api/trunk-recorder-call-upload":   true,
-	"/api/v1/calls":                     true,
-	"/api/v1/calls/":                    true,
-	"/plugins/":                         true,
+	"/":                                true,
+	"/api/admin/config":                true,
+	"/api/admin/login":                 true,
+	"/api/admin/logout":                true,
+	"/api/admin/logs":                  true,
+	"/api/admin/password":              true,
+	"/api/admin/plugins":               true,
+	"/api/admin/plugins/":              true,
+	"/api/admin/stats":                 true,
+	"/api/admin/stats/talkgroup-units": true,
+	"/api/admin/update/apply":          true,
+	"/api/admin/update/cancel":         true,
+	"/api/admin/update/check":          true,
+	"/api/admin/update/download":       true,
+	"/api/admin/update/source":         true,
+	"/api/admin/updates":               true,
+	"/api/admin/user-add":              true,
+	"/api/admin/user-remove":           true,
+	"/api/call-upload":                 true,
+	"/api/capabilities":                true,
+	"/api/plugin/":                     true,
+	"/api/stats":                       true,
+	"/api/stats/talkgroup-units":       true,
+	"/api/trunk-recorder-call-upload":  true,
+	"/api/v1/calls":                    true,
+	"/api/v1/calls/":                   true,
+	"/plugins/":                        true,
 }
 
 // ServePluginAbsoluteRoute handles a path a plugin claimed outright, and
@@ -182,8 +184,32 @@ func (controller *Controller) servePluginRoute(w http.ResponseWriter, r *http.Re
 		"bodyBytes": body,
 	}
 
-	result, err := runtime.DispatchRoute(route, request)
+	result, err := runtime.DispatchRoute(r.Context(), route, request)
 	if err != nil {
+		// A caller that hung up gets nothing written to it — the connection is
+		// already gone — and the log line stays at info, because this is a
+		// client's decision rather than a fault of ours.
+		if errors.Is(err, context.Canceled) || r.Context().Err() != nil {
+			controller.Logs.LogEvent(
+				LogLevelInfo,
+				fmt.Sprintf("plugin %s route %s: caller disconnected", plugin.PluginId, route.path),
+			)
+			return
+		}
+
+		var busy *pluginBusyError
+		if errors.As(err, &busy) {
+			controller.Logs.LogEvent(
+				LogLevelWarn,
+				fmt.Sprintf("plugin %s route %s refused: %v", plugin.PluginId, route.path, err),
+			)
+			// Retry-After turns a retrying uploader from part of the problem
+			// into part of the recovery.
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "plugin busy", http.StatusServiceUnavailable)
+			return
+		}
+
 		controller.Logs.LogEvent(
 			LogLevelError,
 			fmt.Sprintf("plugin %s route %s failed: %v", plugin.PluginId, route.path, err),

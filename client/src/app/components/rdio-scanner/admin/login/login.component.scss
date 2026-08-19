@@ -1,8 +1,51 @@
-form > button {
+/* A small card centred in the viewport rather than a form stretched across
+   the admin's full-height shell. */
+:host {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  min-height: 0;
+  padding: 24px 16px;
+}
+
+form {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  box-sizing: border-box;
+  max-width: 360px;
+  padding: 24px;
+  width: 100%;
+
+  > p {
+    margin: 0 0 1rem;
+  }
+
+  .login-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  .login-version {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    margin: 0.15rem 0 0.9rem;
+    opacity: 0.8;
+  }
+}
+
+form > button {
   margin-top: 1rem;
 }
 
 .mat-raised-button,
 .mat-form-field {
   display: block;
+}
+
+.mat-form-field {
+  width: 100%;
 }

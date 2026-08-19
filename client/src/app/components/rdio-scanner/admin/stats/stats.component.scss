@@ -1,7 +1,5 @@
 .stats-container {
     padding: 16px;
-    max-width: 1400px;
-    margin: 0 auto;
 }
 
 .stats-header {
@@ -431,5 +429,49 @@ mat-expansion-panel.table-panel {
 
     ::ng-deep .mat-expansion-indicator::after {
         color: var(--stats-text-muted);
+    }
+}
+
+/* Phones: two stat tiles per row rather than one, and charts that don't
+   dwarf everything else. */
+@media (max-width: 719px) {
+    .stats-container {
+        padding: 8px 0;
+    }
+
+    .overview-cards {
+        gap: 8px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-bottom: 16px;
+    }
+
+    .stat-card {
+        padding: 10px;
+
+        .stat-icon {
+            height: 32px;
+            min-width: 32px;
+            width: 32px;
+        }
+
+        .stat-value {
+            font-size: 1.05rem;
+        }
+    }
+
+    .range-filter {
+        justify-content: flex-start;
+    }
+
+    .chart-card {
+        padding: 8px;
+
+        .chart-container {
+            height: 220px;
+        }
+    }
+
+    .stats-header h2 {
+        font-size: 1.1rem;
     }
 }

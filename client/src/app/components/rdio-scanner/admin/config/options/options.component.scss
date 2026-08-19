@@ -17,7 +17,77 @@
  * ****************************************************************************
  */
 
+/* Settings live in titled cards flowing into as many columns as fit, with
+   tight rows — the full-width flat list read as a wall of text. */
 :host {
+    // CSS columns rather than a grid: cards pack vertically and flow into the
+    // next column, so a short card (LED) doesn't leave a tall empty gap
+    // underneath waiting for the tallest card in its grid row.
+    .opt-cards {
+        column-gap: 1rem;
+        // Column width, not count — the browser fits as many as the viewport
+        // allows. Wide enough that a setting's label and its control sit on
+        // one line; narrower columns wrapped every label onto three lines.
+        columns: 520px;
+    }
+
+    .opt-card {
+        border: 1px solid rgba(127, 127, 127, 0.2);
+        border-radius: 6px;
+        break-inside: avoid;
+        display: inline-block;
+        margin-bottom: 1rem;
+        padding: 0.25rem 1rem 0.5rem;
+        vertical-align: top;
+        width: 100%;
+    }
+
+    .opt-title {
+        color: var(--accent, orange);
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        margin: 0.6rem 0 0.1rem;
+        text-transform: uppercase;
+    }
+
+    .row {
+        padding: 0.2rem 0;
+
+        + .row {
+            border-top: 1px solid rgba(127, 127, 127, 0.12);
+        }
+
+        > p {
+            margin: 0.3rem 1rem 0.3rem 0;
+
+            .mat-body {
+                font-size: 0.82rem;
+            }
+
+            .mat-caption {
+                display: block;
+                font-size: 0.7rem;
+                line-height: 1.35;
+                opacity: 0.75;
+            }
+        }
+
+        > :not(p) {
+            flex: 0 0 220px;
+            max-width: 220px;
+        }
+
+        > p {
+            min-width: 200px;
+        }
+
+        > div:not(.mat-form-field) {
+            display: flex;
+            justify-content: flex-end;
+        }
+    }
+
     .setting-warning {
         align-items: flex-start;
         display: flex;
@@ -38,6 +108,34 @@
             // let it wrap instead of widening the settings column.
             overflow-wrap: anywhere;
             white-space: pre-wrap;
+        }
+    }
+}
+
+/* Phones: one card per row, label above control, tighter type. */
+@media (max-width: 719px) {
+    :host {
+        .opt-cards {
+            columns: 1;
+        }
+
+        .opt-card {
+            padding: 0.25rem 0.75rem 0.5rem;
+        }
+
+        .row {
+            align-items: stretch;
+            flex-direction: column;
+            gap: 0.25rem;
+
+            > :not(p) {
+                flex: 1 1 auto;
+                max-width: none;
+            }
+
+            > div:not(.mat-form-field) {
+                justify-content: flex-start;
+            }
         }
     }
 }

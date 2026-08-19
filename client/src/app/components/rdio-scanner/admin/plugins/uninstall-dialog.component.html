@@ -1,0 +1,27 @@
+<h2 mat-dialog-title>Uninstall {{ data.name }}?</h2>
+
+<mat-dialog-content>
+    <p class="lead">The plugin's files are removed either way. What happens to its stored data and settings is up to you.</p>
+
+    <div class="choice">
+        <mat-icon>inventory_2</mat-icon>
+        <div>
+            <strong>Keep data</strong>
+            <span>Its settings and stored data stay in the database. Reinstalling restores everything exactly as it was.</span>
+        </div>
+    </div>
+
+    <div class="choice warn">
+        <mat-icon>delete_forever</mat-icon>
+        <div>
+            <strong>Remove data</strong>
+            <span>Its tables are dropped permanently. This is the only chance to do it — once the plugin is gone, Rdio Scanner no longer knows which tables were its.</span>
+        </div>
+    </div>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+    <button mat-button (click)="cancel()">Cancel</button>
+    <button mat-stroked-button class="keep" (click)="close(false)">Keep data</button>
+    <button mat-flat-button color="warn" (click)="close(true)">Remove data</button>
+</mat-dialog-actions>

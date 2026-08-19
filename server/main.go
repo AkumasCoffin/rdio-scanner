@@ -139,6 +139,8 @@ func main() {
 
 	http.HandleFunc("/api/admin/update/cancel", controller.Admin.UpdateCancelHandler)
 
+	http.HandleFunc("/api/admin/restart", controller.Admin.RestartHandler)
+
 	http.HandleFunc("/api/admin/stats/talkgroup-units", gzipHandler(controller.Stats.TalkgroupUnitsHandler))
 
 	http.HandleFunc("/api/stats", gzipHandler(controller.Stats.PublicHandler))

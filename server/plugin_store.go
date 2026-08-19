@@ -104,12 +104,15 @@ func NewPluginStore(controller *Controller) *PluginStore {
 	}
 }
 
-func (store *PluginStore) cached(key string, fetch func() (any, error)) (any, error) {
+// fresh skips the cached entry and refetches. The stale-on-error fallback
+// below still applies: asking for fresh data is not a reason to answer with
+// nothing when GitHub is briefly unreachable.
+func (store *PluginStore) cached(key string, fresh bool, fetch func() (any, error)) (any, error) {
 	store.mutex.Lock()
 	entry, ok := store.cache[key]
 	store.mutex.Unlock()
 
-	if ok && time.Since(entry.fetched) < pluginStoreCacheTTL {
+	if ok && !fresh && time.Since(entry.fetched) < pluginStoreCacheTTL {
 		return entry.value, nil
 	}
 
@@ -286,7 +289,7 @@ func (store *PluginStore) Branches(rawUrl string) ([]string, error) {
 		return nil, err
 	}
 
-	value, err := store.cached("branches:"+owner+"/"+name, func() (any, error) {
+	value, err := store.cached("branches:"+owner+"/"+name, false, func() (any, error) {
 		api := fmt.Sprintf("https://api.github.com/repos/%s/%s/branches?per_page=100",
 			url.PathEscape(owner), url.PathEscape(name))
 
@@ -340,10 +343,12 @@ type AvailablePlugin struct {
 
 // Available lists the plugins a repository offers on a given branch.
 //
-// fresh defeats caching all the way down, including GitHub's own CDN in front
-// of raw.githubusercontent.com. Without that last part, pressing Refresh
-// straight after pushing a plugin still shows the old manifest for several
-// minutes, which reads as the button not working.
+// fresh defeats caching all the way down: this store's own listing cache, and
+// GitHub's CDN in front of raw.githubusercontent.com. Both matter. The CDN was
+// handled first and the local cache was left in, so Check for updates went on
+// answering from a listing up to pluginStoreCacheTTL old — pressing it straight
+// after publishing a new version reported "latest" against the previous one,
+// which reads as the button not working, which is exactly what it was.
 func (store *PluginStore) Available(rawUrl string, branch string, fresh bool) ([]*AvailablePlugin, error) {
 	repo, err := store.findRepo(rawUrl)
 	if err != nil {
@@ -361,7 +366,7 @@ func (store *PluginStore) Available(rawUrl string, branch string, fresh bool) ([
 
 	cacheKey := fmt.Sprintf("available:%s/%s@%s", owner, name, branch)
 
-	value, err := store.cached(cacheKey, func() (any, error) {
+	value, err := store.cached(cacheKey, fresh, func() (any, error) {
 		listing := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/plugins?ref=%s",
 			url.PathEscape(owner), url.PathEscape(name), url.QueryEscape(branch))
 

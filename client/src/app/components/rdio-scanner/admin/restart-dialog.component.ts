@@ -18,10 +18,28 @@
  */
 
 import { Component } from '@angular/core';
+import { MatDialogRef } from '@angular/material/dialog';
 
+/**
+ * Confirms a server restart.
+ *
+ * Worth confirming rather than acting on the click: a restart drops every
+ * live listener and interrupts any upload in flight, and the button sits on a
+ * page people visit to read about plugins.
+ */
 @Component({
-    selector: 'rdio-scanner-admin-page',
-    styleUrls: ['./admin.component.scss'],
-    templateUrl: './admin.component.html',
+    selector: 'rdio-scanner-admin-restart-dialog',
+    templateUrl: './restart-dialog.component.html',
+    styleUrls: ['./restart-dialog.component.scss'],
 })
-export class RdioScannerAdminPageComponent { }
+export class RdioScannerAdminRestartDialogComponent {
+    constructor(private dialogRef: MatDialogRef<RdioScannerAdminRestartDialogComponent>) { }
+
+    confirm(): void {
+        this.dialogRef.close(true);
+    }
+
+    cancel(): void {
+        this.dialogRef.close(false);
+    }
+}
