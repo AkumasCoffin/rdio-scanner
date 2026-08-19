@@ -91,7 +91,7 @@ export class RdioScannerAdminStatsComponent implements OnInit {
         this.error = false;
 
         try {
-            this.stats = await this.adminService.getStats(this.range);
+            this.stats = await this.adminService.getStats();
             if (this.stats) {
                 this.buildOverviewCards();
                 this.buildHourlyChart();
@@ -259,15 +259,14 @@ export class RdioScannerAdminStatsComponent implements OnInit {
 
         this.range = range;
 
-        // Series and cards come off buckets already in hand, so they update
-        // immediately; the rankings are aggregated server-side per range, so
-        // refetch for those (the response is cached per range).
+        // Everything here is derived from buckets already in hand — changing
+        // range costs no request. It used to refetch so the server could
+        // re-rank per range, but that ran a group-by per range and could
+        // saturate the connection pool, timing out unrelated requests.
         this.buildOverviewCards();
         this.buildHourlyChart();
         this.buildCallsChart();
         this.buildListenerCharts();
-
-        this.loadStats();
     }
 
     private buildCallsChart(): void {
@@ -289,10 +288,7 @@ export class RdioScannerAdminStatsComponent implements OnInit {
             : (this.stats?.topSystems || []).map(s => ({ label: s.systemLabel, count: s.count }));
         if (!categories.length) return;
 
-        const series = buildTopSeries(
-            categories, this.stats?.topCategoriesKind, COSMETICS,
-            STATS_RANGES.find((r) => r.key === this.range)?.label ?? '',
-        );
+        const series = buildTopSeries(categories, this.stats?.topCategoriesKind, COSMETICS, 'Last 7 Days');
         this.topChartOptions = topSeriesOptions(series.title);
         this.topChartData = { labels: series.labels, datasets: topDatasets(series) };
     }

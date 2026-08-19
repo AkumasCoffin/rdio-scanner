@@ -50,17 +50,6 @@ type Stats struct {
 	mu       sync.Mutex
 	cached   *StatsResponse
 	cachedAt time.Time
-	// Top rankings depend on the viewer's selected range, so they're cached
-	// per range instead of riding the single shared build. Only the ranking
-	// query re-runs when a range changes; everything else stays cached.
-	topCache map[string]*statsTopEntry
-}
-
-type statsTopEntry struct {
-	categories []StatsTopCategory
-	kind       string
-	systems    []StatsTopSystem
-	at         time.Time
 }
 
 // statsRangeSince maps a filter key from the dashboard to the start of its
@@ -953,49 +942,6 @@ func (stats *Stats) PublicHandler(w http.ResponseWriter, r *http.Request) {
 	stats.handleStatsRequest(w, r, stats.Controller.Options.GetShowListenerStats())
 }
 
-// topForRange returns the ranking chart's data for one filter range, cached
-// per range on the same TTL as the main build. Only this one aggregation
-// re-runs when the viewer changes range — the rest of the response is still
-// served from the single shared build.
-func (stats *Stats) topForRange(db *Database, rng string) ([]StatsTopCategory, string, []StatsTopSystem) {
-	stats.mu.Lock()
-	if entry, ok := stats.topCache[rng]; ok && time.Since(entry.at) < statsCacheTTL {
-		stats.mu.Unlock()
-		return entry.categories, entry.kind, entry.systems
-	}
-	stats.mu.Unlock()
-
-	since := statsRangeSince(rng)
-	kind := stats.topCategoriesKind()
-
-	systems, err := stats.GetTopSystems(db, 10, since)
-	if err != nil {
-		stats.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("stats.handler: %v", err))
-		return nil, "", nil
-	}
-
-	categories := make([]StatsTopCategory, 0, len(systems))
-	if kind == "systems" {
-		// Same aggregation the systems lens already ran — no second query.
-		for _, system := range systems {
-			categories = append(categories, StatsTopCategory{Label: system.SystemLabel, Count: system.Count})
-		}
-	} else if v, err := stats.getTopCategoriesGrouped(db, 10, kind, since); err != nil {
-		stats.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("stats.handler: %v", err))
-	} else {
-		categories = v
-	}
-
-	stats.mu.Lock()
-	if stats.topCache == nil {
-		stats.topCache = map[string]*statsTopEntry{}
-	}
-	stats.topCache[rng] = &statsTopEntry{categories: categories, kind: kind, systems: systems, at: time.Now()}
-	stats.mu.Unlock()
-
-	return categories, kind, systems
-}
-
 // configuredInventory counts what is configured, as opposed to what has been
 // heard — the activity counts in Overview come from the calls table.
 //
@@ -1010,7 +956,13 @@ func (stats *Stats) configuredInventory() (systems uint, talkgroups uint, units 
 		return 0, 0, 0
 	}
 
-	stats.Controller.Systems.mutex.Lock()
+	// TryLock, not Lock: a config save holds this mutex for the whole write
+	// of every system, talkgroup and unit. Waiting on it made a stats request
+	// hang for the length of a save, and those requests hold a connection
+	// while they wait. Reporting nothing for one poll is the better trade.
+	if !stats.Controller.Systems.mutex.TryLock() {
+		return 0, 0, 0
+	}
 	defer stats.Controller.Systems.mutex.Unlock()
 
 	for _, system := range stats.Controller.Systems.List {
@@ -1020,14 +972,12 @@ func (stats *Stats) configuredInventory() (systems uint, talkgroups uint, units 
 
 		systems++
 
-		if system.Talkgroups != nil {
-			system.Talkgroups.mutex.Lock()
+		if system.Talkgroups != nil && system.Talkgroups.mutex.TryLock() {
 			talkgroups += uint(len(system.Talkgroups.List))
 			system.Talkgroups.mutex.Unlock()
 		}
 
-		if system.Units != nil {
-			system.Units.mutex.Lock()
+		if system.Units != nil && system.Units.mutex.TryLock() {
 			units += uint(len(system.Units.List))
 			system.Units.mutex.Unlock()
 		}
@@ -1053,16 +1003,6 @@ func (stats *Stats) handleStatsRequest(w http.ResponseWriter, r *http.Request, i
 	// cached build left the tiles showing pre-save numbers for the rest of
 	// the cache TTL, which reads as a save that didn't take.
 	shaped.ConfiguredSystems, shaped.ConfiguredTalkgroups, shaped.ConfiguredUnits = stats.configuredInventory()
-
-	// The ranking chart follows the dashboard's range filter. Absent (an
-	// older client, or the public page) it keeps the cached 7-day ranking.
-	if rng := r.URL.Query().Get("range"); rng != "" {
-		if categories, kind, systems := stats.topForRange(stats.Controller.Database, rng); categories != nil {
-			shaped.TopCategories = categories
-			shaped.TopCategoriesKind = kind
-			shaped.TopSystems = systems
-		}
-	}
 
 	if !includeListeners {
 		shaped.ListenerBuckets = nil
