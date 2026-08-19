@@ -22,6 +22,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { firstValueFrom } from 'rxjs';
 import { RdioScannerAdminPluginUninstallDialogComponent } from './uninstall-dialog.component';
+import { RdioScannerAdminRestartDialogComponent } from './restart-dialog.component';
 import {
     AdminAvailablePlugin,
     AdminPlugin,
@@ -64,6 +65,9 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
     updates: { [pluginId: string]: AdminPluginUpdate } = {};
 
     checkingUpdates = false;
+
+    /** True from asking for a restart until the server answers again. */
+    restarting = false;
 
     /** Empty until a check has run, so "none found" can be said only once it has. */
     updateCheckRan = false;
@@ -253,6 +257,41 @@ export class RdioScannerAdminPluginsComponent implements OnInit {
         }
 
         this.checkingUpdates = false;
+    }
+
+    /**
+     * Restarts the server, then waits for it to answer again and reloads.
+     *
+     * The reload matters: this page is describing plugin state from before the
+     * restart, and the whole point of restarting is that the state changes.
+     * Leaving the old view up is how "did that actually work?" happens.
+     */
+    async restartServer(): Promise<void> {
+        const confirmed = await firstValueFrom(
+            this.matDialog.open(RdioScannerAdminRestartDialogComponent, {
+                width: '28rem',
+                maxWidth: '95vw',
+            }).afterClosed(),
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        this.restarting = true;
+        this.status = '';
+
+        try {
+            await this.adminService.restartServer();
+            await this.adminService.waitForServer();
+            window.location.reload();
+        } catch (err) {
+            this.restarting = false;
+            // Either the restart could not be asked for, or the server never
+            // came back. The second needs saying out loud rather than being a
+            // spinner that quietly stops.
+            this.status = this.errMsg(err, 'The server did not come back. Check it on the host.');
+        }
     }
 
     /** The pending update for a plugin, if the last check found one. */

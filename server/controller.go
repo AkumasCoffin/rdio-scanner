@@ -31,30 +31,30 @@ import (
 )
 
 type Controller struct {
-	Admin       *Admin
-	Api         *Api
-	PublicApi   *PublicApi
-	Calls       *Calls
-	Config      *Config
-	Database    *Database
-	Delayer     *Delayer
-	Accesses    *Accesses
-	Apikeys     *Apikeys
-	Dirwatches  *Dirwatches
-	Downstreams *Downstreams
-	FFMpeg      *FFMpeg
-	Groups      *Groups
-	Listeners   *Listeners
-	Logs        *Logs
+	Admin          *Admin
+	Api            *Api
+	PublicApi      *PublicApi
+	Calls          *Calls
+	Config         *Config
+	Database       *Database
+	Delayer        *Delayer
+	Accesses       *Accesses
+	Apikeys        *Apikeys
+	Dirwatches     *Dirwatches
+	Downstreams    *Downstreams
+	FFMpeg         *FFMpeg
+	Groups         *Groups
+	Listeners      *Listeners
+	Logs           *Logs
 	Options        *Options
 	Plugins        *Plugins
 	PluginDispatch *PluginDispatch
 	PluginRpc      *PluginRpc
 	PluginStore    *PluginStore
-	Scheduler   *Scheduler
-	Stats       *Stats
-	Systems     *Systems
-	Tags        *Tags
+	Scheduler      *Scheduler
+	Stats          *Stats
+	Systems        *Systems
+	Tags           *Tags
 	// pluginFeatures caches which features each downstream advertises, so a
 	// plugin speaking a server-to-server protocol doesn't re-probe per call.
 	pluginFeatures *PluginFeatureCache
@@ -66,10 +66,10 @@ type Controller struct {
 	// that triggers it is thousands of calls deep, so an unthrottled line would
 	// write a row per call into the database the server is already behind on.
 	emitLogThrottle *LogThrottle
-	Clients            *Clients
-	Register           chan *Client
-	Unregister         chan *Client
-	Ingest             chan *Call
+	Clients         *Clients
+	Register        chan *Client
+	Unregister      chan *Client
+	Ingest          chan *Call
 	// clientEmitQueue serializes broadcasts to live WebSocket listeners so
 	// concurrent EmitCallToClients callers (single ingest goroutine + N
 	// Delayer timer goroutines) can't race each other and reorder calls on
@@ -102,21 +102,21 @@ type configCache struct {
 
 func NewController(config *Config) *Controller {
 	controller := &Controller{
-		Config:      config,
-		Accesses:    NewAccesses(),
-		Apikeys:     NewApikeys(),
-		Calls:       NewCalls(),
-		Dirwatches:  NewDirwatches(),
-		Downstreams: NewDownstreams(),
-		FFMpeg:      NewFFMpeg(),
-		Groups:      NewGroups(),
-		Listeners:   NewListeners(),
-		Logs:        NewLogs(),
-		Options:     NewOptions(),
-		Plugins:     NewPlugins(),
-		Systems:     NewSystems(),
-		Tags:        NewTags(),
-		Clients:     NewClients(),
+		Config:              config,
+		Accesses:            NewAccesses(),
+		Apikeys:             NewApikeys(),
+		Calls:               NewCalls(),
+		Dirwatches:          NewDirwatches(),
+		Downstreams:         NewDownstreams(),
+		FFMpeg:              NewFFMpeg(),
+		Groups:              NewGroups(),
+		Listeners:           NewListeners(),
+		Logs:                NewLogs(),
+		Options:             NewOptions(),
+		Plugins:             NewPlugins(),
+		Systems:             NewSystems(),
+		Tags:                NewTags(),
+		Clients:             NewClients(),
 		Register:            make(chan *Client, 8192),
 		Unregister:          make(chan *Client, 8192),
 		Ingest:              make(chan *Call, 8192),
@@ -1187,16 +1187,55 @@ func (controller *Controller) Terminate() {
 		os.Exit(1)
 	}
 
-	var phase atomic.Value
-	phase.Store("starting")
-
-	if !runWithTimeout(func() { controller.terminateWork(&phase) }, terminateTimeout) {
-		log.Printf("shutdown gave up after %s while %v; exiting anyway", terminateTimeout, phase.Load())
-	}
+	controller.shutdown()
 
 	log.Println("terminated")
 
 	os.Exit(0)
+}
+
+// Restart shuts the server down cleanly and re-executes it.
+//
+// It goes through the same bounded cleanup a Ctrl+C does, rather than
+// re-executing straight away: on Unix restartSelf is syscall.Exec, which
+// replaces the process image on the spot. Plugins would never get their
+// shutdown handlers and the database would be dropped mid-connection —
+// invisible most of the time, and data a plugin meant to flush the rest of
+// it.
+//
+// Never returns: the process is either replaced or exits.
+func (controller *Controller) Restart() {
+	if !terminating.CompareAndSwap(false, true) {
+		log.Println("already shutting down; ignoring the restart request")
+		return
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		// Nothing to re-exec. Better to stop than to carry on in a state the
+		// operator has already been told is restarting; a supervisor brings it
+		// back, and one without a supervisor sees the reason in the log.
+		log.Printf("restart: cannot find my own executable (%v); exiting instead", err)
+		controller.shutdown()
+		os.Exit(1)
+	}
+
+	controller.shutdown()
+
+	log.Println("restarting")
+
+	restartSelf(exe)
+}
+
+// shutdown runs the bounded cleanup and reports what it was doing if the
+// deadline beat it.
+func (controller *Controller) shutdown() {
+	var phase atomic.Value
+	phase.Store("starting")
+
+	if !runWithTimeout(func() { controller.terminateWork(&phase) }, terminateTimeout) {
+		log.Printf("shutdown gave up after %s while %v; continuing anyway", terminateTimeout, phase.Load())
+	}
 }
 
 // terminateWork is the cleanup itself, separated from the exit so it can be

@@ -560,6 +560,38 @@ func (admin *Admin) UpdateCancelHandler(w http.ResponseWriter, r *http.Request) 
 	writeJson(w, map[string]any{"ok": true})
 }
 
+// RestartHandler (POST /api/admin/restart) restarts the server on the same
+// binary.
+//
+// Plugins are loaded once at startup, so installing, updating, enabling or
+// disabling one is only half done until the server comes back. The admin panel
+// said so and then left the operator to go and do it by hand — on a hosted
+// instance, possibly without a shell to do it from.
+func (admin *Admin) RestartHandler(w http.ResponseWriter, r *http.Request) {
+	if !admin.ValidateToken(admin.GetAuthorization(r)) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	admin.Controller.Logs.LogEvent(LogLevelWarn, "admin: restarting on request")
+
+	writeJson(w, map[string]any{"ok": true, "restarting": true})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	// After the response is on the wire, so the browser is told what is about
+	// to happen rather than meeting a dropped connection and guessing.
+	go func() {
+		time.Sleep(750 * time.Millisecond)
+		admin.Controller.Restart()
+	}()
+}
+
 // UpdateApplyHandler (POST /api/admin/update/apply) swaps the staged
 // <exe>.pending into place (backing up the running binary as <exe>.old) and
 // restarts the server so the new binary takes over.
@@ -603,9 +635,12 @@ func (admin *Admin) UpdateApplyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Give the response a moment to flush to the client, then restart into the
-	// freshly-swapped binary (platform-specific — see update_unix/windows.go).
+	// freshly-swapped binary. Through Restart rather than restartSelf directly,
+	// so the binary swap gets the same clean shutdown a plain restart does —
+	// re-executing on the spot skipped plugin shutdown handlers and dropped the
+	// database mid-connection.
 	go func() {
 		time.Sleep(750 * time.Millisecond)
-		restartSelf(exe)
+		admin.Controller.Restart()
 	}()
 }

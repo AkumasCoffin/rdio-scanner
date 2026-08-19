@@ -1,0 +1,12 @@
+<h2 mat-dialog-title>Restart Rdio Scanner?</h2>
+
+<mat-dialog-content>
+    <p>The server stops and starts again on the same version. Plugin changes take effect when it comes back.</p>
+    <p class="note">Live listeners are disconnected and reconnect on their own. Any upload in progress is interrupted. This usually takes a few seconds.</p>
+    <p class="note">You will be asked to log in again — admin sessions are held in memory and do not survive a restart.</p>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+    <button mat-button (click)="cancel()">Cancel</button>
+    <button mat-flat-button color="primary" (click)="confirm()">Restart</button>
+</mat-dialog-actions>

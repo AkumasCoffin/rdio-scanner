@@ -5,6 +5,9 @@
         its settings and data.
     </p>
     <button type="button" mat-button color="accent" [disabled]="loading || busy" (click)="refresh()">Refresh</button>
+    <button type="button" mat-button [disabled]="busy || restarting" (click)="restartServer()">
+        {{ restarting ? 'Restarting…' : 'Restart server' }}
+    </button>
 </div>
 
 <div class="row banner warn" *ngIf="restartRequired">
@@ -12,6 +15,9 @@
     <p class="mat-body">
         Restart Rdio Scanner to apply your plugin changes. Plugins are loaded once at startup.
     </p>
+    <button type="button" mat-flat-button color="primary" [disabled]="busy || restarting" (click)="restartServer()">
+        {{ restarting ? 'Restarting…' : 'Restart now' }}
+    </button>
 </div>
 
 <div class="row banner error" *ngIf="status">
