@@ -251,10 +251,11 @@ export function buildCallsSeries(
         if (!isNaN(t.getTime())) byMs.set(t.getTime(), b.count);
     }
 
-    const now = new Date();
-    const currentHour = new Date(
-        now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(),
-    ).getTime();
+    // The slot grid must line up with the buckets' UTC hour starts, so it is
+    // derived from the epoch, not from the local clock's hour. In a
+    // half-hour-offset timezone the local hour starts between UTC hours, and
+    // a grid built from it would miss every bucket — the whole chart zero.
+    const currentHour = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
 
     for (let i = Math.floor(spanHours / binHours) - 1; i >= 0; i--) {
         const slotMs = currentHour - i * binHours * HOUR_MS;

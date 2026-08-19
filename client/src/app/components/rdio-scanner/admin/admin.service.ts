@@ -585,14 +585,15 @@ export class RdioScannerAdminService implements OnDestroy {
         }
     }
 
-    async getStats(range?: string): Promise<StatsResponse | undefined> {
+    async getStats(): Promise<StatsResponse | undefined> {
         try {
             // Server response is pure UTC — hourBuckets carry RFC3339
             // startUtc and the client bins them in the browser's TZ for
-            // display. `range` only selects the window for the rankings the
-            // server aggregates; the time series are sliced client-side.
+            // display. One shared snapshot regardless of the dashboard's
+            // range filter: every range is sliced client-side, so switching
+            // ranges costs no request.
             const res = await firstValueFrom(this.ngHttpClient.get<StatsResponse>(
-                this.getUrl(url.stats) + (range ? `?range=${encodeURIComponent(range)}` : ''),
+                this.getUrl(url.stats),
                 { headers: this.getHeaders(), responseType: 'json' },
             ));
 

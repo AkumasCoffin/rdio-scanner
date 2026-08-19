@@ -162,6 +162,25 @@ export class RdioScannerAdminStatsComponent implements OnInit {
             }
         }
 
+        // Hour-grain buckets can't resolve a short window: with hour-aligned
+        // starts, a "last 1 hour" cutoff at :40 keeps only the in-progress
+        // bucket's 40 minutes — and before the server shipped that bucket at
+        // all, the card pinned to zero. Short ranges re-sum from the finest
+        // series that spans them (5-minute over 6h, 10-minute over 48h);
+        // guarded so an older server without those series keeps the
+        // hour-grain sum rather than losing the card.
+        if (this.range !== 'all' && (rangeHours[this.range] ?? 24) <= 48) {
+            const fine = (rangeHours[this.range] ?? 24) <= 6
+                ? this.stats.callMicroBuckets
+                : this.stats.callFineBuckets;
+            if (fine?.length) {
+                rangeCalls = fine.reduce((sum, b) => {
+                    const t = new Date(b.startUtc);
+                    return !isNaN(t.getTime()) && t >= rangeStart ? sum + b.count : sum;
+                }, 0);
+            }
+        }
+
         // Per-hour averages, so hours seen more often than others don't win by
         // repetition alone.
         const hourOfDayAverage = hourOfDay.map(
@@ -257,16 +276,19 @@ export class RdioScannerAdminStatsComponent implements OnInit {
                 if (!isNaN(t.getTime())) buckets.set(t.getTime(), b.count);
             }
 
-            const now = new Date();
-            const currentHour = new Date(
-                now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(),
-            ).getTime();
+            // Anchored to the epoch, not the local clock's hour: bucket keys
+            // are UTC hour starts, and in a half-hour-offset timezone a grid
+            // built from local hours misses all of them. Labels come from the
+            // slot's local rendering, so they show :30 where the viewer's
+            // clock genuinely sits between UTC hours.
+            const hourMs = 3600 * 1000;
+            const currentHour = Math.floor(Date.now() / hourMs) * hourMs;
 
             labels = [];
             data = [];
             for (let i = hours - 1; i >= 0; i--) {
-                const slot = new Date(currentHour - i * 3600 * 1000);
-                labels.push(`${slot.getHours().toString().padStart(2, '0')}:00`);
+                const slot = new Date(currentHour - i * hourMs);
+                labels.push(slot.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
                 data.push(buckets.get(slot.getTime()) ?? 0);
             }
             title = `Calls by Hour (${rangeLabel})`;

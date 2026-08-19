@@ -257,8 +257,12 @@ func statsBucketExpr(dbType string, minutes int) string {
 		)
 
 	case DbTypeMariadb, DbTypeMysql:
+		// Nothing after Sprintf re-processes '%', so date_format specifiers
+		// need exactly one escaping here. A doubled modulo ('%%' in the SQL)
+		// is a syntax error MySQL reports and the caller quietly falls back
+		// from — which disabled this path entirely without failing anything.
 		return fmt.Sprintf(
-			"date_format(date_sub(`dateTime`, interval (minute(`dateTime`) %%%% %d) minute), '%%Y-%%m-%%d %%H:%%i:00')",
+			"date_format(date_sub(`dateTime`, interval (minute(`dateTime`) %% %d) minute), '%%Y-%%m-%%d %%H:%%i:00')",
 			minutes,
 		)
 
@@ -342,7 +346,11 @@ func statsBucketCounts(db *Database, since time.Time, minutes int) (map[time.Tim
 //
 // Implementation: scan dateTime for the period, round each to the hour
 // it falls in (UTC), tally. Pre-seeds zero counts for every hour in the
-// window so the client gets a stable axis without gaps.
+// window so the client gets a stable axis without gaps. The seed loop
+// runs one slot past the window so the current in-progress hour is
+// included — calls land in it from the moment the hour starts, and
+// leaving it out made every "since <recent moment>" rollup on the client
+// miss the newest calls entirely.
 func (stats *Stats) GetHourBuckets(db *Database) ([]StatsHourBucket, error) {
 	now := time.Now().UTC().Truncate(time.Hour)
 	since := now.Add(-statsHourBucketRange).Truncate(time.Hour)
@@ -374,8 +382,8 @@ func (stats *Stats) GetHourBuckets(db *Database) ([]StatsHourBucket, error) {
 	}
 
 	hours := int(statsHourBucketRange / time.Hour)
-	result := make([]StatsHourBucket, 0, hours)
-	for i := 0; i < hours; i++ {
+	result := make([]StatsHourBucket, 0, hours+1)
+	for i := 0; i <= hours; i++ {
 		t := since.Add(time.Duration(i) * time.Hour)
 		result = append(result, StatsHourBucket{
 			StartUtc: t.Format(time.RFC3339),
@@ -1056,19 +1064,28 @@ func (stats *Stats) cachedBuild(db *Database) *StatsResponse {
 	return stats.rebuild(db)
 }
 
-// rebuild runs a build and replaces the snapshot. Always clears the
-// single-flight flag, including on panic, so one bad build can't wedge the
-// cache into never refreshing again.
-func (stats *Stats) rebuild(db *Database) *StatsResponse {
+// rebuild runs a build and replaces the snapshot. A panic clears the
+// single-flight flag and is swallowed rather than propagated: the background
+// refresh runs in a bare goroutine, where an escaped panic is no longer a
+// dropped request but the whole process going down. The caller gets nil,
+// which only the very first build can even observe.
+func (stats *Stats) rebuild(db *Database) (resp *StatsResponse) {
 	started := time.Now()
 
 	defer func() {
 		stats.mu.Lock()
 		stats.building = false
 		stats.mu.Unlock()
+
+		if r := recover(); r != nil {
+			stats.Controller.Logs.LogEvent(
+				LogLevelError,
+				fmt.Sprintf("stats build panic: %v", r),
+			)
+		}
 	}()
 
-	resp := stats.build(db)
+	resp = stats.build(db)
 	elapsed := time.Since(started)
 
 	stats.mu.Lock()
@@ -1154,6 +1171,12 @@ func (stats *Stats) handleStatsRequest(w http.ResponseWriter, r *http.Request, i
 	}
 
 	cached := stats.cachedBuild(stats.Controller.Database)
+
+	// Only a first build that panicked can leave this nil — see rebuild.
+	if cached == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
 	// Shallow copy — the cached response is shared by every caller, so
 	// per-request shaping in place would leak between them.
