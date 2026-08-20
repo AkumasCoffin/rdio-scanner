@@ -155,6 +155,20 @@ Nothing changes in the Android app.
 - **Fixed:** plugins now load on MySQL and MariaDB. Reading the plugin registry
   failed on those backends, so no plugin ever started.
 
+- **Fixed: a slow database no longer stops the server accepting listeners.**
+  Every log line was written to the database on the caller's own goroutine, and
+  accepting a connection logs two of them — so when the database stopped
+  answering promptly, the connect path sat in an INSERT and the web app would
+  not load. Log rows are now queued and written by one writer; if it falls far
+  enough behind, rows are shed and the number lost is reported. The process log
+  is written first and is unaffected.
+
+- **Fixed:** a plugin looking up a call by system, talkgroup and time now gets
+  an error after ten seconds rather than waiting indefinitely for a free
+  database connection. That wait was unbounded, and because it runs on the
+  plugin's single event loop, one lookup could hold everything else that plugin
+  does — measured at over two minutes on a saturated database.
+
 ---
 
 ## Released
