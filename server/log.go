@@ -22,6 +22,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,11 +43,37 @@ type Logs struct {
 	database *Database
 	mutex    sync.Mutex
 	daemon   *Daemon
+
+	// writes carries log rows to the single goroutine that inserts them.
+	//
+	// The insert used to happen on the caller's own goroutine, which made every
+	// log line a database round-trip taken in the middle of whatever was being
+	// done — accepting a websocket connection, ingesting a call, running a
+	// plugin's handler. That is fine while the database answers quickly and
+	// catastrophic when it does not: a slow database stopped being a slow
+	// dashboard and became a server that would not accept listeners, because the
+	// connect path was sitting in an INSERT. Logging is the one thing that must
+	// never be able to do that — it is on every path by definition.
+	writes chan *Log
+	// dropped counts rows shed because the buffer was full. Reported rather than
+	// silently discarded: losing log lines is acceptable, not noticing is not.
+	dropped atomic.Uint64
+	// writerOnce guards starting the writer, since setDatabase is called by the
+	// import path as well as at startup.
+	writerOnce sync.Once
 }
+
+// logWriteBuffer is how many log rows may be waiting to be written.
+//
+// Deep enough to absorb a burst — a busy server logs a few lines per call — and
+// shallow enough that a database which has stopped answering costs bounded
+// memory rather than growing until the process dies.
+const logWriteBuffer = 4096
 
 func NewLogs() *Logs {
 	return &Logs{
-		mutex: sync.Mutex{},
+		mutex:  sync.Mutex{},
+		writes: make(chan *Log, logWriteBuffer),
 	}
 }
 
@@ -87,18 +114,55 @@ func (logs *Logs) LogEvent(level string, message string) error {
 	logs.mutex.Unlock()
 
 	if logs.database != nil {
-		l := Log{
+		l := &Log{
 			DateTime: time.Now().UTC(),
 			Level:    level,
 			Message:  truncateLogMessage(message),
 		}
 
-		if _, err := logs.database.Exec("insert into `rdioScannerLogs` (`dateTime`, `level`, `message`) values (?, ?, ?)", l.DateTime, l.Level, l.Message); err != nil {
-			return fmt.Errorf("logs.logevent: %v", err)
+		// Handed to the writer rather than inserted here. The caller is in the
+		// middle of something — a connect, an upload, a plugin handler — and none
+		// of it should wait on the database to record that it happened.
+		select {
+		case logs.writes <- l:
+		default:
+			// Full. The database is not keeping up, and blocking here is the
+			// behaviour this whole change exists to remove. The line is already
+			// on stdout either way.
+			logs.dropped.Add(1)
 		}
 	}
 
 	return nil
+}
+
+// runWriter drains queued log rows into the database, one at a time.
+//
+// Single goroutine on purpose: it preserves the order lines were logged in, and
+// it means a slow database costs exactly one blocked goroutine instead of one
+// per caller.
+func (logs *Logs) runWriter() {
+	for l := range logs.writes {
+		if logs.database == nil {
+			continue
+		}
+
+		if _, err := logs.database.Exec(
+			"insert into `rdioScannerLogs` (`dateTime`, `level`, `message`) values (?, ?, ?)",
+			l.DateTime, l.Level, l.Message,
+		); err != nil {
+			// Deliberately not reported through LogEvent — a database that cannot
+			// take log rows cannot take that one either, and the recursion would
+			// be unbounded.
+			log.Printf("logs: cannot write to the log table: %v", err)
+		}
+
+		// Reported once the pressure passes, so shed lines are visible without
+		// adding a write per drop while it is happening.
+		if dropped := logs.dropped.Swap(0); dropped > 0 {
+			log.Printf("logs: dropped %d log lines while the database was behind", dropped)
+		}
+	}
 }
 
 // truncateLogMessage clips a message to what the column can hold, counting
@@ -376,6 +440,10 @@ func (logs *Logs) setDaemon(d *Daemon) {
 
 func (logs *Logs) setDatabase(d *Database) {
 	logs.database = d
+
+	// The writer starts with the database, so nothing is queued before there is
+	// anywhere to put it, and a test that never sets one never starts it.
+	logs.writerOnce.Do(func() { go logs.runWriter() })
 }
 
 type LogsSearchOptions struct {

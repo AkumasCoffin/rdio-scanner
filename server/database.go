@@ -55,6 +55,7 @@ type dbExecutor interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 func NewDatabase(config *Config) *Database {
@@ -564,6 +565,17 @@ func (db *Database) Query(query string, args ...any) (*sql.Rows, error) {
 // the caller indefinitely with the database sitting perfectly idle.
 func (db *Database) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	return db.runner().QueryContext(ctx, db.formatQuery(query), args...)
+}
+
+// QueryRowContext is QueryRow with a caller-supplied deadline. Safe only where
+// the row is scanned before the context is cancelled — a single-row read inside
+// one function, not a row handed onwards.
+//
+// Same reasoning as QueryContext: the DSN's statement timeout bounds how long
+// the server spends executing, and says nothing about waiting for a free
+// connection. That wait is client-side and, without a context, unbounded.
+func (db *Database) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return db.runner().QueryRowContext(ctx, db.formatQuery(query), args...)
 }
 
 func (db *Database) QueryRow(query string, args ...any) *sql.Row {

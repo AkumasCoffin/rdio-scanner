@@ -44,6 +44,13 @@ const pluginStartupTimeout = 15 * time.Second
 // whatever it was handed.
 const pluginLoopMaxQueued = 4096
 
+// pluginLookupTimeout bounds a host lookup made on a plugin's behalf.
+//
+// Short on purpose. These run on the plugin's single event loop, so the wait is
+// paid by everything else that plugin is trying to do, and a lookup that has
+// not answered in this long is not going to be useful by the time it does.
+const pluginLookupTimeout = 10 * time.Second
+
 // pluginRouteBusyQueue is the backlog past which an HTTP route stops queueing
 // and answers 503 straight away.
 //

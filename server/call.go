@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -323,6 +324,15 @@ func (calls *Calls) getCall(id uint, db *Database, withAudio bool) (*Call, error
 // Uses a ±500 ms window around dateTime — same approach as CheckDuplicate —
 // so minor timezone/format differences between DB drivers don't cause misses.
 // Returns 0 with no error when no matching call exists.
+// GetIdByKey finds a call by the triple that identifies it from outside —
+// system, talkgroup and when it happened.
+//
+// Bounded, unlike most reads here. This is what a plugin's calls.findId
+// becomes, and it runs on the plugin's single event loop: an unbounded wait
+// for a pooled connection does not stall one lookup, it stalls the whole
+// plugin. Measured in production at 2m36s while the database was saturated,
+// with the plugin's routes queued behind it the entire time. An error the
+// plugin can see beats a stall nobody can.
 func (calls *Calls) GetIdByKey(system uint, talkgroup uint, dateTime time.Time, db *Database) (uint, error) {
 	var id sql.NullFloat64
 	d := 500 * time.Millisecond
@@ -330,7 +340,12 @@ func (calls *Calls) GetIdByKey(system uint, talkgroup uint, dateTime time.Time, 
 	to := dateTime.UTC().Add(d).Format(db.DateTimeFormat)
 	query := fmt.Sprintf("select `id` from `rdioScannerCalls` where `system` = %v and `talkgroup` = %v and (`dateTime` between '%v' and '%v') limit 1",
 		system, talkgroup, from, to)
-	if err := db.QueryRow(query).Scan(&id); err != nil {
+
+	ctx, cancel := context.WithTimeout(context.Background(), pluginLookupTimeout)
+	defer cancel()
+
+	// Safe to cancel on return: the row is scanned here and never handed on.
+	if err := db.QueryRowContext(ctx, query).Scan(&id); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, nil
 		}
