@@ -18,8 +18,7 @@
  */
 
 import { CdkDragDrop, moveItemInArray } from '@angular/cdk/drag-drop';
-import { CdkVirtualScrollViewport } from '@angular/cdk/scrolling';
-import { Component, EventEmitter, Input, Output, QueryList, ViewChild, ViewChildren } from '@angular/core';
+import { Component, ElementRef, EventEmitter, Input, Output, QueryList, ViewChild, ViewChildren } from '@angular/core';
 import { FormArray, FormControl, FormGroup } from '@angular/forms';
 import { MatExpansionPanel } from '@angular/material/expansion';
 import { RdioScannerAdminService, Group, Tag } from '../../../admin.service';
@@ -33,9 +32,9 @@ export class RdioScannerAdminSystemComponent {
     ledHex = LED_HEX;
 
     // Settings / Talkgroups / Units as tabs rather than stacked dropdowns.
-    // Only the active pane is in the DOM, which keeps the virtual-scroll
-    // lists off the page until asked for — the same laziness the expansion
-    // panels' matExpansionPanelContent gave.
+    // Only the active pane is in the DOM, which keeps the lists off the page
+    // until asked for — the same laziness the expansion panels'
+    // matExpansionPanelContent gave.
     tab: 'settings' | 'talkgroups' | 'units' = 'settings';
 
     // The root form is the whole config form, so the Options section's toggle
@@ -106,9 +105,9 @@ export class RdioScannerAdminSystemComponent {
 
     unitQuery = '';
 
-    @ViewChild('talkgroupViewport') private talkgroupViewport: CdkVirtualScrollViewport | undefined;
+    @ViewChild('talkgroupList') private talkgroupList: ElementRef<HTMLElement> | undefined;
 
-    @ViewChild('unitViewport') private unitViewport: CdkVirtualScrollViewport | undefined;
+    @ViewChild('unitList') private unitList: ElementRef<HTMLElement> | undefined;
 
     @ViewChildren(MatExpansionPanel) private panels: QueryList<MatExpansionPanel> | undefined;
 
@@ -138,7 +137,9 @@ export class RdioScannerAdminSystemComponent {
         this.form.markAsDirty();
         this.refreshLists();
         this.selectedTalkgroup = talkgroup;
-        this.talkgroupViewport?.scrollToIndex(0);
+        if (this.talkgroupList) {
+            this.talkgroupList.nativeElement.scrollTop = 0;
+        }
     }
 
     addUnit(): void {
@@ -150,7 +151,9 @@ export class RdioScannerAdminSystemComponent {
         this.form.markAsDirty();
         this.refreshLists();
         this.selectedUnit = unit;
-        this.unitViewport?.scrollToIndex(0);
+        if (this.unitList) {
+            this.unitList.nativeElement.scrollTop = 0;
+        }
     }
 
     blacklistTalkgroup(talkgroup: FormGroup): void {
@@ -172,23 +175,27 @@ export class RdioScannerAdminSystemComponent {
     }
 
     dropTalkgroup(event: CdkDragDrop<FormGroup[]>): void {
-        this.drop(event, this.talkgroups, this.talkgroupViewport, this.talkgroupQuery);
+        this.drop(event, this.talkgroups, this.talkgroupQuery);
     }
 
     dropUnit(event: CdkDragDrop<FormGroup[]>): void {
-        this.drop(event, this.units, this.unitViewport, this.unitQuery);
+        this.drop(event, this.units, this.unitQuery);
     }
 
     filterTalkgroups(event: Event): void {
         this.talkgroupQuery = (event.target as HTMLInputElement).value;
         this.filteredTalkgroups = RdioScannerAdminSystemComponent.filter(this.talkgroups, this.talkgroupQuery);
-        this.talkgroupViewport?.scrollToIndex(0);
+        if (this.talkgroupList) {
+            this.talkgroupList.nativeElement.scrollTop = 0;
+        }
     }
 
     filterUnits(event: Event): void {
         this.unitQuery = (event.target as HTMLInputElement).value;
         this.filteredUnits = RdioScannerAdminSystemComponent.filter(this.units, this.unitQuery);
-        this.unitViewport?.scrollToIndex(0);
+        if (this.unitList) {
+            this.unitList.nativeElement.scrollTop = 0;
+        }
     }
 
     removeTalkgroup(talkgroup: FormGroup): void {
@@ -215,21 +222,12 @@ export class RdioScannerAdminSystemComponent {
         return control;
     }
 
-    private drop(
-        event: CdkDragDrop<FormGroup[]>,
-        controls: FormGroup[],
-        viewport: CdkVirtualScrollViewport | undefined,
-        query: string,
-    ): void {
+    private drop(event: CdkDragDrop<FormGroup[]>, controls: FormGroup[], query: string): void {
         if (query || event.previousIndex === event.currentIndex) {
             return;
         }
 
-        const renderedStart = viewport?.getRenderedRange().start ?? 0;
-        const previousIndex = renderedStart + event.previousIndex;
-        const currentIndex = renderedStart + event.currentIndex;
-
-        moveItemInArray(controls, previousIndex, currentIndex);
+        moveItemInArray(controls, event.previousIndex, event.currentIndex);
 
         controls.forEach((control, index) => {
             control.get('order')?.setValue(index + 1, { emitEvent: false });

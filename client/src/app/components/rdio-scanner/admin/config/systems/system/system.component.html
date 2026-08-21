@@ -145,11 +145,10 @@
                     </mat-form-field>
                     <span class="mat-caption">{{ filteredTalkgroups.length }} of {{ talkgroups.length }}</span>
                 </div>
-                <cdk-virtual-scroll-viewport #talkgroupViewport class="admin-config-virtual-list" itemSize="40"
-                    cdkDropList [cdkDropListData]="filteredTalkgroups" [cdkDropListDisabled]="!!talkgroupQuery"
-                    (cdkDropListDropped)="dropTalkgroup($event)">
+                <div #talkgroupList class="admin-config-virtual-list" cdkDropList [cdkDropListData]="filteredTalkgroups"
+                    [cdkDropListDisabled]="!!talkgroupQuery" (cdkDropListDropped)="dropTalkgroup($event)">
                     <button type="button" class="admin-config-virtual-row"
-                        *cdkVirtualFor="let talkgroup of filteredTalkgroups; trackBy: trackByControl; templateCacheSize: 0"
+                        *ngFor="let talkgroup of filteredTalkgroups; trackBy: trackByControl"
                         [class.selected]="selectedTalkgroup === talkgroup" cdkDrag [cdkDragData]="talkgroup"
                         [cdkDragDisabled]="!!talkgroupQuery" (click)="selectTalkgroup(talkgroup)">
                         <mat-icon cdkDragHandle (click)="$event.stopPropagation()">drag_indicator</mat-icon>
@@ -157,7 +156,7 @@
                         <span class="admin-config-row-label">{{ talkgroup.value.label?.trim() || 'NewTalkgroup' }}</span>
                         <mat-icon *ngIf="talkgroup.invalid" color="warn">error</mat-icon>
                     </button>
-                </cdk-virtual-scroll-viewport>
+                </div>
                 </div>
                 <div class="entity-detail">
                 <div *ngIf="selectedTalkgroup" class="admin-config-selected-editor" [formGroup]="selectedTalkgroup">
@@ -193,11 +192,10 @@
                     </mat-form-field>
                     <span class="mat-caption">{{ filteredUnits.length }} of {{ units.length }}</span>
                 </div>
-                <cdk-virtual-scroll-viewport #unitViewport class="admin-config-virtual-list" itemSize="40"
-                    cdkDropList [cdkDropListData]="filteredUnits" [cdkDropListDisabled]="!!unitQuery"
-                    (cdkDropListDropped)="dropUnit($event)">
+                <div #unitList class="admin-config-virtual-list" cdkDropList [cdkDropListData]="filteredUnits"
+                    [cdkDropListDisabled]="!!unitQuery" (cdkDropListDropped)="dropUnit($event)">
                     <button type="button" class="admin-config-virtual-row"
-                        *cdkVirtualFor="let unit of filteredUnits; trackBy: trackByControl; templateCacheSize: 0"
+                        *ngFor="let unit of filteredUnits; trackBy: trackByControl"
                         [class.selected]="selectedUnit === unit" cdkDrag [cdkDragData]="unit"
                         [cdkDragDisabled]="!!unitQuery" (click)="selectUnit(unit)">
                         <mat-icon cdkDragHandle (click)="$event.stopPropagation()">drag_indicator</mat-icon>
@@ -205,7 +203,7 @@
                         <span class="admin-config-row-label">{{ unit.value.label?.trim() || 'NewUnit' }}</span>
                         <mat-icon *ngIf="unit.invalid" color="warn">error</mat-icon>
                     </button>
-                </cdk-virtual-scroll-viewport>
+                </div>
                 </div>
                 <div class="entity-detail">
                 <div *ngIf="selectedUnit" class="admin-config-selected-editor" [formGroup]="selectedUnit">

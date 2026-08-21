@@ -253,30 +253,42 @@ func (systems *Systems) GetScopedSystems(client *Client, groups *Groups, tags *T
 		}
 	}
 
-	for i, rawSystem := range rawSystems {
+	for _, rawSystem := range rawSystems {
 		talkgroupsMap := TalkgroupsMap{}
 
+		// This view belongs to one client, so it is built on its own copies.
+		// The unrestricted paths above put the configuration's own Talkgroups
+		// pointer in rawSystem, and sorting or renumbering through it rewrote
+		// the talkgroup order every other client — and the admin panel — reads,
+		// which the next save in the admin then wrote back to the database.
+		rawTalkgroups := make([]*Talkgroup, 0, len(rawSystem.Talkgroups.List))
+
+		for _, talkgroup := range rawSystem.Talkgroups.List {
+			scoped := *talkgroup
+			rawTalkgroups = append(rawTalkgroups, &scoped)
+		}
+
 		if sortTalkgroups {
-			sort.Slice(rawSystem.Talkgroups.List, func(i int, j int) bool {
-				return rawSystem.Talkgroups.List[i].Label < rawSystem.Talkgroups.List[j].Label
+			sort.Slice(rawTalkgroups, func(i int, j int) bool {
+				return rawTalkgroups[i].Id < rawTalkgroups[j].Id
 			})
-			for i := range rawSystem.Talkgroups.List {
-				rawSystem.Talkgroups.List[i].Order = uint(i + 1)
+			for i := range rawTalkgroups {
+				rawTalkgroups[i].Order = uint(i + 1)
 			}
 		}
 
-		for j, rawTalkgroup := range rawSystem.Talkgroups.List {
+		for _, rawTalkgroup := range rawTalkgroups {
 			group, ok := groups.GetGroup(rawTalkgroup.GroupId)
 			if !ok {
 				continue
 			}
-			rawSystems[i].Talkgroups.List[j].group = group.Label
+			rawTalkgroup.group = group.Label
 
 			tag, ok := tags.GetTag(rawTalkgroup.TagId)
 			if !ok {
 				continue
 			}
-			rawSystems[i].Talkgroups.List[j].tag = tag.Label
+			rawTalkgroup.tag = tag.Label
 
 			talkgroupMap := TalkgroupMap{
 				"id":    rawTalkgroup.Id,

@@ -68,7 +68,22 @@ rdio-scanner-admin-config {
     height: 55vh;
     max-height: 560px;
     min-height: 320px;
+    /* The viewport this replaced brought its own scrolling. It had to go: a
+       cdkDropList cannot sort items it can only partly see, so dragging a row
+       showed a preview and then dropped it back where it started. */
+    overflow-y: auto;
     width: 100%;
+  }
+
+  /* While a row is being dragged, the gap it will land in. */
+  .cdk-drag-placeholder {
+    background: rgba(127, 127, 127, 0.2);
+    opacity: 0.6;
+  }
+
+  .cdk-drag-animating,
+  .admin-config-virtual-list.cdk-drop-list-dragging .admin-config-virtual-row:not(.cdk-drag-placeholder) {
+    transition: transform 180ms cubic-bezier(0, 0, 0.2, 1);
   }
 
   .admin-config-virtual-row {
