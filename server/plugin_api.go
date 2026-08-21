@@ -644,6 +644,14 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 		rt.searchExtensions = append(rt.searchExtensions, extension)
 		rt.mutex.Unlock()
 
+		// Registering a column as searchable is the server being told it will
+		// be running LIKE over it on every search. Making sure it can answer
+		// that is the server's job, not the plugin's — see ensureSearchIndex.
+		rt.controller.ensureSearchIndex(
+			rt.manifest.TableName(extension.Table),
+			extension.TextColumn,
+		)
+
 		return goja.Undefined()
 	})
 
