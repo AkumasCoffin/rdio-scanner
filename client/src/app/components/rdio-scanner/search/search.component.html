@@ -39,16 +39,6 @@
                     <mat-icon matPrefix>search</mat-icon>
                 </mat-form-field>
 
-                <mat-form-field appearance="fill" class="f f-date">
-                    <mat-label>Dates</mat-label>
-                    <mat-date-range-input [rangePicker]="rangePicker" formGroupName="range">
-                        <input matStartDate formControlName="start" placeholder="From" (dateChange)="applyFilters()">
-                        <input matEndDate formControlName="end" placeholder="To" (dateChange)="applyFilters()">
-                    </mat-date-range-input>
-                    <mat-datepicker-toggle matSuffix [for]="rangePicker"></mat-datepicker-toggle>
-                    <mat-date-range-picker #rangePicker></mat-date-range-picker>
-                </mat-form-field>
-
                 <mat-form-field appearance="fill" class="f f-sort">
                     <mat-label>Sort</mat-label>
                     <mat-select formControlName="sort" (selectionChange)="applyFilters()">
@@ -68,6 +58,29 @@
                         <span class="opt-label">{{ preset.name }}</span>
                         <span class="opt-hint">{{ preset.talkgroups.length }}</span>
                     </button>
+                </div>
+            </section>
+
+            <section class="fgroup">
+                <h4>
+                    Dates
+                    <button type="button" class="fclear" *ngIf="hasDates()" (click)="clearDates()">Any date</button>
+                </h4>
+                <div class="quick-row">
+                    <button type="button" class="quick" *ngFor="let preset of datePresets"
+                        [class.on]="isDatePreset(preset)" (click)="applyDatePreset(preset)">{{ preset.label }}</button>
+                </div>
+                <div class="time-row">
+                    <label class="time-field">
+                        <span>From</span>
+                        <input type="date" [value]="dateInput('start')" [max]="dateInput('end')"
+                            (change)="setDate('start', $event)" (blur)="commitDate('start', $event)">
+                    </label>
+                    <label class="time-field">
+                        <span>To</span>
+                        <input type="date" [value]="dateInput('end')" [min]="dateInput('start')"
+                            (change)="setDate('end', $event)" (blur)="commitDate('end', $event)">
+                    </label>
                 </div>
             </section>
 

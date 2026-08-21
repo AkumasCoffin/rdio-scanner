@@ -655,6 +655,51 @@
   }
 }
 
+/* Clears the date bounds from the section heading, where the count sits on
+   the other groups. */
+.fclear {
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  cursor: pointer;
+
+  &:hover { color: var(--accent); background: rgba(var(--line-rgb), 0.08); }
+}
+
+/* The spans people actually ask for, one press each. */
+.quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.quick {
+  padding: 3px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-elevated-soft);
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+
+  &:hover { border-color: rgba(var(--line-rgb), 0.5); color: var(--text-main); }
+
+  &.on {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+}
+
 .time-row {
   display: flex;
   flex-wrap: wrap;
@@ -679,6 +724,9 @@
       background: var(--bg-elevated-soft);
       border: 1px solid var(--border-subtle);
       border-radius: 6px;
+      /* Without this Chrome draws its own calendar white and its indicator
+         black — invisible on this field. */
+      color-scheme: dark;
 
       &:focus {
         outline: none;

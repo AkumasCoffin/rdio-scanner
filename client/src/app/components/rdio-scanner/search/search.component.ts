@@ -100,6 +100,13 @@ const MAX_RENDERED_OPTIONS = 300;
  */
 const COLLAPSED_OPTIONS = 8;
 
+/** The spans offered above the two date fields, in days back from today. */
+const DATE_PRESETS: { key: string; label: string; days: number }[] = [
+    { key: 'today', label: 'Today', days: 0 },
+    { key: '7d', label: '7 days', days: 6 },
+    { key: '30d', label: '30 days', days: 29 },
+];
+
 /**
  * A line in the results list. Calls are the point; the other two are structure
  * the grouping toggle introduces, and exist only when it is on.
@@ -188,6 +195,20 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
 
     /** Exposed so the template can ask whether a list is long enough to cut. */
     readonly collapsedOptions = COLLAPSED_OPTIONS;
+
+    readonly datePresets = DATE_PRESETS;
+
+    /*
+       Selection lookups run once per rendered option per change-detection
+       pass. As arrays that is quadratic in the size of the selection, which
+       is exactly the case that hurts: take a whole agency and every one of
+       its talkgroups then scans every one of its own keys.
+    */
+    private selectedSystems = new Set<number>();
+
+    private selectedTalkgroups = new Set<string>();
+
+    private tgDebounce: ReturnType<typeof setTimeout> | undefined;
 
     chips: RdioScannerSearchChip[] = [];
 
@@ -295,6 +316,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         this.eventSubscription.unsubscribe();
         this.viewportResize?.disconnect();
         if (this.qDebounce) clearTimeout(this.qDebounce);
+        if (this.tgDebounce) clearTimeout(this.tgDebounce);
         if (this.highlightClearTimer) clearTimeout(this.highlightClearTimer);
     }
 
@@ -349,6 +371,9 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         const groups = this.form.value.groups as string[];
         const tags = this.form.value.tags as string[];
 
+        this.selectedSystems = new Set(systems);
+        this.selectedTalkgroups = new Set(this.form.value.talkgroups as string[]);
+
         const matchesScope = (group: string, tag: string) =>
             (!groups.length || groups.includes(group)) && (!tags.length || tags.includes(tag));
 
@@ -359,7 +384,6 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         const query = this.talkgroupQuery.trim().toLowerCase();
 
         const byAgency: RdioScannerSearchAgencyGroup[] = [];
-        const picked = new Set(this.form.value.talkgroups as string[]);
         let truncated = false;
 
         for (const system of config.systems) {
@@ -409,7 +433,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
 
                 agency.talkgroups.push(option);
 
-                if (picked.has(option.key)) {
+                if (this.selectedTalkgroups.has(option.key)) {
                     agency.selected++;
                 }
             }
@@ -439,13 +463,26 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     onTalkgroupQuery(value: string): void {
         this.talkgroupQuery = value;
 
-        this.refreshOptions();
+        // Rebuilding the agency structure means walking every talkgroup in the
+        // config, so it waits for a pause rather than running per keystroke —
+        // the same treatment the transcript query already gets.
+        if (this.tgDebounce) {
+            clearTimeout(this.tgDebounce);
+        }
+
+        this.tgDebounce = setTimeout(() => {
+            this.tgDebounce = undefined;
+
+            this.refreshOptions();
+
+            this.ngChangeDetectorRef.detectChanges();
+        }, 180);
     }
 
     // --------------------------------------------------------------- selection
 
     isSystemSelected(id: number): boolean {
-        return (this.form.value.systems as number[]).includes(id);
+        return this.selectedSystems.has(id);
     }
 
     toggleSystem(id: number): void {
@@ -471,7 +508,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     }
 
     isTalkgroupSelected(key: string): boolean {
-        return (this.form.value.talkgroups as string[]).includes(key);
+        return this.selectedTalkgroups.has(key);
     }
 
     toggleTalkgroup(key: string): void {
@@ -564,6 +601,121 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         this.form.patchValue({ talkgroups: [...talkgroups] });
 
         this.applyFilters();
+    }
+
+    /** `yyyy-MM-dd`, the only format a native date input accepts. */
+    dateInput(which: 'start' | 'end'): string {
+        const value = (this.form.value.range as { start: Date | null; end: Date | null } | undefined)?.[which];
+
+        if (!(value instanceof Date) || isNaN(value.getTime())) {
+            return '';
+        }
+
+        const pad = (n: number) => `${n}`.padStart(2, '0');
+
+        return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+    }
+
+    setDate(which: 'start' | 'end', event: Event): void {
+        const raw = (event.target as HTMLInputElement).value;
+
+        // A native date input reports an empty value until every segment is
+        // filled, so a half-typed date looks exactly like a cleared one. Acting
+        // on it would null the model, and the binding would then wipe the
+        // segments already typed. Emptiness is settled on blur instead.
+        if (!raw) {
+            return;
+        }
+
+        const parsed = this.parseDateInput(raw);
+        const current = this.form.value.range as { start: Date | null; end: Date | null };
+        const range = { start: current?.start ?? null, end: current?.end ?? null, [which]: parsed };
+
+        // One end past the other describes nothing, so the other end follows.
+        if (range.start && range.end && range.start > range.end) {
+            if (which === 'start') {
+                range.end = parsed;
+            } else {
+                range.start = parsed;
+            }
+        }
+
+        this.form.patchValue({ range });
+
+        this.applyFilters();
+    }
+
+    /**
+     * Settles the field on blur: a date left incomplete is no date, and one
+     * left valid is snapped back to whatever is actually filtering.
+     */
+    commitDate(which: 'start' | 'end', event: Event): void {
+        const input = event.target as HTMLInputElement;
+
+        if (input.value) {
+            input.value = this.dateInput(which);
+
+            return;
+        }
+
+        const current = this.form.value.range as { start: Date | null; end: Date | null };
+
+        if (!current?.[which]) {
+            return;
+        }
+
+        this.form.patchValue({ range: { start: current.start, end: current.end, [which]: null } });
+
+        this.applyFilters();
+    }
+
+    applyDatePreset(preset: { days: number }): void {
+        const end = new Date();
+        end.setHours(0, 0, 0, 0);
+
+        const start = new Date(end);
+        start.setDate(start.getDate() - preset.days);
+
+        this.form.patchValue({ range: { start, end } });
+
+        this.applyFilters();
+    }
+
+    isDatePreset(preset: { days: number }): boolean {
+        const end = new Date();
+        end.setHours(0, 0, 0, 0);
+
+        const start = new Date(end);
+        start.setDate(start.getDate() - preset.days);
+
+        return this.dateInput('start') === this.asDateInput(start) && this.dateInput('end') === this.asDateInput(end);
+    }
+
+    clearDates(): void {
+        this.form.patchValue({ range: { start: null, end: null } });
+
+        this.applyFilters();
+    }
+
+    hasDates(): boolean {
+        return !!this.dateInput('start') || !!this.dateInput('end');
+    }
+
+    private asDateInput(value: Date): string {
+        const pad = (n: number) => `${n}`.padStart(2, '0');
+
+        return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+    }
+
+    /**
+     * Parsed as a local date. `new Date('2026-08-19')` is UTC midnight, which
+     * is the day before for anyone west of Greenwich — and the whole filter is
+     * expressed in the operator's own day boundaries.
+     */
+    private parseDateInput(raw: string): Date | null {
+        const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim());
+
+        return match ? new Date(+match[1], +match[2] - 1, +match[3]) : null;
     }
 
     isGroupSelected(group: string): boolean {
@@ -1202,7 +1354,25 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
      */
     get rows(): SearchRow[] {
         const calls = this.results.value;
+        const cached = this.rowCache;
 
+        // The getter is read on every change-detection pass, and rebuilding it
+        // allocates a row per loaded call. The results array is replaced rather
+        // than mutated whenever it changes, so its identity is a sound key.
+        if (cached && cached.calls === calls && cached.grouped === this.groupByBurst) {
+            return cached.rows;
+        }
+
+        const rows = this.buildRows(calls);
+
+        this.rowCache = { calls, grouped: this.groupByBurst, rows };
+
+        return rows;
+    }
+
+    private rowCache: { calls: RdioScannerCall[]; grouped: boolean; rows: SearchRow[] } | undefined;
+
+    private buildRows(calls: RdioScannerCall[]): SearchRow[] {
         if (!this.groupByBurst) {
             return calls.map((call, index) => this.callRow(call, calls[index - 1]));
         }
