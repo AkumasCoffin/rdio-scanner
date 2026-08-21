@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -364,36 +365,72 @@ func (calls *Calls) Prune(db *Database, pruneDays uint) error {
 	return err
 }
 
-func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*CallsSearchResults, error) {
+// callsSearchPlan is everything Calls.Search decides before it touches the
+// database. Split out of Search itself so the where/order/cursor construction —
+// the part with the injection surface and the backward-compatibility contract —
+// can be asserted on directly by tests without a live query.
+//
+// Three where variants, because the three queries Search runs do not filter
+// alike:
+//   - probeWhere carries the content filters only. It feeds the two
+//     `order by dateTime limit 1` bound probes, which report the extent of the
+//     matching calls to the client's date picker; folding the picked date range
+//     into them would collapse the bounds onto the current selection.
+//   - where adds the date window, and is what count(*) measures.
+//   - pageWhere adds the cursor predicate, and is what the page itself reads.
+//
+// The date window and the cursor are the only parts carrying bound parameters
+// — whereArgs for `where`, pageArgs for `pageWhere`. They are bound rather than
+// interpolated because a datetime literal has to match the exact text the
+// driver wrote, and it does not: SQLite stores a bound time.Time in Go's own
+// rendering, so a `dateTime = '...'` built from DateTimeFormat never matches a
+// row and the cursor's tiebreak would silently skip every tied call. Handing
+// the driver the time.Time makes both sides its problem, on all three backends.
+type callsSearchPlan struct {
+	probeWhere string
+	where      string
+	whereArgs  []any
+	pageWhere  string
+	pageArgs   []any
+	order      string
+	limit      uint
+	offset     uint
+	// withCount is false once the caller has opted into cursor paging. count(*)
+	// over the calls table is the most expensive statement in this file — on a
+	// large install it is a full scan — and it exists only to number pages that
+	// a cursor client does not draw.
+	withCount bool
+}
+
+// countKey is the search-meta cache key for this plan's count(*).
+//
+// The bound args are part of it: two searches differing only in their date
+// window share a where clause now that the window is bound, and keying on the
+// clause alone would serve one window's count for the other. Shared with
+// WarmSearchMeta so the entry warmed at startup is the entry the first search
+// looks for — they drifted apart the moment the key stopped being the raw
+// where clause.
+func (plan callsSearchPlan) countKey() string {
+	return fmt.Sprintf("count:%v%v", plan.where, plan.whereArgs)
+}
+
+// buildCallsSearchPlan turns search options into SQL fragments.
+//
+// Every value that reaches a fragment is either a number parsed as a number, a
+// time handed to the driver as a bound parameter, or a group/tag name that is
+// used strictly as a map key and never interpolated — so nothing here widens
+// the string-concatenated where clause into an injection path.
+func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db *Database, searchExtensions []pluginResolvedSearch) callsSearchPlan {
 	const (
 		ascOrder  = "asc"
 		descOrder = "desc"
 	)
 
 	var (
-		dateTime any
-		err      error
-		id       sql.NullFloat64
-		limit    uint
-		offset   uint
-		order    string
-		query    string
-		rows     *sql.Rows
-		t        time.Time
-		where    string = "true"
+		limit uint
+		order string
+		where string = "true"
 	)
-
-	// Read-only aggregate; no need to serialize behind ingests.
-	db := client.Controller.Database
-
-	formatError := func(err error) error {
-		return fmt.Errorf("calls.search: %v", err)
-	}
-
-	searchResults := &CallsSearchResults{
-		Options: searchOptions,
-		Results: []CallsSearchResult{},
-	}
 
 	if client.Access != nil {
 		switch v := client.Access.Systems.(type) {
@@ -439,6 +476,42 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		where += fmt.Sprintf(" and (%s)", strings.Join(a, " and "))
 	}
 
+	// The plural filters below are all "match nothing" when the caller sent an
+	// array that resolves to no ids. Silently dropping the clause would answer a
+	// narrowed search with every call in the database, which reads as the filter
+	// having worked — the same reasoning as the q= branch further down.
+	switch v := searchOptions.Systems.(type) {
+	case []uint:
+		if len(v) > 0 {
+			a := make([]string, 0, len(v))
+			for _, id := range v {
+				a = append(a, fmt.Sprintf("%v", id))
+			}
+			where += fmt.Sprintf(" and (`system` in (%s))", strings.Join(a, ", "))
+		} else {
+			where += " and 1 = 0"
+		}
+	}
+
+	// Talkgroups arrive as (system, talkgroup) pairs rather than bare ids: a
+	// talkgroup id is only unique inside its system, so a bare list would match
+	// unrelated talkgroups that happen to share a number on another system.
+	// Grouped back into one clause per system, which is the same shape the
+	// access scoping above emits and the shape the (system, talkgroup) index
+	// serves best.
+	switch v := searchOptions.Talkgroups.(type) {
+	case []CallsSearchTalkgroup:
+		bySystem := map[uint][]uint{}
+		systemIds := []uint{}
+		for _, pair := range v {
+			if _, seen := bySystem[pair.System]; !seen {
+				systemIds = append(systemIds, pair.System)
+			}
+			bySystem[pair.System] = append(bySystem[pair.System], pair.Talkgroup)
+		}
+		where += andScopeClause(bySystem, systemIds)
+	}
+
 	switch v := searchOptions.Group.(type) {
 	case string:
 		a := []string{}
@@ -467,11 +540,20 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		}
 	}
 
-	// Plugin-contributed searchable columns, resolved once and reused for both
-	// the filter below and the result lookup further down.
-	var searchExtensions []pluginResolvedSearch
-	if client != nil && client.Controller != nil {
-		searchExtensions = client.Controller.PluginSearchExtensions()
+	// Group and tag names never reach the SQL: they are map keys into the
+	// client's own scoped view, and only the numeric ids that come back out are
+	// interpolated. A name the client cannot see resolves to nothing, so the
+	// plural forms cannot be used to widen a scoped client's reach either.
+	switch v := searchOptions.Groups.(type) {
+	case []string:
+		bySystem, systemIds := mergeScopes(v, client.GroupsMap)
+		where += andScopeClause(bySystem, systemIds)
+	}
+
+	switch v := searchOptions.Tags.(type) {
+	case []string:
+		bySystem, systemIds := mergeScopes(v, client.TagsMap)
+		where += andScopeClause(bySystem, systemIds)
 	}
 
 	if q, ok := searchOptions.Q.(string); ok && q != "" {
@@ -507,12 +589,215 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		}
 	}
 
-	rangeKey := "range:" + where
+	// Everything above narrows *which* calls exist for this search, so it is
+	// what the date-bound probes measure. Everything below picks a window and a
+	// page inside that set.
+	plan := callsSearchPlan{probeWhere: where, withCount: true}
+
+	switch v := searchOptions.Sort.(type) {
+	case float64:
+		if v < 0 {
+			order = descOrder
+		} else {
+			order = ascOrder
+		}
+	default:
+		order = ascOrder
+	}
+
+	// The id tiebreak is what makes a cursor stable: calls routinely share a
+	// dateTime to the stored precision, and `order by dateTime` alone leaves the
+	// backend free to return those rows in a different order on the next page —
+	// which is exactly how a cursor skips or repeats rows.
+	plan.order = fmt.Sprintf("`dateTime` %v, `id` %v", order, order)
+
+	switch v := searchOptions.Date.(type) {
+	case time.Time:
+		var (
+			df    string = db.DateTimeFormat
+			start time.Time
+			stop  time.Time
+		)
+
+		if order == ascOrder {
+			start = time.Date(v.Year(), v.Month(), v.Day(), v.Hour(), v.Minute(), 0, 0, time.UTC)
+			stop = start.Add(time.Hour*24 - time.Millisecond)
+
+		} else {
+			start = time.Date(v.Year(), v.Month(), v.Day(), v.Hour(), v.Minute(), 0, 0, time.UTC).Add(time.Hour*-24 + time.Millisecond)
+			stop = time.Date(v.Year(), v.Month(), v.Day(), v.Hour(), v.Minute(), 0, 0, time.UTC)
+		}
+
+		where += fmt.Sprintf(" and (`dateTime` between '%v' and '%v')", start.Format(df), stop.Format(df))
+	}
+
+	// dateStart/dateStop is the plain inclusive window `date` never was: give it
+	// both ends and it is a span of days, both ends on one day and it is a slice
+	// of that day, one end and it is open-ended. `date` keeps its own ±24h
+	// anchored-on-sort behaviour above, because the Android app and the plugins
+	// depend on it.
+	dateStart, hasDateStart := searchOptions.DateStart.(time.Time)
+	dateStop, hasDateStop := searchOptions.DateStop.(time.Time)
+
+	// Always in UTC: a bound time carries its zone, and the same instant in
+	// another zone is a different value to an equality test on SQLite.
+	switch {
+	case hasDateStart && hasDateStop:
+		where += " and (`dateTime` between ? and ?)"
+		plan.whereArgs = append(plan.whereArgs, dateStart.UTC(), dateStop.UTC())
+	case hasDateStart:
+		where += " and (`dateTime` >= ?)"
+		plan.whereArgs = append(plan.whereArgs, dateStart.UTC())
+	case hasDateStop:
+		where += " and (`dateTime` <= ?)"
+		plan.whereArgs = append(plan.whereArgs, dateStop.UTC())
+	}
+
+	plan.where = where
+	// Copied rather than aliased: the cursor appends to pageArgs, and a shared
+	// backing array would let that write land in the count query's args.
+	plan.pageArgs = append([]any{}, plan.whereArgs...)
+
+	switch v := searchOptions.Limit.(type) {
+	case uint:
+		limit = uint(math.Min(float64(500), float64(v)))
+	default:
+		limit = 200
+	}
+	plan.limit = limit
+
+	switch v := searchOptions.Offset.(type) {
+	case uint:
+		plan.offset = v
+	}
+
+	// A caller that says it pages by cursor gets no count(*), whether or not
+	// this particular request carries a cursor — the first page of a cursor walk
+	// has none, and that page is exactly where the scan used to be paid. Callers
+	// that still send offset keep their count, so nothing that draws numbered
+	// pages regresses.
+	if v, ok := searchOptions.Cursor.(bool); ok && v {
+		plan.withCount = false
+	}
+
+	switch v := searchOptions.After.(type) {
+	case *CallsSearchCursor:
+		plan.withCount = false
+
+		// Written out rather than as a row-value comparison — (dateTime, id) <
+		// (:d, :id) — because row-value support differs across the three
+		// backends this server runs on.
+		if order == descOrder {
+			where += " and (`dateTime` < ? or (`dateTime` = ? and `id` < ?))"
+		} else {
+			where += " and (`dateTime` > ? or (`dateTime` = ? and `id` > ?))"
+		}
+		plan.pageArgs = append(plan.pageArgs, v.DateTime.UTC(), v.DateTime.UTC(), v.Id)
+
+		// The cursor *is* the position. Applying offset on top of it would skip
+		// a page's worth of rows on every request after the first.
+		plan.offset = 0
+	}
+
+	plan.pageWhere = where
+
+	return plan
+}
+
+// mergeScopes folds the talkgroups of several named groups (or tags) into one
+// system -> talkgroups map, plus the system ids in a stable order. Sorted
+// rather than map order because this string ends up as the search-meta cache
+// key: a where clause that shuffles between identical searches is a cache that
+// never hits.
+func mergeScopes(names []string, scopes map[string]map[uint][]uint) (map[uint][]uint, []uint) {
+	bySystem := map[uint][]uint{}
+	seen := map[uint]map[uint]bool{}
+	systemIds := []uint{}
+
+	for _, name := range names {
+		for systemId, talkgroups := range scopes[name] {
+			if seen[systemId] == nil {
+				seen[systemId] = map[uint]bool{}
+				systemIds = append(systemIds, systemId)
+			}
+			for _, talkgroup := range talkgroups {
+				// Two named groups can share a talkgroup; listing it twice is
+				// harmless but noisy in the cache key.
+				if seen[systemId][talkgroup] {
+					continue
+				}
+				seen[systemId][talkgroup] = true
+				bySystem[systemId] = append(bySystem[systemId], talkgroup)
+			}
+		}
+	}
+
+	sort.Slice(systemIds, func(i, j int) bool { return systemIds[i] < systemIds[j] })
+	for _, systemId := range systemIds {
+		sort.Slice(bySystem[systemId], func(i, j int) bool { return bySystem[systemId][i] < bySystem[systemId][j] })
+	}
+
+	return bySystem, systemIds
+}
+
+// andScopeClause renders a system -> talkgroups map as the same
+// `(system = X and talkgroup in (...)) or ...` shape the access scoping uses,
+// prefixed with " and " ready to append. An empty map matches nothing, which is
+// the honest answer for a filter the caller did set.
+func andScopeClause(bySystem map[uint][]uint, systemIds []uint) string {
+	if len(systemIds) == 0 {
+		return " and 1 = 0"
+	}
+
+	a := make([]string, 0, len(systemIds))
+	for _, systemId := range systemIds {
+		b := make([]string, 0, len(bySystem[systemId]))
+		for _, talkgroup := range bySystem[systemId] {
+			b = append(b, fmt.Sprintf("%v", talkgroup))
+		}
+		a = append(a, fmt.Sprintf("(`system` = %v and `talkgroup` in (%s))", systemId, strings.Join(b, ", ")))
+	}
+
+	return fmt.Sprintf(" and (%s)", strings.Join(a, " or "))
+}
+
+func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*CallsSearchResults, error) {
+	var (
+		dateTime any
+		err      error
+		id       sql.NullFloat64
+		query    string
+		rows     *sql.Rows
+		t        time.Time
+	)
+
+	// Read-only aggregate; no need to serialize behind ingests.
+	db := client.Controller.Database
+
+	formatError := func(err error) error {
+		return fmt.Errorf("calls.search: %v", err)
+	}
+
+	searchResults := &CallsSearchResults{
+		Options: searchOptions,
+		Results: []CallsSearchResult{},
+	}
+
+	// Plugin-contributed searchable columns, resolved once and reused for both
+	// the free-text filter and the result lookup further down.
+	var searchExtensions []pluginResolvedSearch
+	if client != nil && client.Controller != nil {
+		searchExtensions = client.Controller.PluginSearchExtensions()
+	}
+
+	plan := buildCallsSearchPlan(searchOptions, client, db, searchExtensions)
+
+	rangeKey := "range:" + plan.probeWhere
 	if cached, ok := calls.getSearchMeta(rangeKey); ok {
 		searchResults.DateStart = cached.dateStart
 		searchResults.DateStop = cached.dateStop
 	} else {
-		query = fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %v order by `dateTime` asc limit 1", where)
+		query = fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %v order by `dateTime` asc limit 1", plan.probeWhere)
 		if err = db.QueryRow(query).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
 			return nil, formatError(fmt.Errorf("%v, %v", err, query))
 		}
@@ -521,7 +806,7 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 			searchResults.DateStart = t
 		}
 
-		query = fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %v order by `dateTime` desc limit 1", where)
+		query = fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %v order by `dateTime` desc limit 1", plan.probeWhere)
 		if err = db.QueryRow(query).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
 			return nil, formatError(fmt.Errorf("%v, %v", err, query))
 		}
@@ -539,65 +824,24 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		})
 	}
 
-	switch v := searchOptions.Sort.(type) {
-	case float64:
-		if v < 0 {
-			order = descOrder
+	if plan.withCount {
+		countKey := plan.countKey()
+		if cached, ok := calls.getSearchMeta(countKey); ok {
+			searchResults.Count = cached.count
 		} else {
-			order = ascOrder
+			query = fmt.Sprintf("select count(*) from `rdioScannerCalls` where %v", plan.where)
+			if err = db.QueryRow(query, plan.whereArgs...).Scan(&searchResults.Count); err != nil && err != sql.ErrNoRows {
+				return nil, formatError(fmt.Errorf("%v, %v", err, query))
+			}
+			calls.putSearchMeta(countKey, &callsSearchMeta{
+				count:   searchResults.Count,
+				expires: time.Now().Add(callsSearchMetaTTL),
+			})
 		}
-	default:
-		order = ascOrder
 	}
 
-	switch v := searchOptions.Date.(type) {
-	case time.Time:
-		var (
-			df    string = client.Controller.Database.DateTimeFormat
-			start time.Time
-			stop  time.Time
-		)
-
-		if order == ascOrder {
-			start = time.Date(v.Year(), v.Month(), v.Day(), v.Hour(), v.Minute(), 0, 0, time.UTC)
-			stop = start.Add(time.Hour*24 - time.Millisecond)
-
-		} else {
-			start = time.Date(v.Year(), v.Month(), v.Day(), v.Hour(), v.Minute(), 0, 0, time.UTC).Add(time.Hour*-24 + time.Millisecond)
-			stop = time.Date(v.Year(), v.Month(), v.Day(), v.Hour(), v.Minute(), 0, 0, time.UTC)
-		}
-
-		where += fmt.Sprintf(" and (`dateTime` between '%v' and '%v')", start.Format(df), stop.Format(df))
-	}
-
-	switch v := searchOptions.Limit.(type) {
-	case uint:
-		limit = uint(math.Min(float64(500), float64(v)))
-	default:
-		limit = 200
-	}
-
-	switch v := searchOptions.Offset.(type) {
-	case uint:
-		offset = v
-	}
-
-	countKey := "count:" + where
-	if cached, ok := calls.getSearchMeta(countKey); ok {
-		searchResults.Count = cached.count
-	} else {
-		query = fmt.Sprintf("select count(*) from `rdioScannerCalls` where %v", where)
-		if err = db.QueryRow(query).Scan(&searchResults.Count); err != nil && err != sql.ErrNoRows {
-			return nil, formatError(fmt.Errorf("%v, %v", err, query))
-		}
-		calls.putSearchMeta(countKey, &callsSearchMeta{
-			count:   searchResults.Count,
-			expires: time.Now().Add(callsSearchMetaTTL),
-		})
-	}
-
-	query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup` from `rdioScannerCalls` where %v order by `dateTime` %v limit %v offset %v", where, order, limit, offset)
-	if rows, err = db.Query(query); err != nil {
+	query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup` from `rdioScannerCalls` where %v order by %v limit %v offset %v", plan.pageWhere, plan.order, plan.limit, plan.offset)
+	if rows, err = db.Query(query, plan.pageArgs...); err != nil {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
 	defer rows.Close()
@@ -812,24 +1056,77 @@ func (calls *Calls) WarmSearchMeta(db *Database) {
 	var count uint
 	countQuery := fmt.Sprintf("select count(*) from `rdioScannerCalls` where %s", where)
 	if err := db.QueryRow(countQuery).Scan(&count); err == nil {
-		calls.putSearchMeta("count:"+where, &callsSearchMeta{
+		// Through the plan's own key builder, so an unfiltered search finds
+		// this entry instead of paying for the scan it was warmed to avoid.
+		calls.putSearchMeta(callsSearchPlan{where: where}.countKey(), &callsSearchMeta{
 			count:   count,
 			expires: time.Now().Add(callsSearchMetaTTL),
 		})
 	}
 }
 
+// CallsSearchTalkgroup is one (system, talkgroup) pair of the `talkgroups`
+// filter. A pair rather than a bare id because a talkgroup id is only unique
+// within its system.
+type CallsSearchTalkgroup struct {
+	System    uint `json:"system"`
+	Talkgroup uint `json:"talkgroup"`
+}
+
+// CallsSearchCursor is the position of the last row a client already has. Both
+// halves are needed: dateTime alone does not identify a row, since calls share
+// timestamps routinely.
+type CallsSearchCursor struct {
+	DateTime time.Time `json:"dateTime"`
+	Id       uint      `json:"id"`
+}
+
+// CallsSearchOptions is the wire shape of a call search.
+//
+// Everything is `any` because absent and zero must stay distinguishable —
+// system 0 is not a system, but limit 0 and sort 0 are real values — and
+// because the singular filters predate the plural ones and must keep their
+// exact behaviour for the Android app and for plugins.
 type CallsSearchOptions struct {
-	Date                    any `json:"date,omitempty"`
-	Group                   any `json:"group,omitempty"`
-	Limit                   any `json:"limit,omitempty"`
-	Offset                  any `json:"offset,omitempty"`
-	Q                       any `json:"q,omitempty"`
-	Sort                    any `json:"sort,omitempty"`
-	System                  any `json:"system,omitempty"`
-	Tag                     any `json:"tag,omitempty"`
-	Talkgroup               any `json:"talkgroup,omitempty"`
+	After      any `json:"after,omitempty"`
+	Cursor     any `json:"cursor,omitempty"`
+	Date       any `json:"date,omitempty"`
+	DateStart  any `json:"dateStart,omitempty"`
+	DateStop   any `json:"dateStop,omitempty"`
+	Group      any `json:"group,omitempty"`
+	Groups     any `json:"groups,omitempty"`
+	Limit      any `json:"limit,omitempty"`
+	Offset     any `json:"offset,omitempty"`
+	Q          any `json:"q,omitempty"`
+	Sort       any `json:"sort,omitempty"`
+	System     any `json:"system,omitempty"`
+	Systems    any `json:"systems,omitempty"`
+	Tag        any `json:"tag,omitempty"`
+	Tags       any `json:"tags,omitempty"`
+	Talkgroup  any `json:"talkgroup,omitempty"`
+	Talkgroups any `json:"talkgroups,omitempty"`
+
 	searchPatchedTalkgroups bool
+}
+
+// jsonStrings reads a JSON (or goja-exported) array of strings. The second
+// return distinguishes "the caller sent no such key" from "the caller sent an
+// array that holds nothing usable" — the two mean opposite things to a filter.
+func jsonStrings(raw any) ([]string, bool) {
+	switch v := raw.(type) {
+	case []any:
+		out := []string{}
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out, true
+	case []string:
+		return v, true
+	}
+
+	return nil, false
 }
 
 func (searchOptions *CallsSearchOptions) fromMap(m map[string]any) error {
@@ -840,9 +1137,86 @@ func (searchOptions *CallsSearchOptions) fromMap(m map[string]any) error {
 		}
 	}
 
+	// dateStart/dateStop are only ever set together with what they parsed to: a
+	// string that is not RFC3339 leaves the field unset, so a malformed bound
+	// widens the search rather than pinning it to the zero time (year 1) and
+	// returning nothing.
+	switch v := m["dateStart"].(type) {
+	case string:
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			searchOptions.DateStart = t
+		}
+	}
+
+	switch v := m["dateStop"].(type) {
+	case string:
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			searchOptions.DateStop = t
+		}
+	}
+
 	switch v := m["group"].(type) {
 	case string:
 		searchOptions.Group = v
+	}
+
+	if v, ok := jsonStrings(m["groups"]); ok {
+		searchOptions.Groups = v
+	}
+
+	if v, ok := jsonStrings(m["tags"]); ok {
+		searchOptions.Tags = v
+	}
+
+	// A present-but-unusable array stays present (as an empty slice) rather than
+	// falling back to unset: the caller asked to narrow the search, and answering
+	// with every call would look like the filter had worked.
+	switch v := m["systems"].(type) {
+	case []any:
+		systems := []uint{}
+		for _, raw := range v {
+			if id, ok := jsonUint(raw); ok {
+				systems = append(systems, id)
+			}
+		}
+		searchOptions.Systems = systems
+	}
+
+	switch v := m["talkgroups"].(type) {
+	case []any:
+		talkgroups := []CallsSearchTalkgroup{}
+		for _, raw := range v {
+			pair, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			system, hasSystem := jsonUintFrom(pair, "system")
+			talkgroup, hasTalkgroup := jsonUintFrom(pair, "talkgroup")
+			if !hasSystem || !hasTalkgroup {
+				continue
+			}
+			talkgroups = append(talkgroups, CallsSearchTalkgroup{System: system, Talkgroup: talkgroup})
+		}
+		searchOptions.Talkgroups = talkgroups
+	}
+
+	// A cursor is only honoured whole. Half of one — a dateTime with no id, or
+	// an unparsable dateTime — would page from an ambiguous position, which is
+	// how a walk silently skips or repeats rows.
+	switch v := m["after"].(type) {
+	case map[string]any:
+		if raw, ok := v["dateTime"].(string); ok {
+			if t, err := time.Parse(time.RFC3339, raw); err == nil {
+				if id, ok := jsonUintFrom(v, "id"); ok {
+					searchOptions.After = &CallsSearchCursor{DateTime: t, Id: id}
+				}
+			}
+		}
+	}
+
+	switch v := m["cursor"].(type) {
+	case bool:
+		searchOptions.Cursor = v
 	}
 
 	if v, ok := jsonUint(m["limit"]); ok {
