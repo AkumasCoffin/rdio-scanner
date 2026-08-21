@@ -1,160 +1,304 @@
 <div class="rdio-search" data-rdio="search">
-    <!-- Slim, sticky filter bar on top -->
-    <section class="filter-bar" data-rdio="search-filters" [formGroup]="form">
-        <div class="filter-row">
-            <mat-form-field appearance="fill" class="f f-q">
-                <mat-label>Search transcripts</mat-label>
-                <input matInput type="search" formControlName="q" (input)="onQueryInput()"
-                    placeholder="Keywords, unit IDs, phrases…" autocomplete="off">
-                <mat-icon matPrefix>search</mat-icon>
-            </mat-form-field>
+    <!--
+        The filters are a standing column, not a dropdown: on a desktop the
+        window has the width to spare, and a filter you can see is a filter you
+        remember you set. The phone breakpoint slides this same markup in from
+        the left over a backdrop, which is the only place the Filters button and
+        the Done button are reachable.
+    -->
+    <aside class="filters-rail" data-rdio="search-filters" [class.open]="filtersOpen" [formGroup]="form">
+        <header class="rail-head">
+            <mat-icon>tune</mat-icon>
+            <span class="rail-title">Filters</span>
+            <span class="rail-count" *ngIf="activeFilterCount()">{{ activeFilterCount() }}</span>
+            <span class="rail-spacer"></span>
 
-            <mat-form-field appearance="fill" class="f f-sm">
-                <mat-label>Sort</mat-label>
-                <mat-select formControlName="sort" (selectionChange)="formChangeHandler()">
-                    <mat-option [value]="1">Ascending</mat-option>
-                    <mat-option [value]="-1">Descending</mat-option>
-                </mat-select>
-            </mat-form-field>
-
-            <mat-form-field appearance="fill" class="f f-md">
-                <mat-label>Date</mat-label>
-                <input matInput type="datetime-local" formControlName="date"
-                    [max]="playbackList?.dateStop" [min]="playbackList?.dateStart"
-                    (change)="formChangeHandler()">
-            </mat-form-field>
-
-            <mat-form-field appearance="fill" class="f f-sm">
-                <mat-label>System</mat-label>
-                <mat-select formControlName="system" (selectionChange)="formChangeHandler()">
-                    <mat-option [value]="-1">All Systems</mat-option>
-                    <mat-option *ngFor="let system of optionsSystem; index as i" [value]="i">
-                        {{ system }}
-                    </mat-option>
-                </mat-select>
-            </mat-form-field>
-
-            <mat-form-field appearance="fill" class="f f-sm">
-                <mat-label>Talkgroup</mat-label>
-                <mat-select formControlName="talkgroup" (selectionChange)="formChangeHandler()">
-                    <mat-option [value]="-1">All Talkgroups</mat-option>
-                    <mat-option *ngFor="let talkgroup of optionsTalkgroup; index as i" [value]="i">
-                        {{ talkgroup }}
-                    </mat-option>
-                </mat-select>
-            </mat-form-field>
-
-            <mat-form-field appearance="fill" class="f f-sm">
-                <mat-label>Group</mat-label>
-                <mat-select formControlName="group" (selectionChange)="formChangeHandler()">
-                    <mat-option [value]="-1">All Groups</mat-option>
-                    <mat-option *ngFor="let group of optionsGroup; index as i" [value]="i">
-                        {{ group }}
-                    </mat-option>
-                </mat-select>
-            </mat-form-field>
-
-            <mat-form-field appearance="fill" class="f f-sm">
-                <mat-label>Tag</mat-label>
-                <mat-select formControlName="tag" (selectionChange)="formChangeHandler()">
-                    <mat-option [value]="-1">All Tags</mat-option>
-                    <mat-option *ngFor="let tag of optionsTag; index as i" [value]="i">
-                        {{ tag }}
-                    </mat-option>
-                </mat-select>
-            </mat-form-field>
-
-            <div class="filter-actions" data-rdio="search-actions">
-                <mat-slide-toggle [checked]="downloadMode" (change)="toggleDownloadMode()"
-                    color="primary" labelPosition="before" title="Bulk download mode">
-                    <mat-icon>save_alt</mat-icon>
-                </mat-slide-toggle>
-                <button *ngIf="downloadMode && getSelectedCount() > 0" mat-raised-button color="primary"
-                    class="dl-btn" [disabled]="isDownloading" (click)="downloadSelected()">
-                    <mat-icon *ngIf="!isDownloading">download</mat-icon>
-                    <mat-icon *ngIf="isDownloading" class="spin">cached</mat-icon>
-                    <span>{{ getSelectedCount() }}</span>
+            <!--
+                The bulk-download toggle used to sit out here gating the row
+                checkboxes. Selection is unconditional now, so this cluster is
+                left with the one action that works on the filters themselves.
+            -->
+            <div class="rail-actions" data-rdio="search-actions">
+                <button type="button" class="rail-reset" title="Reset filters" (click)="resetForm()">
+                    <mat-icon>restart_alt</mat-icon>
+                    <span>Reset</span>
                 </button>
-                <button mat-stroked-button type="button" class="reset-btn"
-                    [disabled]="resultsPending" (click)="resetForm()">
-                    Reset
+            </div>
+
+            <button type="button" class="rail-close" (click)="closeFilters()" aria-label="Close filters">
+                <mat-icon>close</mat-icon>
+            </button>
+        </header>
+
+        <div class="rail-body">
+            <section class="fgroup fgroup-query">
+                <mat-form-field appearance="fill" class="f f-q">
+                    <mat-label>Search transcripts</mat-label>
+                    <input matInput type="search" formControlName="q" (input)="onQueryInput()"
+                        placeholder="Keywords, unit IDs, phrases…" autocomplete="off">
+                    <mat-icon matPrefix>search</mat-icon>
+                </mat-form-field>
+
+                <mat-form-field appearance="fill" class="f f-date">
+                    <mat-label>Dates</mat-label>
+                    <mat-date-range-input [rangePicker]="rangePicker" formGroupName="range">
+                        <input matStartDate formControlName="start" placeholder="From" (dateChange)="applyFilters()">
+                        <input matEndDate formControlName="end" placeholder="To" (dateChange)="applyFilters()">
+                    </mat-date-range-input>
+                    <mat-datepicker-toggle matSuffix [for]="rangePicker"></mat-datepicker-toggle>
+                    <mat-date-range-picker #rangePicker></mat-date-range-picker>
+                </mat-form-field>
+
+                <mat-form-field appearance="fill" class="f f-sort">
+                    <mat-label>Sort</mat-label>
+                    <mat-select formControlName="sort" (selectionChange)="applyFilters()">
+                        <mat-option [value]="-1">Newest first</mat-option>
+                        <mat-option [value]="1">Oldest first</mat-option>
+                    </mat-select>
+                </mat-form-field>
+            </section>
+
+            <!-- Only shown when the user actually saved livefeed presets. -->
+            <section class="fgroup" *ngIf="presets.length">
+                <h4>Presets</h4>
+                <div class="opts opts-wrap">
+                    <button type="button" class="opt opt-inline" *ngFor="let preset of presets"
+                        [class.on]="isPresetApplied(preset)" (click)="applyPreset(preset)">
+                        <span class="tick"></span>
+                        <span class="opt-label">{{ preset.name }}</span>
+                        <span class="opt-hint">{{ preset.talkgroups.length }}</span>
+                    </button>
+                </div>
+            </section>
+
+            <section class="fgroup">
+                <h4>Time of day</h4>
+                <div class="time-row">
+                    <label class="time-field">
+                        <span>From</span>
+                        <input type="time" formControlName="timeStart" (change)="applyFilters()">
+                    </label>
+                    <label class="time-field">
+                        <span>To</span>
+                        <input type="time" formControlName="timeStop" (change)="applyFilters()">
+                    </label>
+                </div>
+                <p class="fhint">Bounds the selected dates. Pick one day for a slice of that day.</p>
+            </section>
+
+            <section class="fgroup">
+                <h4>Systems <span class="fcount" *ngIf="form.value.systems.length">{{ form.value.systems.length }}</span></h4>
+                <div class="opts">
+                    <button type="button" class="opt" *ngFor="let system of visibleOptions(optionsSystem, 'systems')"
+                        [class.on]="isSystemSelected(system.id)" (click)="toggleSystem(system.id)">
+                        <span class="tick"></span>
+                        <span class="opt-label">{{ system.label }}</span>
+                    </button>
+                    <p class="fhint" *ngIf="!optionsSystem.length">No systems match the other filters.</p>
+                    <button type="button" class="opt-more" *ngIf="optionsSystem.length > collapsedOptions"
+                        (click)="toggleSection('systems')">{{ isSectionExpanded('systems')
+                        ? 'Show fewer' : 'Show all ' + optionsSystem.length + ' systems' }}</button>
+                </div>
+            </section>
+
+            <!--
+                Grouped by agency: in a flat list every agency's Dispatch 1 looks
+                like the next one's. The header doubles as the whole-agency
+                toggle, so picking a service is one press rather than twenty.
+            -->
+            <section class="fgroup">
+                <h4>Talkgroups <span class="fcount" *ngIf="form.value.talkgroups.length">{{ form.value.talkgroups.length }}</span></h4>
+                <input class="opt-filter" type="search" placeholder="Filter talkgroups…"
+                    [value]="talkgroupQuery" (input)="onTalkgroupQuery($any($event.target).value)">
+
+                <div class="agencies">
+                    <section class="agency" *ngFor="let agency of visibleAgencies; trackBy: trackAgency"
+                        [class.open]="isAgencyOpen(agency)">
+                        <button type="button" class="agency-head" (click)="toggleAgency(agency)"
+                            [attr.aria-expanded]="isAgencyOpen(agency)">
+                            <span class="agency-tick" [class.on]="agency.selected >= agency.talkgroups.length"
+                                [class.some]="agency.selected > 0 && agency.selected < agency.talkgroups.length"
+                                (click)="toggleAgencySelection(agency, $event)"
+                                [attr.aria-label]="'Select every talkgroup in ' + agency.label">
+                                <span class="tick"></span>
+                            </span>
+                            <span class="agency-name">{{ agency.label }}</span>
+                            <span class="agency-count"><ng-container
+                                *ngIf="agency.selected">{{ agency.selected }}/</ng-container>{{ agency.talkgroups.length }}</span>
+                            <mat-icon class="agency-caret">expand_more</mat-icon>
+                        </button>
+
+                        <div class="opts" *ngIf="isAgencyOpen(agency)">
+                            <button type="button" class="opt" *ngFor="let talkgroup of agency.talkgroups; trackBy: trackTalkgroupOption"
+                                [class.on]="isTalkgroupSelected(talkgroup.key)" (click)="toggleTalkgroup(talkgroup.key)">
+                                <span class="tick"></span>
+                                <span class="opt-label">{{ talkgroup.label }}</span>
+                                <span class="opt-hint" *ngIf="talkgroup.name">{{ talkgroup.name }}</span>
+                            </button>
+                        </div>
+                    </section>
+
+                    <p class="fhint" *ngIf="!optionsTalkgroupByAgency.length">No talkgroups match.</p>
+                    <button type="button" class="opt-more"
+                        *ngIf="!talkgroupQuery.trim() && optionsTalkgroupByAgency.length > collapsedOptions"
+                        (click)="toggleSection('agencies')">{{ isSectionExpanded('agencies')
+                        ? 'Show fewer' : 'Show all ' + optionsTalkgroupByAgency.length + ' agencies' }}</button>
+                </div>
+
+                <p class="fhint" *ngIf="talkgroupsTruncated">Some agencies have more talkgroups than are listed — type to narrow them down.</p>
+            </section>
+
+            <section class="fgroup">
+                <h4>Groups <span class="fcount" *ngIf="form.value.groups.length">{{ form.value.groups.length }}</span></h4>
+                <div class="opts">
+                    <button type="button" class="opt" *ngFor="let group of visibleOptions(optionsGroup, 'groups')"
+                        [class.on]="isGroupSelected(group)" (click)="toggleGroup(group)">
+                        <span class="tick"></span>
+                        <span class="opt-label">{{ group }}</span>
+                    </button>
+                    <p class="fhint" *ngIf="!optionsGroup.length">No groups match.</p>
+                    <button type="button" class="opt-more" *ngIf="optionsGroup.length > collapsedOptions"
+                        (click)="toggleSection('groups')">{{ isSectionExpanded('groups')
+                        ? 'Show fewer' : 'Show all ' + optionsGroup.length + ' groups' }}</button>
+                </div>
+            </section>
+
+            <section class="fgroup">
+                <h4>Tags <span class="fcount" *ngIf="form.value.tags.length">{{ form.value.tags.length }}</span></h4>
+                <div class="opts">
+                    <button type="button" class="opt" *ngFor="let tag of visibleOptions(optionsTag, 'tags')"
+                        [class.on]="isTagSelected(tag)" (click)="toggleTag(tag)">
+                        <span class="tick"></span>
+                        <span class="opt-label">{{ tag }}</span>
+                    </button>
+                    <p class="fhint" *ngIf="!optionsTag.length">No tags match.</p>
+                    <button type="button" class="opt-more" *ngIf="optionsTag.length > collapsedOptions"
+                        (click)="toggleSection('tags')">{{ isSectionExpanded('tags')
+                        ? 'Show fewer' : 'Show all ' + optionsTag.length + ' tags' }}</button>
+                </div>
+            </section>
+        </div>
+
+        <!-- Only reachable at the phone breakpoint, where the rail is a sheet. -->
+        <footer class="rail-foot">
+            <button mat-button type="button" (click)="resetForm()">Clear all</button>
+            <button mat-flat-button color="primary" type="button" (click)="closeFilters()">Done</button>
+        </footer>
+    </aside>
+
+    <div class="filters-backdrop" *ngIf="filtersOpen" (click)="closeFilters()"></div>
+
+    <main class="search-main">
+        <div class="main-head">
+            <!-- The rail is already on screen above the breakpoint; this opens it below. -->
+            <button type="button" class="filters-btn" [class.on]="filtersOpen" (click)="toggleFilters()">
+                <mat-icon>tune</mat-icon>
+                <span>Filters</span>
+                <span class="filters-count" *ngIf="activeFilterCount()">{{ activeFilterCount() }}</span>
+            </button>
+
+            <!-- Applied filters stay in the results column, where their effect is. -->
+            <div class="chip-row" *ngIf="chips.length">
+                <button type="button" class="chip" *ngFor="let chip of chips" [attr.data-chip]="chip.kind"
+                    (click)="removeChip(chip)" [title]="'Remove ' + chip.label">
+                    <span class="chip-label">{{ chip.label }}</span>
+                    <mat-icon>close</mat-icon>
+                </button>
+                <button type="button" class="chip chip-clear" *ngIf="chips.length > 1" (click)="resetForm()">
+                    Clear all
                 </button>
             </div>
         </div>
+
         <mat-progress-bar [mode]="resultsPending ? 'query' : 'determinate'" color="primary"
             class="loading-bar"></mat-progress-bar>
-    </section>
 
-    <!-- Results list — takes the remaining viewport -->
-    <section class="results" data-rdio="search-results">
-        <div class="select-all-bar" *ngIf="downloadMode">
-            <mat-checkbox [checked]="areAllVisibleSelected()" [indeterminate]="areSomeVisibleSelected()"
-                (change)="toggleSelectAll()" color="primary">
-                Select all on this page
-            </mat-checkbox>
-            <span class="selected-count">{{ getSelectedCount() }} selected</span>
-        </div>
+    <div class="list-bar">
+        <button type="button" class="lb-check" (click)="toggleSelectAll()"
+            [class.on]="areAllVisibleSelected()" [class.some]="areSomeVisibleSelected()"
+            [attr.aria-label]="areAllVisibleSelected() ? 'Deselect all loaded' : 'Select all loaded'">
+            <span class="tick"></span>
+            <span>Select all loaded</span>
+        </button>
 
-        <div class="call-row" data-rdio="search-row"
-            *ngFor="let row of (results | async); trackBy: trackCall; let i = index"
-            [class.highlighted]="isHighlighted(row?.id)"
-            [class.replaying]="row && call && row.id === call.id"
-            [class.empty]="!row"
-            [attr.data-call-row]="row?.id">
+        <button type="button" class="lb-toggle" [class.on]="groupByBurst" (click)="toggleGrouping()"
+            title="Group calls into the bursts they arrived in">
+            <mat-icon>segment</mat-icon>
+            <span>Group by burst</span>
+        </button>
 
-            <ng-container *ngIf="row; else emptyRow">
-                <div class="row-actions">
-                    <mat-checkbox *ngIf="downloadMode"
-                        [checked]="isCallSelected(+row.id)"
-                        (change)="toggleCallSelection(+row.id)"
-                        color="primary">
-                    </mat-checkbox>
+        <span class="lb-spacer"></span>
 
-                    <ng-container *ngIf="!downloadMode">
-                        <button *ngIf="!paused && row.id !== call?.id && row.id !== callPending"
-                            mat-icon-button class="play-btn" title="Play" (click)="play(+row.id)">
-                            <mat-icon>play_arrow</mat-icon>
-                        </button>
-                        <button *ngIf="row.id === callPending" mat-icon-button class="loading-btn">
-                            <mat-icon class="spin">cached</mat-icon>
-                        </button>
-                        <button *ngIf="row.id === call?.id" mat-icon-button class="stop-btn"
-                            title="Stop" (click)="stop()">
-                            <mat-icon>stop</mat-icon>
-                        </button>
+        <ng-container *ngIf="getSelectedCount() as picked">
+            <span class="lb-count">{{ picked }} selected</span>
+            <button type="button" class="lb-dl" [disabled]="isDownloading" (click)="downloadSelected(false)">
+                <mat-icon *ngIf="!isDownloading">download</mat-icon>
+                <mat-icon *ngIf="isDownloading" class="spin">cached</mat-icon>
+                <span>Download</span>
+            </button>
+            <button type="button" class="lb-dl lb-dl-csv" [disabled]="isDownloading"
+                (click)="downloadSelected(true)"
+                title="Download the audio plus a CSV listing each file, its time, talkgroup and transcript">
+                <mat-icon>description</mat-icon>
+                <span>With transcripts</span>
+            </button>
+        </ng-container>
+    </div>
 
-                        <button mat-icon-button class="share-btn" title="Copy share link"
-                            (click)="shareCall(+row.id, $event)">
-                            <mat-icon>share</mat-icon>
-                        </button>
+    <!--
+        One accumulating list. Numbered pages are gone: their contents shifted
+        under the user every time a filter changed, and the total they needed
+        was the expensive half of the query.
+    -->
+    <div class="results-wrap">
+    <cdk-virtual-scroll-viewport class="results" data-rdio="search-results" rdioMeasuredItems="86"
+        (scrolledIndexChange)="onScrolledIndexChange()">
+        <ng-container *cdkVirtualFor="let entry of rows; trackBy: trackRow">
 
-                        <button *ngIf="row.transcript" mat-icon-button class="copy-transcript-btn"
-                            title="Copy transcript" (click)="copyTranscript(row.transcript, $event)">
-                            <mat-icon>content_copy</mat-icon>
-                        </button>
+            <!-- Burst header: only present while grouping is on. -->
+            <div class="burst-head" *ngIf="entry.kind === 'burst'">
+                <span class="burst-span">{{ entry.from | date: time12h ? 'h:mm a' : 'HH:mm' }}
+                    <ng-container *ngIf="entry.spanMs > 0">– {{ entry.to | date: time12h ? 'h:mm a' : 'HH:mm' }}</ng-container>
+                </span>
+                <span class="burst-meta">{{ entry.count }} call{{ entry.count === 1 ? '' : 's' }}<ng-container
+                    *ngIf="entry.services.length"> · {{ entry.services.join(', ') }}</ng-container></span>
+                <span class="burst-rule"></span>
+                <span class="burst-dur" *ngIf="entry.spanMs > 0">{{ formatSpan(entry.spanMs) }}</span>
+            </div>
 
-                        <button *ngIf="isAdminAuthenticated() && showRetranscribeButton" mat-icon-button
-                            class="transcribe-btn"
-                            [disabled]="isTranscribing(row?.id)"
-                            [title]="row?.transcript ? 'Retranscribe' : 'Transcribe'"
-                            (click)="transcribeCall(row?.id); $event.stopPropagation()">
-                            <mat-icon *ngIf="!isTranscribing(row?.id)">record_voice_over</mat-icon>
-                            <mat-icon *ngIf="isTranscribing(row?.id)" class="spin">cached</mat-icon>
-                        </button>
-                    </ng-container>
-                </div>
+            <div class="quiet-gap" *ngIf="entry.kind === 'quiet'">quiet {{ formatSpan(entry.gapMs) }}</div>
+
+            <div class="call-row" data-rdio="search-row" *ngIf="entry.kind === 'call' && entry.call as row"
+                [class.highlighted]="isHighlighted(row.id)"
+                [class.replaying]="call && row.id === call.id"
+                [class.picked]="isCallSelected(+row.id)"
+                [style.--led]="ledFor(row)"
+                [attr.data-call-row]="row.id"
+                (click)="rowClicked(row, $event)">
+
+                <span class="row-rail"></span>
+
+                <!-- Always present: selecting a call should never need a mode. -->
+                <button type="button" class="row-pick" (click)="toggleCallSelection(+row.id); $event.stopPropagation()"
+                    [class.on]="isCallSelected(+row.id)"
+                    [attr.aria-label]="isCallSelected(+row.id) ? 'Deselect call' : 'Select call'">
+                    <span class="tick"></span>
+                </button>
+
+                <time class="row-time" [attr.datetime]="row.dateTime">
+                    <span class="rt-clock">{{ row.dateTime | date: time12h ? 'h:mm:ss a' : 'HH:mm:ss' }}</span>
+                    <span class="rt-date" *ngIf="entry.showDate">{{ row.dateTime | date:'EEE d MMM' }}</span>
+                </time>
 
                 <div class="row-body">
                     <div class="row-meta">
-                        <span class="meta-date">{{ row.dateTime | date:'MM/dd' }}</span>
-                        <span class="meta-time" [class.t12]="time12h">{{ row.dateTime | date: time12h ? 'h:mm a' : 'HH:mm' }}</span>
                         <span class="meta-system">{{ row.systemData?.label || row.system }}</span>
-                        <span class="meta-sep">·</span>
                         <span class="meta-tg">{{ row.talkgroupData?.label || row.talkgroup }}</span>
-                        <span class="meta-name" *ngIf="row.talkgroupData?.name">{{ row.talkgroupData?.name }}</span>
+                        <span class="meta-name" *ngIf="entry.name">{{ entry.name }}</span>
+                        <span class="meta-state" *ngIf="row.id === call?.id">playing</span>
+                        <span class="meta-state pending" *ngIf="row.id === callPending">loading</span>
                     </div>
-                    <div class="row-transcript"
-                        [class.placeholder]="!row.transcript && !row.hasTranscript">
+                    <div class="row-transcript" [class.placeholder]="!row.transcript">
                         <ng-container *ngIf="row.transcript; else noTranscript">{{ row.transcript }}</ng-container>
                         <ng-template #noTranscript>
                             <span class="placeholder-text"
@@ -166,20 +310,45 @@
                     </div>
                     <rdio-plugin-slot name="search-row-extra" [data]="row"></rdio-plugin-slot>
                 </div>
-            </ng-container>
 
-            <ng-template #emptyRow>
-                <div class="row-body placeholder-row"></div>
-            </ng-template>
+                <!-- Secondary actions stay out of the way until the row is hovered
+                     or focused; the row itself is what plays. -->
+                <div class="row-tools">
+                    <button mat-icon-button class="tool" title="Copy share link"
+                        (click)="shareCall(+row.id, $event)">
+                        <mat-icon>share</mat-icon>
+                    </button>
+                    <button *ngIf="row.transcript" mat-icon-button class="tool" title="Copy transcript"
+                        (click)="copyTranscript(row.transcript, $event)">
+                        <mat-icon>content_copy</mat-icon>
+                    </button>
+                    <button *ngIf="isAdminAuthenticated() && showRetranscribeButton" mat-icon-button
+                        class="tool" [disabled]="isTranscribing(row.id)"
+                        [title]="row.transcript ? 'Retranscribe' : 'Transcribe'"
+                        (click)="transcribeCall(row.id); $event.stopPropagation()">
+                        <mat-icon *ngIf="!isTranscribing(row.id)">record_voice_over</mat-icon>
+                        <mat-icon *ngIf="isTranscribing(row.id)" class="spin">cached</mat-icon>
+                    </button>
+                </div>
+            </div>
+        </ng-container>
+    </cdk-virtual-scroll-viewport>
+
+        <div class="results-empty" *ngIf="!(results | async)?.length && !resultsPending">
+            <mat-icon>search_off</mat-icon>
+            <p>No calls match these filters.</p>
         </div>
-    </section>
+    </div>
 
-    <!-- Paginator on the bottom -->
+    <!-- Load-more is the visible fallback; scrolling near the end fetches on its own. -->
     <section class="foot">
-        <mat-paginator [disabled]="resultsPending"
-            [length]="playbackList?.count" [hidePageSize]="true"
-            [pageSize]="results.value.length" [showFirstLastButtons]="true"
-            (page)="refreshResults()">
-        </mat-paginator>
+        <span class="foot-loaded" *ngIf="(results | async)?.length as loaded">{{ loaded }} loaded</span>
+        <button mat-stroked-button type="button" class="more-btn" *ngIf="!exhausted"
+            [disabled]="resultsPending" (click)="loadMore()">
+            <mat-icon *ngIf="resultsPending" class="spin">cached</mat-icon>
+            <span>{{ resultsPending ? 'Loading…' : 'Load more' }}</span>
+        </button>
+        <span class="foot-end" *ngIf="exhausted && (results | async)?.length">End of results</span>
     </section>
+    </main>
 </div>

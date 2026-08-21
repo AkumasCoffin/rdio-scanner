@@ -151,6 +151,12 @@ export interface RdioScannerEvent {
     pause?: boolean;
     playbackList?: RdioScannerPlaybackList;
     playbackPending?: number;
+    /**
+     * True once a cursor request came back empty: there is nothing past the far
+     * end of the loaded list. Replaces the total count the load-more button
+     * used to compare against.
+     */
+    searchExhausted?: boolean;
     queue?: number;
     queueTime?: number;
     queueJumped?: number;
@@ -189,6 +195,11 @@ export enum RdioScannerLivefeedMode {
 }
 
 export interface RdioScannerPlaybackList {
+    /**
+     * Total matches — only meaningful for offset callers. Cursor callers get 0
+     * because the server skips the count(*) for them, so nothing in the webapp
+     * may read this; use `results.length`.
+     */
     count: number;
     dateStart: Date;
     dateStop: Date;
@@ -196,16 +207,59 @@ export interface RdioScannerPlaybackList {
     results: RdioScannerCall[];
 }
 
+/**
+ * One end of a keyset page. `dateTime` alone is not unique — calls routinely
+ * share a timestamp at the stored precision — so the id rides along as the
+ * tiebreak, matching the `dateTime, id` ordering the server pages by.
+ */
+export interface RdioScannerSearchCursor {
+    dateTime: string;
+    id: number;
+}
+
+/**
+ * A talkgroup is only unique inside its system, so a multi-talkgroup filter has
+ * to travel as pairs. Same shape as `RdioScannerPreset.talkgroups` minus the
+ * naming, which is why a saved livefeed preset maps onto it directly.
+ */
+export interface RdioScannerSearchTalkgroupRef {
+    system: number;
+    talkgroup: number;
+}
+
 export interface RdioScannerSearchOptions {
+    /**
+     * Legacy single-day anchor with its own ±24h, sort-anchored meaning. Kept
+     * because the Android app and plugins still send it; the webapp now uses
+     * dateStart/dateStop instead.
+     */
     date?: Date;
+    /** Inclusive window, RFC3339. Covers one day, a slice of a day, or a span. */
+    dateStart?: string;
+    dateStop?: string;
     group?: string;
+    groups?: string[];
     limit: number;
-    offset: number;
+    offset?: number;
     q?: string;
     sort: number;
     system?: number;
+    systems?: number[];
     tag?: string;
+    tags?: string[];
     talkgroup?: number;
+    talkgroups?: RdioScannerSearchTalkgroupRef[];
+    /**
+     * Keyset position. Present means "the chunk after this row"; the server
+     * ignores `offset` when it is set, so the two are never sent together.
+     */
+    after?: RdioScannerSearchCursor;
+    /**
+     * Declares that this caller pages by cursor, which lets the server skip the
+     * count(*) even on the first request of a walk — that first page is exactly
+     * where the full-table scan used to be paid.
+     */
+    cursor?: boolean;
 }
 
 export interface RdioScannerSystem {

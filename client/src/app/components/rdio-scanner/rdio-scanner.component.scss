@@ -164,4 +164,12 @@
     max-width: 1200px;
     width: 100%;
   }
+
+  /* Search is the exception: it lays itself out from 360 px up and the results
+     list is the whole point of a wide screen, so capping it at 1200 px just
+     leaves the rest of an ultrawide empty. */
+  &.search > div > div,
+  &.search .mat-toolbar > div {
+    max-width: none;
+  }
 }

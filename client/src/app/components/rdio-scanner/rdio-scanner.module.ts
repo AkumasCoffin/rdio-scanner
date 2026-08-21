@@ -31,6 +31,7 @@ import { RdioScannerNativeModule } from './native/native.module';
 import { RdioScannerPluginHostService } from './plugins/plugin-host.service';
 import { RdioScannerPluginPageComponent } from './plugins/plugin-page.component';
 import { RdioScannerPluginViewComponent } from './plugins/plugin-view.component';
+import { RdioScannerMeasuredItemsDirective } from './search/search-virtual-scroll';
 import { RdioScannerSearchComponent } from './search/search.component';
 import { RdioScannerSelectComponent } from './select/select.component';
 import { RdioScannerPresetDialogComponent } from './select/preset-dialog.component';
@@ -43,6 +44,7 @@ import { RdioScannerStreamComponent } from './stream/stream.component';
         RdioScannerMainComponent,
         RdioScannerPluginPageComponent,
         RdioScannerPluginViewComponent,
+        RdioScannerMeasuredItemsDirective,
         RdioScannerPublicStatsComponent,
         RdioScannerSearchComponent,
         RdioScannerSelectComponent,

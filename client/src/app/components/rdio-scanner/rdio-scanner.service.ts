@@ -39,6 +39,7 @@ import {
     RdioScannerPlaybackList,
     RdioScannerPreset,
     RdioScannerPresetExport,
+    RdioScannerSearchCursor,
     RdioScannerSearchOptions,
 } from './rdio-scanner';
 
@@ -349,9 +350,25 @@ export class RdioScannerService implements OnDestroy {
     }
     private livefeedPaused = false;
 
+    // Callers waiting on a download to land, keyed by call id. Entries are
+    // removed on arrival or on the timeout in downloadMultiple, never left.
+    private pendingDownloads = new Map<number, (call: RdioScannerCall | undefined) => void>();
+
     private playbackList: RdioScannerPlaybackList | undefined;
     private playbackPending: number | undefined;
     private playbackRefreshing = false;
+
+    // Cursor paging state. The LCL response carries no echo of which request
+    // produced it, so whether a chunk extends the loaded list or replaces it
+    // has to be remembered at send time.
+    private searchAppending = false;
+    // Last filter set, cursor stripped. Both load-more and playback need the
+    // filters again; neither wants the page marker that produced the chunk
+    // currently on screen.
+    private searchOptions: RdioScannerSearchOptions | undefined;
+    // Set when a cursor request comes back empty — the only end-of-results
+    // signal there is now that the server no longer counts the match set.
+    private searchExhausted = false;
 
     private skipDelay: Subscription | undefined;
 
@@ -1100,17 +1117,49 @@ export class RdioScannerService implements OnDestroy {
         this.getCall(id, WebsocketCallFlag.Download);
     }
 
-    async downloadMultiple(ids: number[]): Promise<void> {
+    /**
+     * Downloads each call and reports back what was actually saved.
+     *
+     * The returned calls are what makes a companion transcript file possible:
+     * the saved filename is decided by the server and only arrives with the
+     * audio, so a caller that wants to write "this file holds this transcript"
+     * cannot know the left-hand side until the download has happened.
+     */
+    async downloadMultiple(ids: number[]): Promise<RdioScannerCall[]> {
         if (!ids || ids.length === 0) {
-            return;
+            return [];
         }
 
-        // Download calls sequentially with a small delay to avoid overwhelming the server
+        const downloaded: RdioScannerCall[] = [];
+
+        // Sequential with a gap between: the browser drops downloads fired too
+        // close together, and the server is answering every other listener at
+        // the same time.
         for (const id of ids) {
+            const arrival = new Promise<RdioScannerCall | undefined>((resolve) => {
+                this.pendingDownloads.set(id, resolve);
+
+                // A call that never comes back must not strand the whole
+                // download — it is left out of the manifest and the rest carry
+                // on.
+                setTimeout(() => {
+                    if (this.pendingDownloads.delete(id)) {
+                        resolve(undefined);
+                    }
+                }, 15000);
+            });
+
             this.getCall(id, WebsocketCallFlag.Download);
-            // Small delay between downloads to ensure browser handles each download
+
+            const call = await arrival;
+            if (call) {
+                downloaded.push(call);
+            }
+
             await new Promise(resolve => setTimeout(resolve, 300));
         }
+
+        return downloaded;
     }
 
     loadAndPlay(id: number): void {
@@ -2209,7 +2258,42 @@ export class RdioScannerService implements OnDestroy {
 
     searchCalls(options: RdioScannerSearchOptions): void {
         this.trackUmamiEvent('call-search');
+
+        // A cursor request continues the loaded list; anything else starts a
+        // new one. Recorded before the send because the response has no way to
+        // tell us apart.
+        this.searchAppending = !!options.after;
+
+        if (!this.searchAppending) {
+            this.searchExhausted = false;
+        }
+
+        const { after: _cursor, ...base } = options;
+        this.searchOptions = base;
+
         this.sendtoWebsocket(WebsocketCommand.ListCall, options);
+    }
+
+    /**
+     * The keyset position at the far end of what is loaded, in the direction
+     * the current sort pages. Undefined when nothing is loaded, which is how a
+     * caller knows to ask for a first page instead.
+     */
+    searchCursor(): RdioScannerSearchCursor | undefined {
+        const results = this.playbackList?.results;
+
+        if (!results?.length) {
+            return undefined;
+        }
+
+        const last = results[results.length - 1];
+        const dateTime = last.dateTime instanceof Date ? last.dateTime : new Date(last.dateTime);
+
+        return { dateTime: dateTime.toISOString(), id: last.id };
+    }
+
+    searchIsExhausted(): boolean {
+        return this.searchExhausted;
     }
 
     fetchTranscript(id: number): Promise<string> {
@@ -2578,15 +2662,17 @@ export class RdioScannerService implements OnDestroy {
         let queueCount = 0;
 
         if (id && this.playbackList) {
-            const index = this.playbackList.results.findIndex((call) => call.id === id);
+            const results = this.playbackList.results;
+            const index = results.findIndex((call) => call.id === id);
 
             if (index !== -1) {
-                if (this.playbackList.options.sort === -1) {
-                    queueCount = this.playbackList.options.offset + index;
-
-                } else {
-                    queueCount = this.playbackList.count - this.playbackList.options.offset - index - 1;
-                }
+                // There is no total any more, so "Queue: N" means what is still
+                // ahead in the loaded list, counted in the direction playback
+                // walks it: descending sorts play upward toward index 0,
+                // ascending sorts play downward toward the end.
+                queueCount = this.playbackList.options.sort === -1
+                    ? index
+                    : results.length - index - 1;
             }
         }
 
@@ -2696,6 +2782,14 @@ export class RdioScannerService implements OnDestroy {
                         if (flag === WebsocketCallFlag.Download) {
                             this.download(message[1]);
 
+                            // Tell downloadMultiple what was saved, so it can
+                            // report the filename alongside the transcript.
+                            const waiting = this.pendingDownloads.get(call.id);
+                            if (waiting) {
+                                this.pendingDownloads.delete(call.id);
+                                waiting(this.transformCall(call));
+                            }
+
                         } else if (flag === WebsocketCallFlag.Play && call.id === this.playbackPending) {
                             this.playbackPending = undefined;
 
@@ -2798,13 +2892,76 @@ export class RdioScannerService implements OnDestroy {
 
                     break;
 
-                case WebsocketCommand.ListCall:
-                    this.playbackList = message[1];
+                case WebsocketCommand.ListCall: {
+                    const chunk: RdioScannerPlaybackList | undefined = message[1];
 
-                    if (this.playbackList) {
-                        this.playbackList.results = this.playbackList.results.map((call) => this.transformCall(call));
+                    if (chunk) {
+                        chunk.results = (chunk.results || []).map((call) => this.transformCall(call));
 
-                        this.event.emit({ playbackList: this.playbackList });
+                        if (this.searchAppending && this.playbackList) {
+                            // A cursor page extends what is already loaded. Ids
+                            // already present are dropped rather than appended
+                            // because a retried cursor — reconnect, a second
+                            // click on load-more, playback asking while the
+                            // first request is still in flight — would
+                            // otherwise show the same call twice.
+                            const seen = new Set(this.playbackList.results.map((call) => call.id));
+                            const added = chunk.results.filter((call) => !seen.has(call.id));
+
+                            this.playbackList = {
+                                ...this.playbackList,
+                                // Keep the base filters, not the echoed request:
+                                // playback and load-more both re-derive their
+                                // own cursor and must not inherit a stale one.
+                                options: this.searchOptions || this.playbackList.options,
+                                results: this.playbackList.results.concat(added),
+                            };
+
+                            if (added.length) {
+                                // Real progress, so the one-shot refresh that
+                                // playback uses to detect the end is armed again.
+                                this.playbackRefreshing = false;
+                            }
+
+                            // End of the result set. A chunk shorter than the
+                            // limit cannot be followed by another, which saves
+                            // a round-trip that could only come back empty.
+                            //
+                            // A full chunk that added nothing counts as the end
+                            // too: the cursor did not advance, so asking again
+                            // returns the same rows forever. Auto-loading turns
+                            // that into an endless request loop, which is worth
+                            // one wrongly-early "End of results" to avoid.
+                            const limit = Number(this.searchOptions?.limit ?? 0);
+                            this.searchExhausted = chunk.results.length === 0
+                                || added.length === 0
+                                || (limit > 0 && chunk.results.length < limit);
+
+                        } else {
+                            const previous = new Set((this.playbackList?.results || []).map((call) => call.id));
+
+                            this.playbackList = {
+                                ...chunk,
+                                options: this.searchOptions || chunk.options,
+                            };
+
+                            if (chunk.results.some((call) => !previous.has(call.id))) {
+                                // Same reason as the append branch: a refresh
+                                // that actually found something is progress,
+                                // not the end of playback.
+                                this.playbackRefreshing = false;
+                            }
+
+                            // A first page shorter than the limit already ends
+                            // the walk, which saves one round-trip that could
+                            // only ever come back empty.
+                            const limit = Number(this.searchOptions?.limit ?? chunk.options?.limit ?? 0);
+                            this.searchExhausted = limit > 0 && chunk.results.length < limit;
+                        }
+
+                        this.searchAppending = false;
+
+                        this.event.emit({ playbackList: this.playbackList, searchExhausted: this.searchExhausted });
 
                         if (this.livefeedMode === RdioScannerLivefeedMode.Playback) {
                             this.playbackNextCall();
@@ -2812,6 +2969,7 @@ export class RdioScannerService implements OnDestroy {
                     }
 
                     break;
+                }
 
                 case WebsocketCommand.ListenersCount:
                     this.event.emit({ listeners: message[1] });
@@ -2920,61 +3078,76 @@ export class RdioScannerService implements OnDestroy {
             return;
         }
 
-        const index = this.playbackList.results.findIndex((call) => call.id === this.callPrevious?.id);
+        const results = this.playbackList.results;
 
-        if (this.playbackList.options.sort === -1) {
-            if (index === -1) {
-                this.loadAndPlay(this.playbackList.results[this.playbackList.results.length - 1].id);
+        if (!results.length) {
+            this.endPlayback();
 
-            } else if (index === 0) {
-                if (this.playbackList.options.offset < this.playbackList.options.limit) {
-                    if (this.playbackRefreshing) {
-                        this.stopPlaybackMode();
+            return;
+        }
 
-                        if (this.config.playbackGoesLive) {
-                            this.startLivefeed();
-                        }
+        // Playback always runs forward in time, whichever way the list is
+        // sorted. A descending list is newest-first, so time runs from the end
+        // of the array toward index 0; an ascending list runs the other way.
+        const descending = this.playbackList.options.sort === -1;
+        const step = descending ? -1 : 1;
 
-                    } else {
-                        this.playbackRefreshing = true;
-                        this.searchCalls(this.playbackList.options);
-                    }
+        const index = results.findIndex((call) => call.id === this.callPrevious?.id);
 
-                } else {
-                    this.searchCalls(Object.assign({}, this.playbackList.options, {
-                        offset: this.playbackList.options.offset - this.playbackList.options.limit,
-                    }));
-                }
+        // Nothing played yet — start at the oldest call loaded.
+        if (index === -1) {
+            this.loadAndPlay(results[descending ? results.length - 1 : 0].id);
 
-            } else {
-                this.loadAndPlay(this.playbackList.results[index - 1].id);
+            return;
+        }
+
+        const next = index + step;
+
+        if (next >= 0 && next < results.length) {
+            this.loadAndPlay(results[next].id);
+
+            return;
+        }
+
+        // Off the far end of everything loaded.
+        //
+        // An ascending list ends where the cursor pages, so asking for the next
+        // chunk is all it takes; the LCL handler calls back in here once the
+        // chunk lands. A descending list ends at index 0 — its *newest* end —
+        // which the cursor cannot reach, so re-running the same search is the
+        // only way to pick up calls recorded since it last ran.
+        if (this.searchOptions) {
+            const more = descending
+                ? { ...this.searchOptions }
+                : { ...this.searchOptions, after: this.searchCursor() };
+
+            if (!descending && !this.searchExhausted) {
+                this.searchCalls(more);
+
+                return;
             }
 
-        } else {
-            if (index === -1) {
-                this.loadAndPlay(this.playbackList.results[0].id);
+            // Nothing further to page to. One refresh pass, then stop — an
+            // empty (or unchanged) answer to that pass is what "the end" means
+            // now that there is no total to compare against. The flag clears
+            // again the moment a chunk brings rows we didn't have, so a long
+            // playback keeps catching up with an active feed.
+            if (!this.playbackRefreshing) {
+                this.playbackRefreshing = true;
+                this.searchCalls(more);
 
-            } else if (index === this.playbackList.results.length - 1) {
-                if (this.playbackList.options.offset < (this.playbackList.count - this.playbackList.options.limit)) {
-                    this.searchCalls(Object.assign({}, this.playbackList.options, {
-                        offset: this.playbackList.options.offset + this.playbackList.options.limit,
-                    }));
-
-                } else if (this.playbackRefreshing) {
-                    this.stopPlaybackMode();
-
-                    if (this.config.playbackGoesLive) {
-                        this.startLivefeed();
-                    }
-
-                } else {
-                    this.playbackRefreshing = true;
-                    this.searchCalls(this.playbackList.options);
-                }
-
-            } else {
-                this.loadAndPlay(this.playbackList.results[index + 1].id);
+                return;
             }
+        }
+
+        this.endPlayback();
+    }
+
+    private endPlayback(): void {
+        this.stopPlaybackMode();
+
+        if (this.config.playbackGoesLive) {
+            this.startLivefeed();
         }
     }
 
