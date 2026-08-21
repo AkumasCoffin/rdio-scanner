@@ -243,6 +243,13 @@ func (admin *Admin) ConfigHandler(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				if v, ok := m["patches"].([]any); ok {
+					admin.Controller.Patches.FromMap(v)
+					if err := track("patches", admin.Controller.Patches.Write(tx)); err != nil {
+						return err
+					}
+				}
+
 				if v, ok := m["groups"].([]any); ok {
 					admin.Controller.Groups.FromMap(v)
 					if err := track("groups", admin.Controller.Groups.Write(tx)); err != nil {
@@ -303,6 +310,11 @@ func (admin *Admin) ConfigHandler(w http.ResponseWriter, r *http.Request) {
 			if _, ok := m["groups"]; ok {
 				if err := admin.Controller.Groups.Read(db); err != nil {
 					track("groups", err)
+				}
+			}
+			if _, ok := m["patches"]; ok {
+				if err := admin.Controller.Patches.Read(db); err != nil {
+					track("patches", err)
 				}
 			}
 			// Options were written inside the tx like everything else, so they
@@ -376,6 +388,7 @@ func (admin *Admin) GetConfig() map[string]any {
 		"apiKeys":     admin.Controller.Apikeys.List,
 		"dirWatch":    admin.Controller.Dirwatches.List,
 		"downstreams": admin.Controller.Downstreams.List,
+		"patches":     admin.Controller.Patches.List,
 		// Read-only: lets the Audio Conversion setting say when there is no
 		// ffmpeg for it to run, and name the command that installs it. The PUT
 		// path only reads the section keys, so the webapp echoing these back

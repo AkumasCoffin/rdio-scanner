@@ -41,6 +41,7 @@ const ADMIN_TABS: AdminTabDef[] = [
     { id: 'options', label: 'Options', icon: 'tune' },
     { id: 'systems', label: 'Systems', icon: 'podcasts' },
     { id: 'groupsTags', label: 'Groups & Tags', icon: 'workspaces' },
+    { id: 'patches', label: 'Patches', icon: 'call_merge' },
     { id: 'access', label: 'Access', icon: 'manage_accounts' },
     { id: 'apiKeys', label: 'API Keys', icon: 'vpn_key' },
     { id: 'dirWatch', label: 'Dirwatch', icon: 'folder' },
@@ -50,7 +51,7 @@ const ADMIN_TABS: AdminTabDef[] = [
     { id: 'tools', label: 'Tools', icon: 'build' },
 ];
 
-const CONFIG_TABS: AdminTab[] = ['options', 'systems', 'groupsTags', 'access', 'apiKeys', 'dirWatch', 'downstreams'];
+const CONFIG_TABS: AdminTab[] = ['options', 'systems', 'groupsTags', 'patches', 'access', 'apiKeys', 'dirWatch', 'downstreams'];
 
 @Component({
     encapsulation: ViewEncapsulation.None,

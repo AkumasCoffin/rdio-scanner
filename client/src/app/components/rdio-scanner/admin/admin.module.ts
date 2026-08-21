@@ -28,6 +28,7 @@ import { RdioScannerAdminAccessComponent } from './config/access/access.componen
 import { RdioScannerAdminApiKeysComponent } from './config/api-keys/api-keys.component';
 import { RdioScannerAdminDirWatchComponent } from './config/dir-watch/dir-watch.component';
 import { RdioScannerAdminDownstreamsComponent } from './config/downstreams/downstreams.component';
+import { RdioScannerAdminPatchesComponent } from './config/patches/patches.component';
 import { RdioScannerAdminGroupsComponent } from './config/groups/groups.component';
 import { RdioScannerAdminOptionsComponent } from './config/options/options.component';
 import { RdioScannerAdminSystemsSelectComponent } from './config/systems/select/select.component';
@@ -57,6 +58,7 @@ import { RdioScannerAdminUpdatesComponent } from './tools/updates/updates.compon
         RdioScannerAdminApiKeysComponent,
         RdioScannerAdminDirWatchComponent,
         RdioScannerAdminDownstreamsComponent,
+        RdioScannerAdminPatchesComponent,
         RdioScannerAdminGroupsComponent,
         RdioScannerAdminExportComponent,
         RdioScannerAdminImportComponent,

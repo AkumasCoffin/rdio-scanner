@@ -42,6 +42,7 @@ type Controller struct {
 	Apikeys        *Apikeys
 	Dirwatches     *Dirwatches
 	Downstreams    *Downstreams
+	Patches        *Patches
 	FFMpeg         *FFMpeg
 	Groups         *Groups
 	Listeners      *Listeners
@@ -108,6 +109,7 @@ func NewController(config *Config) *Controller {
 		Calls:               NewCalls(),
 		Dirwatches:          NewDirwatches(),
 		Downstreams:         NewDownstreams(),
+		Patches:             NewPatches(),
 		FFMpeg:              NewFFMpeg(),
 		Groups:              NewGroups(),
 		Listeners:           NewListeners(),
@@ -293,6 +295,64 @@ func (controller *Controller) PluginExposedConfig() map[string]any {
 	}
 
 	return exposed
+}
+
+// applyPatch refiles a call onto its patch's primary talkgroup and records the
+// patch's members on it, returning the primary.
+//
+// It refuses when the primary is not a talkgroup of the call's system: filing
+// calls under something no client can select would take the traffic off every
+// listener's feed, which is worse than not collapsing it.
+func applyPatch(patch *Patch, call *Call, system *System) (*Talkgroup, bool) {
+	if patch == nil || call == nil || system == nil {
+		return nil, false
+	}
+
+	primary, ok := system.Talkgroups.GetTalkgroup(patch.TalkgroupId)
+	if !ok {
+		return nil, false
+	}
+
+	call.Talkgroup = patch.TalkgroupId
+	call.Patches = mergePatches(call.Patches, patch.Talkgroups)
+
+	return primary, true
+}
+
+// mergePatches folds the declared members of a patch into whatever the
+// recorder already reported, so a call that is both externally patched and
+// covered by a configured patch keeps both sets rather than losing one.
+func mergePatches(existing any, members []uint) []uint {
+	seen := map[uint]bool{}
+	merged := []uint{}
+
+	add := func(id uint) {
+		if id == 0 || seen[id] {
+			return
+		}
+
+		seen[id] = true
+		merged = append(merged, id)
+	}
+
+	switch v := existing.(type) {
+	case []uint:
+		for _, id := range v {
+			add(id)
+		}
+	case []any:
+		for _, f := range v {
+			if id, ok := jsonUint(f); ok {
+				add(id)
+			}
+		}
+	}
+
+	for _, id := range members {
+		add(id)
+	}
+
+	return merged
 }
 
 func (controller *Controller) IngestCall(call *Call) {
@@ -543,7 +603,49 @@ func (controller *Controller) IngestCall(call *Call) {
 		return
 	}
 
-	if !controller.Options.DisableDuplicateDetection {
+	// A patch makes several talkgroups one conversation, so the transmission
+	// arrives once per member and only one copy should be kept. Refiling every
+	// copy onto the patch's primary is what lets the ordinary duplicate check
+	// collapse them — the second copy is now a duplicate of the first in the
+	// plainest sense. Listing the members as patches is what puts the survivor
+	// on the livefeed of anyone holding any member talkgroup, flags it on the
+	// LCD, and carries it downstream, exactly as a recorder-reported patch does.
+	patched := false
+
+	if patch, ok := controller.Patches.GetPatch(call.System, call.Talkgroup); ok {
+		primary, applied := applyPatch(patch, call, system)
+
+		if !applied {
+			// The patch names a talkgroup this system does not have. Collapsing
+			// onto it would file calls under something no client can select, so
+			// the call goes on untouched and the misconfiguration is said out
+			// loud rather than silently swallowing traffic.
+			logCall(call, LogLevelWarn, fmt.Sprintf("patch %q primary talkgroup %v not in system, patch skipped", patch.Label, patch.TalkgroupId))
+
+		} else {
+			patched = true
+
+			// The call now belongs to the primary, so it takes the primary's
+			// naming with it.
+			talkgroup = primary
+			call.talkgroupLabel = primary.Label
+			call.talkgroupName = primary.Name
+
+			if group, ok = controller.Groups.GetGroup(primary.GroupId); ok {
+				call.talkgroupGroup = group.Label
+			}
+
+			if tag, ok = controller.Tags.GetTag(primary.TagId); ok {
+				call.talkgroupTag = tag.Label
+			}
+		}
+	}
+
+	// Patch collapsing is not the same intent as duplicate detection — one is
+	// "this conversation reached me several ways", the other "this recording
+	// reached me twice" — so a patch is still collapsed when duplicate
+	// detection is switched off.
+	if patched || !controller.Options.DisableDuplicateDetection {
 		if controller.Calls.CheckDuplicate(call, controller.Options.DuplicateDetectionTimeFrame, controller.Database) {
 			// Core has decided to reject. A plugin may overrule that, which is
 			// what makes a smarter duplicate rule possible without replacing the
@@ -551,7 +653,12 @@ func (controller *Controller) IngestCall(call *Call) {
 			// merely observes this point cannot accidentally disable duplicate
 			// detection for the whole server.
 			if !controller.PluginDispatch.KeepDuplicate(call) {
-				logCall(call, LogLevelWarn, "duplicate call rejected")
+				if patched {
+					logCall(call, LogLevelInfo, "patched call already received on another talkgroup")
+				} else {
+					logCall(call, LogLevelWarn, "duplicate call rejected")
+				}
+
 				return
 			}
 
@@ -961,6 +1068,10 @@ func (controller *Controller) Start() error {
 	if err = controller.Dirwatches.Read(controller.Database); err != nil {
 		return err
 	}
+	if err = controller.Patches.Read(controller.Database); err != nil {
+		return err
+	}
+
 	if err = controller.Downstreams.Read(controller.Database); err != nil {
 		return err
 	}

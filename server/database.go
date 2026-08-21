@@ -154,6 +154,7 @@ var postgresSerialColumns = [][2]string{
 	{"rdioScannerDownstreams", "_id"},
 	{"rdioScannerGroups", "_id"},
 	{"rdioScannerLogs", "_id"},
+	{"rdioScannerPatches", "_id"},
 	{"rdioScannerPlugins", "_id"},
 	{"rdioScannerSystems", "_id"},
 	{"rdioScannerTags", "_id"},
@@ -765,6 +766,9 @@ func (db *Database) migrate() error {
 	}
 	if err == nil {
 		err = db.migration20260822100000(verbose)
+	}
+	if err == nil {
+		err = db.migration20260822140000(verbose)
 	}
 	if err == nil {
 		err = db.migrationTranscriptsToPlugin(verbose)
@@ -1660,6 +1664,30 @@ func (db *Database) migration20260819100000(verbose bool) error {
 		}
 	}
 	return db.migrateWithSchema("20260819100000-add-led2-columns", queries, verbose)
+}
+
+// migration20260822140000 creates the rdioScannerPatches table, which holds
+// the operator-declared patches: a set of talkgroups on one system that carry
+// the same conversation, and the primary the surviving call is filed under.
+func (db *Database) migration20260822140000(verbose bool) error {
+	var queries []string
+
+	switch db.Config.DbType {
+	case DbTypeSqlite:
+		queries = []string{
+			"create table `rdioScannerPatches` (`_id` integer primary key autoincrement, `disabled` tinyint(1) default 0, `label` varchar(255) not null, `order` integer, `systemId` integer not null, `talkgroupId` integer not null, `talkgroups` text not null)",
+		}
+	case DbTypePostgres:
+		queries = []string{
+			`create table "rdioScannerPatches" ("_id" serial primary key, "disabled" boolean default false, "label" varchar(255) not null, "order" integer, "systemId" integer not null, "talkgroupId" integer not null, "talkgroups" text not null)`,
+		}
+	default:
+		queries = []string{
+			"create table `rdioScannerPatches` (`_id` integer primary key auto_increment, `disabled` tinyint(1) default 0, `label` varchar(255) not null, `order` integer, `systemId` integer not null, `talkgroupId` integer not null, `talkgroups` text not null)",
+		}
+	}
+
+	return db.migrateWithSchema("20260822140000-create-patches-table", queries, verbose)
 }
 
 // migration20260519110000 creates the rdioScannerDelayed table used by the

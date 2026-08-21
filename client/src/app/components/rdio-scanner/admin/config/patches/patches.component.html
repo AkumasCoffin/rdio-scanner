@@ -1,0 +1,103 @@
+<div class="row top">
+    <p class="mat-body">A patch is a set of talkgroups on one system that carry the same conversation. The same
+        transmission arrives once per talkgroup; only one call is kept, filed under the primary and marked as patched
+        with the whole set — so it plays once, shows PATCH on the display, reaches anyone listening to any of its
+        talkgroups, and goes downstream like any other patched call. Collapsing uses the duplicate detection time frame
+        from Options, and happens even when duplicate detection is switched off.</p>
+    <button type="button" mat-button color="accent" (click)="add()">New patch</button>
+</div>
+<p *ngIf="!patches.length" class="mat-small text-center">No defined patches</p>
+<mat-accordion displayMode="flat" cdkDropList [cdkDropListAutoScrollStep]=64 [cdkDropListData]="patches"
+    (cdkDropListDropped)="drop($event)">
+    <mat-expansion-panel *ngFor="let patch of patches; index as i" cdkDrag>
+        <mat-expansion-panel-header>
+            <mat-panel-title>
+                <mat-icon cdkDragHandle>drag_indicator</mat-icon>
+                {{ labelOf(patch) }}
+                <mat-icon *ngIf="patch.invalid" color="warn">error</mat-icon>
+            </mat-panel-title>
+        </mat-expansion-panel-header>
+        <ng-container [formGroup]="patch">
+            <div class="row">
+                <p>
+                    <span class="mat-body">Disabled</span><br>
+                    <span class="mat-caption">Stop collapsing this patch without deleting it.</span>
+                </p>
+                <div>
+                    <mat-slide-toggle color="primary" formControlName="disabled"></mat-slide-toggle>
+                </div>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Label</span><br>
+                    <span class="mat-caption">Name for this patch, used in the logs.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <input type="text" matInput formControlName="label" placeholder="Label">
+                    <mat-error *ngIf="patch.get('label')?.hasError('required')">
+                        Label is required
+                    </mat-error>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">System</span><br>
+                    <span class="mat-caption">A patch covers talkgroups of one system.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <mat-select formControlName="systemId" placeholder="System"
+                        (selectionChange)="systemChanged(patch)">
+                        <mat-option *ngFor="let system of systems" [value]="system.value.id">
+                            {{ system.value.label }}
+                        </mat-option>
+                    </mat-select>
+                    <mat-error *ngIf="patch.get('systemId')?.hasError('required')">
+                        System is required
+                    </mat-error>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Talkgroups</span><br>
+                    <span class="mat-caption">The talkgroups this patch covers. Pick at least two.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <mat-select formControlName="talkgroups" placeholder="Talkgroups" multiple
+                        [disabled]="!patch.value.systemId" (selectionChange)="talkgroupsChanged(patch)">
+                        <mat-option *ngFor="let talkgroup of talkgroupsOf(patch)" [value]="talkgroup.value.id">
+                            {{ talkgroup.value.id }} — {{ talkgroup.value.label }}
+                        </mat-option>
+                    </mat-select>
+                    <mat-error *ngIf="patch.get('talkgroups')?.hasError('tooFew')">
+                        A patch needs at least two talkgroups
+                    </mat-error>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Primary talkgroup</span><br>
+                    <span class="mat-caption">Where the surviving call is filed, so a patched conversation always
+                        lands on the same talkgroup.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <mat-select formControlName="talkgroupId" placeholder="Primary"
+                        [disabled]="!patch.value.talkgroups?.length">
+                        <mat-option *ngFor="let talkgroup of membersOf(patch)" [value]="talkgroup.value.id">
+                            {{ talkgroup.value.id }} — {{ talkgroup.value.label }}
+                        </mat-option>
+                    </mat-select>
+                    <mat-error *ngIf="patch.get('talkgroupId')?.hasError('required')">
+                        Primary talkgroup is required
+                    </mat-error>
+                    <mat-error *ngIf="patch.get('talkgroupId')?.hasError('notAMember')">
+                        Primary must be one of the patch's talkgroups
+                    </mat-error>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <span></span>
+                <button type="button" mat-button color="warn" (click)="remove(i)">Delete patch</button>
+            </div>
+        </ng-container>
+    </mat-expansion-panel>
+</mat-accordion>

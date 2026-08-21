@@ -94,6 +94,7 @@ export interface Config {
     ffmpegInstallHint?: string;
     groups?: Group[];
     options?: Options;
+    patches?: Patch[];
     systems?: System[];
     tags?: Tag[];
 }
@@ -237,6 +238,22 @@ export interface DirWatch {
     systemId?: number;
     talkgroupId?: number;
     type?: string;
+}
+
+/**
+ * A set of talkgroups on one system that carry the same conversation.
+ *
+ * The server collapses the copies that arrive on each member into one call,
+ * filed under `talkgroupId` and carrying the whole set as its patches.
+ */
+export interface Patch {
+    _id?: string;
+    disabled?: boolean;
+    label?: string;
+    order?: number;
+    systemId?: number;
+    talkgroupId?: number;
+    talkgroups?: number[];
 }
 
 export interface Downstream {
@@ -729,6 +746,7 @@ export class RdioScannerAdminService implements OnDestroy {
             downstreams: this.ngFormBuilder.array(config?.downstreams?.map((downstream) => this.newDownstreamForm(downstream)) || []),
             groups: this.ngFormBuilder.array(config?.groups?.map((group) => this.newGroupForm(group)) || []),
             options: this.newOptionsForm(config?.options),
+            patches: this.ngFormBuilder.array(config?.patches?.map((patch) => this.newPatchForm(patch)) || []),
             systems: this.newIdFormArray(config?.systems?.map((system) => this.newSystemForm(system)) || []),
             tags: this.ngFormBuilder.array(config?.tags?.map((tag) => this.newTagForm(tag)) || []),
         });
@@ -759,6 +777,18 @@ export class RdioScannerAdminService implements OnDestroy {
             order: [downstream?.order],
             systems: [downstream?.systems, Validators.required],
             url: [downstream?.url, [Validators.required, this.validateUrl(), this.validateDownstreamUrl()]],
+        });
+    }
+
+    newPatchForm(patch?: Patch): FormGroup {
+        return this.ngFormBuilder.group({
+            _id: [patch?._id],
+            disabled: [patch?.disabled],
+            label: [patch?.label, Validators.required],
+            order: [patch?.order],
+            systemId: [patch?.systemId, Validators.required],
+            talkgroupId: [patch?.talkgroupId, [Validators.required, this.validatePatchPrimary()]],
+            talkgroups: [patch?.talkgroups || [], this.validatePatchTalkgroups()],
         });
     }
 
@@ -1216,6 +1246,32 @@ export class RdioScannerAdminService implements OnDestroy {
             const type = dirwatch.type;
 
             return ['dsdplus', 'trunk-recorder', 'sdr-trunk'].includes(type) || control.value !== null || /#TG/.test(mask) ? null : { required: true };
+        };
+    }
+
+    /** A patch of one talkgroup is just that talkgroup. */
+    private validatePatchTalkgroups(): ValidatorFn {
+        return (control: AbstractControl): ValidationErrors | null => {
+            const talkgroups: number[] = control.value || [];
+
+            return talkgroups.length > 1 ? null : { tooFew: true };
+        };
+    }
+
+    /**
+     * The primary is where every copy of the conversation is filed, so it has
+     * to be one of the talkgroups the patch actually covers.
+     */
+    private validatePatchPrimary(): ValidatorFn {
+        return (control: AbstractControl): ValidationErrors | null => {
+            const primary = control.value;
+            const talkgroups: number[] = control.parent?.get('talkgroups')?.value || [];
+
+            if (primary === null || primary === undefined || !talkgroups.length) {
+                return null;
+            }
+
+            return talkgroups.includes(primary) ? null : { notAMember: true };
         };
     }
 

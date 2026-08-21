@@ -23,7 +23,7 @@ import { MatExpansionPanel } from '@angular/material/expansion';
 import { AdminEvent, RdioScannerAdminService, Config } from '../admin.service';
 
 /** The config sections the tab shell can point this host at. */
-export type ConfigSection = 'options' | 'systems' | 'groupsTags' | 'access' | 'apiKeys' | 'dirWatch' | 'downstreams';
+export type ConfigSection = 'options' | 'systems' | 'groupsTags' | 'patches' | 'access' | 'apiKeys' | 'dirWatch' | 'downstreams';
 
 @Component({
     changeDetection: ChangeDetectionStrategy.OnPush,
@@ -63,6 +63,10 @@ export class RdioScannerAdminConfigComponent implements OnDestroy, OnInit {
 
     get options(): FormGroup {
         return this.form?.get('options') as FormGroup;
+    }
+
+    get patches(): FormArray {
+        return this.form?.get('patches') as FormArray;
     }
 
     get systems(): FormArray {

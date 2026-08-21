@@ -13,6 +13,7 @@
                 <rdio-scanner-admin-tags [form]="tags"></rdio-scanner-admin-tags>
             </div>
         </div>
+        <rdio-scanner-admin-patches *ngSwitchCase="'patches'" [form]="patches"></rdio-scanner-admin-patches>
         <rdio-scanner-admin-access *ngSwitchCase="'access'" [form]="access"></rdio-scanner-admin-access>
         <rdio-scanner-admin-api-keys *ngSwitchCase="'apiKeys'" [form]="apiKeys"></rdio-scanner-admin-api-keys>
         <rdio-scanner-admin-dir-watch *ngSwitchCase="'dirWatch'" [form]="dirWatch"></rdio-scanner-admin-dir-watch>
