@@ -764,6 +764,9 @@ func (db *Database) migrate() error {
 		err = db.migration20260819100000(verbose)
 	}
 	if err == nil {
+		err = db.migration20260822100000(verbose)
+	}
+	if err == nil {
 		err = db.migrationTranscriptsToPlugin(verbose)
 	}
 
@@ -1253,6 +1256,146 @@ func (db *Database) migration20260424100000(verbose bool) error {
 	return nil
 }
 
+// migration20260822100000 adds (system, talkgroup, dateTime) on rdioScannerCalls,
+// which is the column order the calls search actually needs.
+//
+// The search filters on system/talkgroup and orders by dateTime, but the only
+// composite we had leads with dateTime (rdio_scanner_calls_date_time_system_talkgroup).
+// Leading with the ordering column means a narrow talkgroup filter has no seek
+// to make: the planner walks the time index newest-first and discards every row
+// that isn't the wanted talkgroup until it has finally collected a page. On a
+// quiet talkgroup in a 15 GB table that walk covers a lot of index before it
+// finds a hundred rows. The equality columns have to come first so the filter
+// becomes a seek and dateTime is then already in order underneath it — the page
+// comes out of a bounded range scan with no sort.
+//
+// It also matters for a filter naming several systems or talkgroups at once,
+// which is where the work landing next goes. With the equality columns leading,
+// each branch of the filter is its own range in the index: Postgres reaches them
+// directly and combines them — merging per-branch scans that are already in
+// dateTime order, or OR-ing them into one bitmap — and only ever touches rows
+// that matched. The dateTime-first index gives it no branch to seek to, so the
+// same filter degrades into reading the table and sorting what survives; on a
+// 500k-row bench that was a parallel sequential scan at ~8 ms against ~0.15 ms
+// with this index in place.
+//
+// And it fixes the two `order by dateTime limit 1` probes the search does to
+// find the date bounds of a filter: those become single index lookups at the
+// ends of the range instead of scans.
+//
+// Postgres builds it CONCURRENTLY — a 15 GB calls table takes long enough that
+// holding a write lock for the build is an outage, and calls arrive the whole
+// time. CONCURRENTLY cannot run inside a transaction, so this goes through
+// db.Sql directly instead of migrateWithSchema, which wraps its statements in
+// one.
+//
+// Tolerant like the BRIN and trigram migrations: a failed index is logged and the
+// migration is still recorded, so a boot is never blocked and never retries the
+// same failing DDL every restart.
+func (db *Database) migration20260822100000(verbose bool) error {
+	const name = "20260822100000-calls-system-talkgroup-date-time-idx"
+
+	if done, err := db.migrationDone(name); err != nil || done {
+		return err
+	}
+
+	if verbose {
+		log.Printf("running database migration %s", name)
+	}
+
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		if err := db.createCallsSearchIndex(name); err != nil {
+			log.Printf("%s: could not create (system, talkgroup, dateTime, id) index on rdioScannerCalls, calls search will keep using the dateTime-leading index: %v", name, err)
+		} else if verbose {
+			log.Printf("%s: (system, talkgroup, dateTime, id) index ensured", name)
+		}
+
+	default:
+		// SQLite takes IF NOT EXISTS; MySQL 8 rejects it on CREATE INDEX where
+		// MariaDB accepts it, so the shared statement leaves it off and the meta
+		// ledger above is what stops a second run. If an index of that name is
+		// somehow already there, the duplicate error is logged and we move on —
+		// which is the state we wanted anyway.
+		query := db.formatQuery("create index `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`, `id`)")
+		if db.Config.DbType == DbTypeSqlite {
+			query = db.formatQuery("create index if not exists `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`, `id`)")
+		}
+		if _, err := db.Sql.Exec(query); err != nil {
+			log.Printf("%s: could not create (system, talkgroup, dateTime, id) index on rdioScannerCalls, calls search will keep using the dateTime-leading index: %v", name, err)
+		} else if verbose {
+			log.Printf("%s: (system, talkgroup, dateTime, id) index ensured", name)
+		}
+	}
+
+	// Fresh stats, or the planner keeps costing the new index off whatever it
+	// believed about the table before it existed. Empty on a new install, cheap
+	// there; on an upgrade it is what makes the index get picked on the first
+	// search rather than after the next autovacuum.
+	if db.Config.DbType == DbTypePostgres {
+		if _, err := db.Sql.Exec(`analyze "rdioScannerCalls"`); err != nil {
+			log.Printf("%s: could not analyze rdioScannerCalls: %v", name, err)
+		}
+	}
+
+	return db.recordMigration(name)
+}
+
+// createCallsSearchIndex does the Postgres half of migration20260822100000, on a
+// connection of its own.
+//
+// The dedicated connection is not tidiness. Every connection this server opens
+// carries statement_timeout=5m from the DSN, and a concurrent build over a table
+// this size runs longer than that — the server would cancel its own index part
+// way through. SET only affects the session it runs on, and db.Sql hands out
+// whichever pooled connection happens to be free, so the SET has to travel with
+// the CREATE or it lands somewhere else entirely.
+//
+// The invalid-index check is the other half of the same problem. A concurrent
+// build that is cancelled or interrupted leaves its catalog row behind marked
+// invalid, and the IF NOT EXISTS below would then see a name that exists and skip
+// forever, leaving an index nothing can use and nothing will rebuild. Dropping it
+// first is what makes a retry mean anything.
+func (db *Database) createCallsSearchIndex(name string) error {
+	ctx := context.Background()
+
+	conn, err := db.Sql.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "set statement_timeout = 0"); err != nil {
+		return err
+	}
+
+	// Closing a *sql.Conn hands the session back to the pool, settings and all,
+	// so the timeout has to be put back or every later statement that happens to
+	// land on this connection quietly loses its deadline. RESET restores the
+	// value lib/pq sent at startup, which is the one from the DSN.
+	defer func() {
+		if _, err := conn.ExecContext(ctx, "reset statement_timeout"); err != nil {
+			log.Printf("%s: could not restore statement_timeout on the build connection: %v", name, err)
+		}
+	}()
+
+	var invalid bool
+	const invalidQuery = `select coalesce(bool_or(not i.indisvalid), false) from pg_index i
+		join pg_class c on c.oid = i.indexrelid where c.relname = 'rdio_scanner_calls_system_talkgroup_date_time'`
+	if err := conn.QueryRowContext(ctx, invalidQuery).Scan(&invalid); err != nil {
+		return err
+	}
+	if invalid {
+		log.Printf("%s: dropping a leftover invalid rdio_scanner_calls_system_talkgroup_date_time from an interrupted build", name)
+		if _, err := conn.ExecContext(ctx, `drop index concurrently if exists "rdio_scanner_calls_system_talkgroup_date_time"`); err != nil {
+			return err
+		}
+	}
+
+	_, err = conn.ExecContext(ctx, `create index concurrently if not exists "rdio_scanner_calls_system_talkgroup_date_time" on "rdioScannerCalls" ("system", "talkgroup", "dateTime", "id")`)
+	return err
+}
+
 // migration20260422180000 adds a GIN trigram index on the transcript column
 // for Postgres, which makes transcript LIKE/ILIKE searches fast on large
 // tables. The pg_trgm extension must exist first; if the DB role can't
@@ -1345,15 +1488,15 @@ func (db *Database) migration20260422140000(verbose bool) error {
 	switch db.Config.DbType {
 	case DbTypePostgres:
 		queries = []string{
-			`create index if not exists "rdio_scanner_calls_system_talkgroup_date_time" on "rdioScannerCalls" ("system", "talkgroup", "dateTime")`,
+			`create index if not exists "rdio_scanner_calls_system_talkgroup_date_time" on "rdioScannerCalls" ("system", "talkgroup", "dateTime", "id")`,
 		}
 	case DbTypeSqlite:
 		queries = []string{
-			"create index if not exists `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`)",
+			"create index if not exists `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`, `id`)",
 		}
 	default:
 		queries = []string{
-			"create index `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`)",
+			"create index `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`, `id`)",
 		}
 	}
 	return db.migrateWithSchema("20260422140000-calls-system-talkgroup-datetime-idx", queries, verbose)
