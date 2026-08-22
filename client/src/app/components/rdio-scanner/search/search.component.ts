@@ -112,7 +112,7 @@ const DATE_PRESETS: { key: string; label: string; days: number }[] = [
  * the grouping toggle introduces, and exist only when it is on.
  */
 export type SearchRow =
-    | { kind: 'call'; call: RdioScannerCall | null; showDate: boolean; name: string }
+    | { kind: 'call'; call: RdioScannerCall | null; showDate: boolean; name: string; patches: string }
     | { kind: 'burst'; count: number; from: Date; to: Date; spanMs: number; services: string[] }
     | { kind: 'quiet'; gapMs: number };
 
@@ -1502,7 +1502,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
      */
     private callRow(call: RdioScannerCall | null, previous: RdioScannerCall | null | undefined): SearchRow {
         if (!call) {
-            return { kind: 'call', call, showDate: false, name: '' };
+            return { kind: 'call', call, showDate: false, name: '', patches: '' };
         }
 
         const day = (value: unknown) => new Date(value as string).toDateString();
@@ -1520,7 +1520,28 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
             call,
             showDate: !previous || day(previous.dateTime) !== day(call.dateTime),
             name: redundant ? '' : name,
+            patches: this.patchLabels(call),
         };
+    }
+
+    /**
+     * The talkgroups this transmission was also received on, as labels. These
+     * are ids on the call's own system; one with no configured talkgroup shows
+     * as the bare number rather than vanishing.
+     */
+    private patchLabels(call: RdioScannerCall): string {
+        const patches = Array.isArray(call.patches) ? call.patches : [];
+
+        if (!patches.length) {
+            return '';
+        }
+
+        const talkgroups = this.config?.systems?.find((system) => system.id === call.system)?.talkgroups || [];
+
+        return patches
+            .filter((id) => id !== call.talkgroup)
+            .map((id) => talkgroups.find((talkgroup) => talkgroup.id === id)?.label || `${id}`)
+            .join(', ');
     }
 
     toggleGrouping(): void {

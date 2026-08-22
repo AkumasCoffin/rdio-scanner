@@ -902,16 +902,24 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		}
 	}
 
-	query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup` from `rdioScannerCalls` where %v order by %v limit %v offset %v", plan.pageWhere, plan.order, plan.limit, plan.offset)
+	query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup`, `patches` from `rdioScannerCalls` where %v order by %v limit %v offset %v", plan.pageWhere, plan.order, plan.limit, plan.offset)
 	if rows, err = db.Query(query, plan.pageArgs...); err != nil {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
 	defer rows.Close()
 
 	for rows.Next() {
+		var patches sql.NullString
+
 		searchResult := CallsSearchResult{}
-		if err = rows.Scan(&id, &dateTime, &searchResult.System, &searchResult.Talkgroup); err != nil {
+		if err = rows.Scan(&id, &dateTime, &searchResult.System, &searchResult.Talkgroup, &patches); err != nil {
 			break
+		}
+
+		if patches.Valid && len(patches.String) > 2 {
+			// Best effort: a row whose patches column will not parse is still
+			// a perfectly good search result.
+			_ = json.Unmarshal([]byte(patches.String), &searchResult.Patches)
 		}
 
 		if id.Valid && id.Float64 > 0 {
@@ -1322,6 +1330,9 @@ type CallsSearchResult struct {
 	DateTime  time.Time `json:"dateTime"`
 	System    uint      `json:"system"`
 	Talkgroup uint      `json:"talkgroup"`
+	// Patches — the other talkgroups this call was received on. Carried so
+	// the search list can mark a patched call without fetching each call.
+	Patches []uint `json:"patches,omitempty"`
 	// pluginFields holds values contributed by plugins through
 	// rdio.search.extend, merged into the wire payload by MarshalJSON. Nil on
 	// any install with no such plugin, which is why this costs nothing unused.
@@ -1337,6 +1348,10 @@ func (result CallsSearchResult) MarshalJSON() ([]byte, error) {
 		"dateTime":  result.DateTime,
 		"system":    result.System,
 		"talkgroup": result.Talkgroup,
+	}
+
+	if len(result.Patches) > 0 {
+		out["patches"] = result.Patches
 	}
 
 	for key, value := range result.pluginFields {

@@ -308,6 +308,7 @@
                         <span class="meta-system">{{ row.systemData?.label || row.system }}</span>
                         <span class="meta-tg">{{ row.talkgroupData?.label || row.talkgroup }}</span>
                         <span class="meta-name" *ngIf="entry.name">{{ entry.name }}</span>
+                        <span class="meta-patch" *ngIf="entry.patches">PATCH: {{ entry.patches }}</span>
                         <span class="meta-state" *ngIf="row.id === call?.id">playing</span>
                         <span class="meta-state pending" *ngIf="row.id === callPending">loading</span>
                     </div>

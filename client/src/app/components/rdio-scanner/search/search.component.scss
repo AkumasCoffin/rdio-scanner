@@ -1042,6 +1042,12 @@
     text-transform: uppercase;
   }
 
+  /* The talkgroups a patched call was also received on. Same voice as the
+     LCD's PATCH flag, so the two read as the same fact. */
+  .meta-patch {
+    color: var(--state-danger-text-dim, #e8899e);
+  }
+
   .meta-state.pending { color: var(--text-muted); }
 }
 

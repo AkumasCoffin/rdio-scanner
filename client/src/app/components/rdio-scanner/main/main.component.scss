@@ -334,13 +334,27 @@
       line-height: 14px;
     }
 
-    /* The talkgroups a patched call also came in on. Dimmer than the call's
-       own talkgroup above it: it is provenance, not the headline. */
-    &.patched-from {
-      opacity: 0.65;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    /* The flag row. The flags carry a 1px border, and the fixed 14px row
+       clipped them top and bottom; this row sizes to its content instead.
+       The patch flag also names the talkgroups the call came in on, so it
+       is the one cell allowed to shrink and ellipsize. */
+    &.flags {
+      height: auto;
+      min-height: 16px;
+      line-height: 14px;
+
+      .patch-cell {
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      .flag.patch {
+        box-sizing: border-box;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
     }
   }
 

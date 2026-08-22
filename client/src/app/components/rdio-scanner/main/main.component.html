@@ -51,10 +51,6 @@
     <div class="row big">
         <span>{{ callTalkgroupName }}</span>
     </div>
-    <!-- Which of the patch's talkgroups actually carried this transmission. -->
-    <div class="row small patched-from" *ngIf="callPatches.length">
-        <span>ALSO ON: {{ callPatches.join(', ') }}</span>
-    </div>
     <div class="row">
         <div>
             <span>F: {{ callFrequency || 0 }}</span>
@@ -71,15 +67,18 @@
             <span *ngIf="callUnit">UID: {{ callUnit }}</span>
         </div>
     </div>
-    <div class="row right small">
+    <div class="row right small flags">
         <div *ngIf="tempAvoid">
             <span class="flag" [ngClass]="{ flaged: avoided || patched }">&#x23f2;&#xFE0E; {{ tempAvoid }}M</span>
         </div>
         <div>
             <span class="flag" [ngClass]="{ flaged: avoided }">AVOID</span>
         </div>
-        <div>
-            <span class="flag" [ngClass]="{ flaged: patched }">PATCH</span>
+        <!-- The flag names the talkgroups the transmission actually came in
+             on, not the patch's full roster. -->
+        <div class="patch-cell">
+            <span class="flag patch" [ngClass]="{ flaged: patched }">PATCH<ng-container
+                *ngIf="callPatches.length">: {{ callPatches.join(', ') }}</ng-container></span>
         </div>
     </div>
     <div *ngIf="transcriptionEnabled" class="live-transcript" data-rdio="lcd-transcript" [class.empty]="!displayCall?.transcript"
