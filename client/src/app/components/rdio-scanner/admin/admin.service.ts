@@ -253,6 +253,11 @@ export interface Patch {
     order?: number;
     systemId?: number;
     talkgroupId?: number;
+    /**
+     * Optional: the more important talkgroup the call files under, but only
+     * when a copy really arrived on it. talkgroupId is the home otherwise.
+     */
+    primaryTalkgroupId?: number;
     talkgroups?: number[];
 }
 
@@ -788,6 +793,7 @@ export class RdioScannerAdminService implements OnDestroy {
             order: [patch?.order],
             systemId: [patch?.systemId, Validators.required],
             talkgroupId: [patch?.talkgroupId, [Validators.required, this.validatePatchPrimary()]],
+            primaryTalkgroupId: [patch?.primaryTalkgroupId || null, this.validatePatchPrimary()],
             talkgroups: [patch?.talkgroups || [], this.validatePatchTalkgroups()],
         });
     }

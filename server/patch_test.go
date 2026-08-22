@@ -154,19 +154,40 @@ func TestApplyPatchRefilesOntoThePrimary(t *testing.T) {
 	}
 }
 
-// A copy that arrived on the primary was not received anywhere else, so it has
-// nothing to report — otherwise every call on a patched talkgroup would claim
-// to be patched with itself.
-func TestApplyPatchOnThePrimaryRecordsNothing(t *testing.T) {
+// A copy arriving on the home talkgroup records that receipt too — displays
+// skip the call's own talkgroup, so it still reads as unpatched, and the
+// receipt is what a primary/secondary patch needs to be truthful.
+func TestApplyPatchOnTheHomeRecordsTheReceipt(t *testing.T) {
 	patch := &Patch{SystemId: 1, TalkgroupId: 100, Talkgroups: []uint{100, 200, 300}}
 	call := &Call{System: 1, Talkgroup: 100}
 
 	if _, ok := applyPatch(patch, call, patchSystem()); !ok {
-		t.Fatal("applyPatch refused a copy arriving on the primary")
+		t.Fatal("applyPatch refused a copy arriving on the home")
 	}
 
-	if got := mergePatches(call.Patches, nil); len(got) != 0 {
-		t.Errorf("patches are %v, want none", got)
+	if got, want := mergePatches(call.Patches, nil), []uint{100}; !reflect.DeepEqual(got, want) {
+		t.Errorf("patches are %v, want %v", got, want)
+	}
+}
+
+// The primary is only ever the home for a copy that really arrived on it.
+func TestApplyPatchFilesUnderThePrimaryOnlyOnReceipt(t *testing.T) {
+	patch := &Patch{SystemId: 1, TalkgroupId: 200, PrimaryTalkgroupId: 100, Talkgroups: []uint{100, 200, 300}}
+
+	onMember := &Call{System: 1, Talkgroup: 300}
+	if _, ok := applyPatch(patch, onMember, patchSystem()); !ok {
+		t.Fatal("applyPatch refused the member copy")
+	}
+	if onMember.Talkgroup != 200 {
+		t.Errorf("member copy filed under %v, want the secondary 200", onMember.Talkgroup)
+	}
+
+	onPrimary := &Call{System: 1, Talkgroup: 100}
+	if _, ok := applyPatch(patch, onPrimary, patchSystem()); !ok {
+		t.Fatal("applyPatch refused the primary copy")
+	}
+	if onPrimary.Talkgroup != 100 {
+		t.Errorf("primary copy filed under %v, want the primary 100", onPrimary.Talkgroup)
 	}
 }
 
@@ -279,7 +300,7 @@ func TestPatchedCopiesCollapseOnTheExactTimestamp(t *testing.T) {
 		t.Fatal("applyPatch refused the first copy")
 	}
 
-	if _, found := calls.GetPatchDuplicateId(first, db); found {
+	if _, _, found := calls.GetPatchDuplicate(first, patch.homes(), db); found {
 		t.Fatal("the first copy of a patched call matched a call that is not there")
 	}
 
@@ -296,7 +317,7 @@ func TestPatchedCopiesCollapseOnTheExactTimestamp(t *testing.T) {
 		t.Fatal("applyPatch refused the second copy")
 	}
 
-	if found, ok := calls.GetPatchDuplicateId(second, db); !ok || found != id {
+	if found, _, ok := calls.GetPatchDuplicate(second, patch.homes(), db); !ok || found != id {
 		t.Errorf("the patched copy resolved to (%v, %v), want the stored call %v", found, ok, id)
 	}
 
@@ -307,7 +328,7 @@ func TestPatchedCopiesCollapseOnTheExactTimestamp(t *testing.T) {
 		t.Fatal("applyPatch refused the later call")
 	}
 
-	if _, found := calls.GetPatchDuplicateId(later, db); found {
+	if _, _, found := calls.GetPatchDuplicate(later, patch.homes(), db); found {
 		t.Error("a transmission 120ms later was collapsed into the earlier one")
 	}
 }
@@ -340,7 +361,7 @@ func TestPatchedSiblingsJoinTheStoredCall(t *testing.T) {
 
 	applyPatch(patch, second, system)
 
-	found, ok := calls.GetPatchDuplicateId(second, db)
+	found, _, ok := calls.GetPatchDuplicate(second, patch.homes(), db)
 	if !ok {
 		t.Fatal("the second copy was not recognised as a duplicate")
 	}
@@ -396,5 +417,127 @@ func TestNormalizeReportedPatches(t *testing.T) {
 				t.Errorf("normalized to %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// The full primary/secondary story: a transmission heard on a member files
+// under the secondary; when a copy really arrives on the primary, the stored
+// call moves there — and later copies still find it in its new home.
+func TestPatchPrimaryPromotion(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	calls := NewCalls()
+	system := patchSystem()
+	patch := &Patch{SystemId: 1, TalkgroupId: 200, PrimaryTalkgroupId: 100, Talkgroups: []uint{100, 200, 300}}
+	patch.normalize()
+
+	at := time.Date(2026, 8, 22, 20, 0, 0, 0, time.UTC)
+
+	// First copy on Tac (300): files under the secondary, Fireground (200).
+	first := &Call{System: 1, Talkgroup: 300, DateTime: at, Audio: []byte{1}, AudioName: "a.wav"}
+	applyPatch(patch, first, system)
+
+	if first.Talkgroup != 200 {
+		t.Fatalf("first copy filed under %v, want the secondary 200", first.Talkgroup)
+	}
+
+	id, err := calls.WriteCall(first, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A copy arrives on the primary, Dispatch (100): the stored call moves.
+	second := &Call{System: 1, Talkgroup: 100, DateTime: at}
+	arrivedOn := second.Talkgroup
+	applyPatch(patch, second, system)
+
+	found, storedOn, ok := calls.GetPatchDuplicate(second, patch.homes(), db)
+	if !ok || found != id {
+		t.Fatalf("primary copy resolved to (%v, %v), want stored call %v", found, ok, id)
+	}
+
+	if storedOn != 200 {
+		t.Fatalf("stored call reported on %v, want 200 before promotion", storedOn)
+	}
+
+	if err := calls.AddPatch(id, arrivedOn, db); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := calls.PromoteCall(id, patch.PrimaryTalkgroupId, db); err != nil {
+		t.Fatal(err)
+	}
+
+	// A third copy, on the secondary itself, must still find the moved call.
+	third := &Call{System: 1, Talkgroup: 200, DateTime: at}
+	thirdArrived := third.Talkgroup
+	applyPatch(patch, third, system)
+
+	found2, storedOn2, ok := calls.GetPatchDuplicate(third, patch.homes(), db)
+	if !ok || found2 != id {
+		t.Fatalf("post-promotion copy resolved to (%v, %v), want %v", found2, ok, id)
+	}
+
+	if storedOn2 != 100 {
+		t.Errorf("stored call reported on %v, want the primary 100 after promotion", storedOn2)
+	}
+
+	if err := calls.AddPatch(id, thirdArrived, db); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err := calls.GetCall(id, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if stored.Talkgroup != 100 {
+		t.Errorf("stored call filed under %v, want the primary 100", stored.Talkgroup)
+	}
+
+	// Received on Tac, Dispatch and Fireground — all three recorded; the
+	// display's own-talkgroup filter turns this into "PATCH: Tac 2, Fireground".
+	got := mergePatches(stored.Patches, nil)
+	if want := []uint{300, 100, 200}; !reflect.DeepEqual(got, want) {
+		t.Errorf("received list is %v, want %v", got, want)
+	}
+}
+
+// A transmission that never reached the primary never files there.
+func TestPatchPrimaryNeverClaimedWithoutReceipt(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	calls := NewCalls()
+	system := patchSystem()
+	patch := &Patch{SystemId: 1, TalkgroupId: 200, PrimaryTalkgroupId: 100, Talkgroups: []uint{100, 200, 300}}
+	patch.normalize()
+
+	at := time.Date(2026, 8, 22, 20, 5, 0, 0, time.UTC)
+
+	first := &Call{System: 1, Talkgroup: 300, DateTime: at, Audio: []byte{1}, AudioName: "a.wav"}
+	applyPatch(patch, first, system)
+	id, err := calls.WriteCall(first, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second := &Call{System: 1, Talkgroup: 200, DateTime: at}
+	applyPatch(patch, second, system)
+	if _, _, ok := calls.GetPatchDuplicate(second, patch.homes(), db); !ok {
+		t.Fatal("secondary copy did not find the stored call")
+	}
+	if err := calls.AddPatch(id, 200, db); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err := calls.GetCall(id, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if stored.Talkgroup != 200 {
+		t.Errorf("call filed under %v, want the secondary 200 — the primary never received it", stored.Talkgroup)
 	}
 }

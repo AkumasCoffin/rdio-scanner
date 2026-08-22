@@ -75,21 +75,41 @@
             </div>
             <div class="row">
                 <p>
-                    <span class="mat-body">Primary talkgroup</span><br>
-                    <span class="mat-caption">Where the surviving call is filed, so a patched conversation always
-                        lands on the same talkgroup.</span>
+                    <span class="mat-body">Secondary talkgroup</span><br>
+                    <span class="mat-caption">The everyday home: where the surviving call is filed when the primary
+                        did not carry it (or no primary is set).</span>
                 </p>
                 <mat-form-field floatLabel="never">
-                    <mat-select formControlName="talkgroupId" placeholder="Primary"
+                    <mat-select formControlName="talkgroupId" placeholder="Secondary"
                         [disabled]="!patch.value.talkgroups?.length">
                         <mat-option *ngFor="let talkgroup of membersOf(patch)" [value]="talkgroup.value.id">
                             {{ talkgroup.value.id }} — {{ talkgroup.value.label }}
                         </mat-option>
                     </mat-select>
                     <mat-error *ngIf="patch.get('talkgroupId')?.hasError('required')">
-                        Primary talkgroup is required
+                        Secondary talkgroup is required
                     </mat-error>
                     <mat-error *ngIf="patch.get('talkgroupId')?.hasError('notAMember')">
+                        Secondary must be one of the patch's talkgroups
+                    </mat-error>
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Primary talkgroup (optional)</span><br>
+                    <span class="mat-caption">A more important talkgroup the patch only sometimes covers, such as a
+                        dispatch channel. The call files here instead — but only when a copy was really received on
+                        it, so this talkgroup never shows traffic it did not carry.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <mat-select formControlName="primaryTalkgroupId" placeholder="None"
+                        [disabled]="!patch.value.talkgroups?.length">
+                        <mat-option [value]="null">None</mat-option>
+                        <mat-option *ngFor="let talkgroup of membersOf(patch)" [value]="talkgroup.value.id">
+                            {{ talkgroup.value.id }} — {{ talkgroup.value.label }}
+                        </mat-option>
+                    </mat-select>
+                    <mat-error *ngIf="patch.get('primaryTalkgroupId')?.hasError('notAMember')">
                         Primary must be one of the patch's talkgroups
                     </mat-error>
                 </mat-form-field>

@@ -245,28 +245,62 @@ func (calls *Calls) GetDuplicateId(call *Call, msTimeFrame uint, db *Database) (
 	return uint(id.Float64), true
 }
 
-// GetPatchDuplicateId finds the stored call a patched copy duplicates.
+// GetPatchDuplicate finds the stored call a patched copy duplicates, and the
+// talkgroup it is currently filed under.
 //
 // Exact timestamp, not the duplicate-detection window: the copies of a patched
 // transmission are the same recording fanned out by the recorder, so they
 // carry the same dateTime, and matching wider would swallow a genuinely
-// separate transmission moments later as if it were a copy.
+// separate transmission moments later as if it were a copy. The lookup covers
+// every home the patch may have filed under — the secondary always, and the
+// primary once a promotion has moved the call there.
 //
 // The timestamp is a bound parameter for the same reason the cursor's is: a
 // literal built from DateTimeFormat does not match the text the driver wrote,
 // and an equality test forgives nothing.
-func (calls *Calls) GetPatchDuplicateId(call *Call, db *Database) (uint, bool) {
-	var id sql.NullFloat64
+func (calls *Calls) GetPatchDuplicate(call *Call, homes []uint, db *Database) (uint, uint, bool) {
+	var (
+		id        sql.NullFloat64
+		talkgroup uint
+	)
 
-	err := db.QueryRow(
-		"select `id` from `rdioScannerCalls` where `dateTime` = ? and `system` = ? and `talkgroup` = ? order by `id` limit 1",
-		call.DateTime.UTC(), call.System, call.Talkgroup,
-	).Scan(&id)
-	if err != nil || !id.Valid || id.Float64 <= 0 {
-		return 0, false
+	if len(homes) == 0 {
+		return 0, 0, false
 	}
 
-	return uint(id.Float64), true
+	marks := make([]string, len(homes))
+	args := []any{call.DateTime.UTC(), call.System}
+
+	for i, home := range homes {
+		marks[i] = "?"
+		args = append(args, home)
+	}
+
+	err := db.QueryRow(
+		fmt.Sprintf("select `id`, `talkgroup` from `rdioScannerCalls` where `dateTime` = ? and `system` = ? and `talkgroup` in (%s) order by `id` limit 1", strings.Join(marks, ", ")),
+		args...,
+	).Scan(&id, &talkgroup)
+	if err != nil || !id.Valid || id.Float64 <= 0 {
+		return 0, 0, false
+	}
+
+	return uint(id.Float64), talkgroup, true
+}
+
+// PromoteCall refiles a stored call onto another talkgroup.
+//
+// This is the patch primary taking over: the call was filed under the
+// secondary because nothing better had arrived, and now a copy really has
+// arrived on the primary, so the call belongs there.
+func (calls *Calls) PromoteCall(id uint, talkgroup uint, db *Database) error {
+	calls.mutex.Lock()
+	defer calls.mutex.Unlock()
+
+	if _, err := db.Exec("update `rdioScannerCalls` set `talkgroup` = ? where `id` = ?", talkgroup, id); err != nil {
+		return fmt.Errorf("calls.promotecall: %v", err)
+	}
+
+	return nil
 }
 
 // AddPatch records another talkgroup a stored call was received on.

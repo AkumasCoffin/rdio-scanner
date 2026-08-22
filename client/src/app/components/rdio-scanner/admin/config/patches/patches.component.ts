@@ -99,25 +99,32 @@ export class RdioScannerAdminPatchesComponent {
     systemChanged(patch: FormGroup): void {
         patch.get('talkgroups')?.setValue([]);
         patch.get('talkgroupId')?.setValue(null);
+        patch.get('primaryTalkgroupId')?.setValue(null);
 
         patch.markAsDirty();
     }
 
     /**
-     * Dropping a talkgroup that was the primary would leave the patch filing
-     * calls under something it no longer covers, so the primary follows the
-     * selection: it clears when removed, and takes the first member when it
-     * was never set.
+     * Dropping a talkgroup that was a home would leave the patch filing calls
+     * under something it no longer covers, so both homes follow the selection:
+     * the secondary clears when removed and takes the first member when it was
+     * never set; the optional primary simply clears.
      */
     talkgroupsChanged(patch: FormGroup): void {
         const chosen: number[] = patch.value.talkgroups || [];
-        const primary = patch.value.talkgroupId;
+        const home = patch.value.talkgroupId;
+        const primary = patch.value.primaryTalkgroupId;
 
-        if (primary === null || primary === undefined || !chosen.includes(primary)) {
+        if (home === null || home === undefined || !chosen.includes(home)) {
             patch.get('talkgroupId')?.setValue(chosen.length ? chosen[0] : null);
         }
 
+        if (primary !== null && primary !== undefined && !chosen.includes(primary)) {
+            patch.get('primaryTalkgroupId')?.setValue(null);
+        }
+
         patch.get('talkgroupId')?.updateValueAndValidity();
+        patch.get('primaryTalkgroupId')?.updateValueAndValidity();
 
         patch.markAsDirty();
     }

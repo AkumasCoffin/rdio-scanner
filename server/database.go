@@ -821,6 +821,9 @@ func (db *Database) migrate() error {
 		err = db.migration20260822140000(verbose)
 	}
 	if err == nil {
+		err = db.migration20260822150000(verbose)
+	}
+	if err == nil {
 		err = db.migrationTranscriptsToPlugin(verbose)
 	}
 
@@ -1738,6 +1741,26 @@ func (db *Database) migration20260822140000(verbose bool) error {
 	}
 
 	return db.migrateWithSchema("20260822140000-create-patches-table", queries, verbose)
+}
+
+// migration20260822150000 adds the primaryTalkgroupId column to
+// rdioScannerPatches: the talkgroup a patch's call is filed under only when a
+// copy really arrived on it, with talkgroupId as the everyday home.
+func (db *Database) migration20260822150000(verbose bool) error {
+	var queries []string
+
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerPatches" add column "primaryTalkgroupId" integer not null default 0`,
+		}
+	default:
+		queries = []string{
+			"alter table `rdioScannerPatches` add column `primaryTalkgroupId` integer not null default 0",
+		}
+	}
+
+	return db.migrateWithSchema("20260822150000-patches-primary-talkgroup", queries, verbose)
 }
 
 // migration20260519110000 creates the rdioScannerDelayed table used by the

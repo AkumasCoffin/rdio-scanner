@@ -42,7 +42,19 @@ type Patch struct {
 	// Where the surviving call is filed. Always one of Talkgroups, so a patch
 	// lands on the same talkgroup every time rather than on whichever copy the
 	// recorders happened to deliver first.
+	//
+	// When PrimaryTalkgroupId is also set, this is the everyday home — the
+	// secondary — and the primary takes over only for transmissions that
+	// really reached it.
 	TalkgroupId uint `json:"talkgroupId"`
+
+	// PrimaryTalkgroupId, when set, is the more important talkgroup a patch
+	// only sometimes covers — a dispatch channel joining a tactical patch. A
+	// transmission that actually arrived on it is filed under it; one that
+	// did not stays under TalkgroupId. Never claimed without a real receipt,
+	// which is the whole point: filing everything under dispatch would say
+	// dispatch carried traffic it never heard.
+	PrimaryTalkgroupId uint `json:"primaryTalkgroupId"`
 
 	// Every talkgroup in the patch, the primary included.
 	Talkgroups []uint `json:"talkgroups"`
@@ -73,6 +85,10 @@ func (patch *Patch) FromMap(m map[string]any) *Patch {
 
 	if v, ok := jsonUint(m["talkgroupId"]); ok {
 		patch.TalkgroupId = v
+	}
+
+	if v, ok := jsonUint(m["primaryTalkgroupId"]); ok {
+		patch.PrimaryTalkgroupId = v
 	}
 
 	patch.Talkgroups = []uint{}
@@ -113,10 +129,28 @@ func (patch *Patch) normalize() {
 	}
 
 	if patch.TalkgroupId != 0 && !seen[patch.TalkgroupId] {
+		seen[patch.TalkgroupId] = true
 		members = append([]uint{patch.TalkgroupId}, members...)
 	}
 
+	// The primary is a member like any other — it just carries the extra
+	// meaning of being the preferred home when it really receives a copy.
+	if patch.PrimaryTalkgroupId != 0 && !seen[patch.PrimaryTalkgroupId] {
+		members = append(members, patch.PrimaryTalkgroupId)
+	}
+
 	patch.Talkgroups = members
+}
+
+// homes lists where this patch's surviving call may be filed: the secondary
+// always, the primary when configured. Duplicate lookups check both, because
+// a call promoted onto the primary must still be found by later copies.
+func (patch *Patch) homes() []uint {
+	if patch.PrimaryTalkgroupId != 0 && patch.PrimaryTalkgroupId != patch.TalkgroupId {
+		return []uint{patch.TalkgroupId, patch.PrimaryTalkgroupId}
+	}
+
+	return []uint{patch.TalkgroupId}
 }
 
 // usable says whether this patch can collapse anything. A patch of one
@@ -196,14 +230,14 @@ func (patches *Patches) Read(db *Database) error {
 		return fmt.Errorf("patches.read: %v", err)
 	}
 
-	if rows, err = db.Query("select `_id`, `disabled`, `label`, `order`, `systemId`, `talkgroupId`, `talkgroups` from `rdioScannerPatches`"); err != nil {
+	if rows, err = db.Query("select `_id`, `disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups` from `rdioScannerPatches`"); err != nil {
 		return formatError(err)
 	}
 
 	for rows.Next() {
 		patch := &Patch{}
 
-		if err = rows.Scan(&id, &patch.Disabled, &patch.Label, &order, &patch.SystemId, &patch.TalkgroupId, &talkgroups); err != nil {
+		if err = rows.Scan(&id, &patch.Disabled, &patch.Label, &order, &patch.SystemId, &patch.TalkgroupId, &patch.PrimaryTalkgroupId, &talkgroups); err != nil {
 			break
 		}
 
@@ -310,19 +344,19 @@ func (patches *Patches) Write(db *Database) error {
 			idVal, hasId := patch.Id.(uint)
 
 			if db.Config.DbType == DbTypePostgres && (!hasId || idVal == 0) {
-				_, err = db.Exec("insert into `rdioScannerPatches` (`disabled`, `label`, `order`, `systemId`, `talkgroupId`, `talkgroups`) values (?, ?, ?, ?, ?, ?)",
-					patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, talkgroups)
+				_, err = db.Exec("insert into `rdioScannerPatches` (`disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups`) values (?, ?, ?, ?, ?, ?, ?)",
+					patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, patch.PrimaryTalkgroupId, talkgroups)
 			} else {
-				_, err = db.Exec("insert into `rdioScannerPatches` (`_id`, `disabled`, `label`, `order`, `systemId`, `talkgroupId`, `talkgroups`) values (?, ?, ?, ?, ?, ?, ?)",
-					patch.Id, patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, talkgroups)
+				_, err = db.Exec("insert into `rdioScannerPatches` (`_id`, `disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups`) values (?, ?, ?, ?, ?, ?, ?, ?)",
+					patch.Id, patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, patch.PrimaryTalkgroupId, talkgroups)
 			}
 
 			if err != nil {
 				break
 			}
 
-		} else if _, err = db.Exec("update `rdioScannerPatches` set `disabled` = ?, `label` = ?, `order` = ?, `systemId` = ?, `talkgroupId` = ?, `talkgroups` = ? where `_id` = ?",
-			patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, talkgroups, patch.Id); err != nil {
+		} else if _, err = db.Exec("update `rdioScannerPatches` set `disabled` = ?, `label` = ?, `order` = ?, `systemId` = ?, `talkgroupId` = ?, `primaryTalkgroupId` = ?, `talkgroups` = ? where `_id` = ?",
+			patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, patch.PrimaryTalkgroupId, talkgroups, patch.Id); err != nil {
 			break
 		}
 	}

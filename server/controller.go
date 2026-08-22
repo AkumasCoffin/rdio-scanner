@@ -297,10 +297,17 @@ func (controller *Controller) PluginExposedConfig() map[string]any {
 	return exposed
 }
 
-// applyPatch refiles a call onto its patch's primary talkgroup and records the
-// patch's members on it, returning the primary.
+// applyPatch refiles a call onto its patch's home talkgroup and records the
+// talkgroup it actually arrived on, returning the home.
 //
-// It refuses when the primary is not a talkgroup of the call's system: filing
+// The home is the patch's secondary — unless this copy arrived on the
+// configured primary, which files under itself: a transmission that really
+// reached the primary belongs there, and one that did not must never be
+// filed there. The received list carries every talkgroup a copy arrived on,
+// the home included; displays skip the call's own talkgroup, so a call heard
+// only on its home still reads as unpatched.
+//
+// It refuses when the home is not a talkgroup of the call's system: filing
 // calls under something no client can select would take the traffic off every
 // listener's feed, which is worse than not collapsing it.
 func applyPatch(patch *Patch, call *Call, system *System) (*Talkgroup, bool) {
@@ -308,22 +315,20 @@ func applyPatch(patch *Patch, call *Call, system *System) (*Talkgroup, bool) {
 		return nil, false
 	}
 
-	primary, ok := system.Talkgroups.GetTalkgroup(patch.TalkgroupId)
+	home := patch.TalkgroupId
+	if patch.PrimaryTalkgroupId != 0 && call.Talkgroup == patch.PrimaryTalkgroupId {
+		home = patch.PrimaryTalkgroupId
+	}
+
+	talkgroup, ok := system.Talkgroups.GetTalkgroup(home)
 	if !ok {
 		return nil, false
 	}
 
-	// Only the talkgroup this copy actually came in on is recorded. The other
-	// members of the patch are not claimed until a copy really arrives on them,
-	// so what the call reports is what was heard rather than what was declared.
-	// The talkgroup it is filed under is not one of the "others".
-	if arrived := call.Talkgroup; arrived != patch.TalkgroupId {
-		call.Patches = mergePatches(call.Patches, []uint{arrived})
-	}
+	call.Patches = mergePatches(call.Patches, []uint{call.Talkgroup})
+	call.Talkgroup = home
 
-	call.Talkgroup = patch.TalkgroupId
-
-	return primary, true
+	return talkgroup, true
 }
 
 // normalizeReportedPatches canonicalizes a call's patch list: whatever shape
@@ -681,13 +686,27 @@ func (controller *Controller) IngestCall(call *Call) {
 	// duplicate detection off. The copies of a patched transmission carry the
 	// same timestamp, so that is the whole match.
 	if patched {
-		if id, found := controller.Calls.GetPatchDuplicateId(call, controller.Database); found {
+		patch, _ := controller.Patches.GetPatch(call.System, arrivedOn)
+
+		if id, storedOn, found := controller.Calls.GetPatchDuplicate(call, patch.homes(), controller.Database); found {
 			if !controller.PluginDispatch.KeepDuplicate(call) {
 				// The copy is dropped, but the talkgroup it arrived on is not:
 				// it joins the stored call, which is the whole record of which
 				// channels carried this transmission.
 				if err := controller.Calls.AddPatch(id, arrivedOn, controller.Database); err != nil {
 					logError(err)
+				}
+
+				// A copy really arrived on the configured primary, and the
+				// stored call sits on the secondary: the call moves. This is
+				// the only way a call ever lands on the primary — a genuine
+				// receipt, never the patch's say-so.
+				if patch.PrimaryTalkgroupId != 0 && arrivedOn == patch.PrimaryTalkgroupId && storedOn != patch.PrimaryTalkgroupId {
+					if err := controller.Calls.PromoteCall(id, patch.PrimaryTalkgroupId, controller.Database); err != nil {
+						logError(err)
+					} else {
+						logCall(call, LogLevelInfo, fmt.Sprintf("patched call promoted to primary talkgroup %v", patch.PrimaryTalkgroupId))
+					}
 				}
 
 				logCall(call, LogLevelInfo, fmt.Sprintf("patched call already received, adding talkgroup %v", arrivedOn))
@@ -715,11 +734,17 @@ func (controller *Controller) IngestCall(call *Call) {
 		}
 	}
 
-	// The call's talkgroup is final now (a manual patch may have refiled it),
-	// so the reported patch list can be reduced to what it actually says: the
-	// other talkgroups this transmission went over. See the function comment
-	// for why a list naming only the call's own talkgroup becomes no patch.
-	call.Patches = normalizeReportedPatches(call.Patches, call.Talkgroup)
+	// A manually patched call curates its own received list — the home is in
+	// it on purpose, as the record that the home really received a copy, and
+	// displays already skip the call's own talkgroup. Externally reported
+	// lists are reduced to what they actually say: the other talkgroups this
+	// transmission went over. See the function comment for why a list naming
+	// only the call's own talkgroup becomes no patch.
+	if !patched {
+		call.Patches = normalizeReportedPatches(call.Patches, call.Talkgroup)
+	} else {
+		call.Patches = mergePatches(call.Patches, nil)
+	}
 
 	// A plugin may take over conversion entirely — a different encoder, a
 	// different bitrate policy, or none at all. When none does, the built-in
