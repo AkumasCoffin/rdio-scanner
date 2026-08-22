@@ -170,27 +170,35 @@ func TestApplyPatchOnTheHomeRecordsTheReceipt(t *testing.T) {
 	}
 }
 
-// The promotion ladder: primary over secondary over any other member.
+// The promotion ladder is the member list's own order: highest-listed wins,
+// an outsider scores nothing.
 func TestPatchHomeRank(t *testing.T) {
-	patch := &Patch{SystemId: 1, TalkgroupId: 200, PrimaryTalkgroupId: 100, Talkgroups: []uint{100, 200, 300}}
+	patch := &Patch{SystemId: 1, Talkgroups: []uint{100, 200, 300}}
+	patch.normalize()
 
-	if got := patch.homeRank(100); got != 2 {
-		t.Errorf("primary ranks %v, want 2", got)
+	if a, b, c := patch.homeRank(100), patch.homeRank(200), patch.homeRank(300); !(a > b && b > c && c > 0) {
+		t.Errorf("ranks are %v/%v/%v, want strictly descending and positive", a, b, c)
 	}
 
-	if got := patch.homeRank(200); got != 1 {
-		t.Errorf("secondary ranks %v, want 1", got)
+	if got := patch.homeRank(999); got != 0 {
+		t.Errorf("an outsider ranks %v, want 0", got)
 	}
 
-	if got := patch.homeRank(300); got != 0 {
-		t.Errorf("a plain member ranks %v, want 0", got)
-	}
-
-	// With no primary configured, nothing ranks as one.
-	plain := &Patch{SystemId: 1, TalkgroupId: 200, Talkgroups: []uint{200, 300}}
-
-	if got := plain.homeRank(0); got != 0 {
+	if got := patch.homeRank(0); got != 0 {
 		t.Errorf("talkgroup zero ranks %v, want 0", got)
+	}
+
+	// The legacy fields fold to the front: primary above secondary above the
+	// rest, which is exactly the ladder they used to be.
+	legacy := &Patch{SystemId: 1, TalkgroupId: 200, PrimaryTalkgroupId: 100, Talkgroups: []uint{300, 200, 100}}
+	legacy.normalize()
+
+	if got, want := legacy.Talkgroups, []uint{100, 200, 300}; !reflect.DeepEqual(got, want) {
+		t.Errorf("legacy fold produced %v, want %v", got, want)
+	}
+
+	if legacy.homeRank(100) <= legacy.homeRank(200) {
+		t.Error("the legacy primary does not outrank the legacy secondary after the fold")
 	}
 }
 

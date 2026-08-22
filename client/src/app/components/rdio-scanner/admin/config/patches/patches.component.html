@@ -1,9 +1,10 @@
 <div class="row top">
     <p class="mat-body">A patch is a set of talkgroups on one system that carry the same conversation. The same
         transmission arrives once per talkgroup with the same timestamp; only one call is kept, filed under the
-        primary and marked with the talkgroups it was actually received on — so it plays once, shows PATCH on the
-        display, reaches anyone listening to any of its talkgroups, and goes downstream like any other patched call.
-        Copies are matched by their exact timestamp, independent of the duplicate detection settings.</p>
+        highest-ranked talkgroup that actually received a copy, and marked with every talkgroup it was received on
+        — so it plays once, shows PATCH on the display, reaches anyone listening to any of its talkgroups, and goes
+        downstream like any other patched call. Copies are matched by their exact timestamp, independent of the
+        duplicate detection settings.</p>
     <button type="button" mat-button color="accent" (click)="add()">New patch</button>
 </div>
 <p *ngIf="!patches.length" class="mat-small text-center">No defined patches</p>
@@ -73,47 +74,27 @@
                     </mat-error>
                 </mat-form-field>
             </div>
-            <div class="row">
+            <div class="row" *ngIf="patch.value.talkgroups?.length">
                 <p>
-                    <span class="mat-body">Secondary talkgroup</span><br>
-                    <span class="mat-caption">Preferred home when it really receives a copy. A transmission that
-                        reaches neither the primary nor the secondary stays on the first talkgroup that received
-                        it.</span>
+                    <span class="mat-body">Display order</span><br>
+                    <span class="mat-caption">The ranking. The surviving call files under the highest talkgroup in
+                        this list that actually received a copy, and moves up if a copy later arrives on a higher
+                        one — a talkgroup never shows traffic it did not carry.</span>
                 </p>
-                <mat-form-field floatLabel="never">
-                    <mat-select formControlName="talkgroupId" placeholder="Secondary"
-                        [disabled]="!patch.value.talkgroups?.length">
-                        <mat-option *ngFor="let talkgroup of membersOf(patch)" [value]="talkgroup.value.id">
-                            {{ talkgroup.value.id }} — {{ talkgroup.value.label }}
-                        </mat-option>
-                    </mat-select>
-                    <mat-error *ngIf="patch.get('talkgroupId')?.hasError('required')">
-                        Secondary talkgroup is required
-                    </mat-error>
-                    <mat-error *ngIf="patch.get('talkgroupId')?.hasError('notAMember')">
-                        Secondary must be one of the patch's talkgroups
-                    </mat-error>
-                </mat-form-field>
-            </div>
-            <div class="row">
-                <p>
-                    <span class="mat-body">Primary talkgroup (optional)</span><br>
-                    <span class="mat-caption">A more important talkgroup the patch only sometimes covers, such as a
-                        dispatch channel. Outranks the secondary — but only when a copy was really received on it,
-                        so neither home ever shows traffic it did not carry.</span>
-                </p>
-                <mat-form-field floatLabel="never">
-                    <mat-select formControlName="primaryTalkgroupId" placeholder="None"
-                        [disabled]="!patch.value.talkgroups?.length">
-                        <mat-option [value]="null">None</mat-option>
-                        <mat-option *ngFor="let talkgroup of membersOf(patch)" [value]="talkgroup.value.id">
-                            {{ talkgroup.value.id }} — {{ talkgroup.value.label }}
-                        </mat-option>
-                    </mat-select>
-                    <mat-error *ngIf="patch.get('primaryTalkgroupId')?.hasError('notAMember')">
-                        Primary must be one of the patch's talkgroups
-                    </mat-error>
-                </mat-form-field>
+                <div class="patch-order">
+                    <div class="patch-order-row" *ngFor="let id of patch.value.talkgroups; index as i">
+                        <span class="patch-order-rank mat-caption">{{ i + 1 }}</span>
+                        <span class="patch-order-label">{{ memberLabel(patch, id) }}</span>
+                        <button mat-icon-button type="button" [disabled]="i === 0"
+                            (click)="moveMember(patch, i, -1)" aria-label="Move up">
+                            <mat-icon>arrow_upward</mat-icon>
+                        </button>
+                        <button mat-icon-button type="button" [disabled]="i === patch.value.talkgroups.length - 1"
+                            (click)="moveMember(patch, i, 1)" aria-label="Move down">
+                            <mat-icon>arrow_downward</mat-icon>
+                        </button>
+                    </div>
+                </div>
             </div>
             <div class="row">
                 <span></span>

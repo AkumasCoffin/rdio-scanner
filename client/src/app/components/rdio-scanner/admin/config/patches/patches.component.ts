@@ -98,35 +98,53 @@ export class RdioScannerAdminPatchesComponent {
      */
     systemChanged(patch: FormGroup): void {
         patch.get('talkgroups')?.setValue([]);
-        patch.get('talkgroupId')?.setValue(null);
-        patch.get('primaryTalkgroupId')?.setValue(null);
 
         patch.markAsDirty();
     }
 
     /**
-     * Dropping a talkgroup that was a home would leave the patch filing calls
-     * under something it no longer covers, so both homes follow the selection:
-     * the secondary clears when removed and takes the first member when it was
-     * never set; the optional primary simply clears.
+     * The select reports its value in option order, but the list's order is
+     * the ranking, so it must not reshuffle what the user arranged: members
+     * still selected keep their places, new picks join at the bottom.
      */
     talkgroupsChanged(patch: FormGroup): void {
-        const chosen: number[] = patch.value.talkgroups || [];
-        const home = patch.value.talkgroupId;
-        const primary = patch.value.primaryTalkgroupId;
+        const selected: number[] = patch.get('talkgroups')?.value || [];
+        const previous: number[] = this.lastOrder.get(patch) || [];
 
-        if (home === null || home === undefined || !chosen.includes(home)) {
-            patch.get('talkgroupId')?.setValue(chosen.length ? chosen[0] : null);
-        }
+        const ordered = previous.filter((id) => selected.includes(id))
+            .concat(selected.filter((id) => !previous.includes(id)));
 
-        if (primary !== null && primary !== undefined && !chosen.includes(primary)) {
-            patch.get('primaryTalkgroupId')?.setValue(null);
-        }
-
-        patch.get('talkgroupId')?.updateValueAndValidity();
-        patch.get('primaryTalkgroupId')?.updateValueAndValidity();
+        this.lastOrder.set(patch, ordered);
+        patch.get('talkgroups')?.setValue(ordered, { emitEvent: false });
 
         patch.markAsDirty();
+    }
+
+    /** The arranged order per patch, so the select cannot reshuffle it. */
+    private lastOrder = new Map<FormGroup, number[]>();
+
+    /** Moves one member up or down the ranking. */
+    moveMember(patch: FormGroup, index: number, delta: number): void {
+        const ordered: number[] = (patch.get('talkgroups')?.value || []).slice();
+        const target = index + delta;
+
+        if (target < 0 || target >= ordered.length) {
+            return;
+        }
+
+        [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+
+        this.lastOrder.set(patch, ordered);
+        patch.get('talkgroups')?.setValue(ordered, { emitEvent: false });
+
+        patch.markAsDirty();
+    }
+
+    /** Label for one member id, for the ranking list. */
+    memberLabel(patch: FormGroup, id: number): string {
+        const talkgroup = this.talkgroupsOf(patch).find((t) => t.value.id === id);
+
+        return talkgroup ? `${id} — ${talkgroup.value.label}` : `${id}`;
     }
 
     labelOf(patch: FormGroup): string {

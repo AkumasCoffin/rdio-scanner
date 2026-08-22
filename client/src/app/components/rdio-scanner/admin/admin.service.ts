@@ -252,12 +252,13 @@ export interface Patch {
     label?: string;
     order?: number;
     systemId?: number;
+    /** Derived by the server from the top of the ranked list; not edited. */
     talkgroupId?: number;
-    /**
-     * Optional: the more important talkgroup the call files under, but only
-     * when a copy really arrived on it. talkgroupId is the home otherwise.
-     */
     primaryTalkgroupId?: number;
+    /**
+     * The members in display order, which is the ranking: the surviving call
+     * files under the highest-listed talkgroup that actually received a copy.
+     */
     talkgroups?: number[];
 }
 
@@ -792,8 +793,6 @@ export class RdioScannerAdminService implements OnDestroy {
             label: [patch?.label, Validators.required],
             order: [patch?.order],
             systemId: [patch?.systemId, Validators.required],
-            talkgroupId: [patch?.talkgroupId, [Validators.required, this.validatePatchPrimary()]],
-            primaryTalkgroupId: [patch?.primaryTalkgroupId || null, this.validatePatchPrimary()],
             talkgroups: [patch?.talkgroups || [], this.validatePatchTalkgroups()],
         });
     }
@@ -1261,23 +1260,6 @@ export class RdioScannerAdminService implements OnDestroy {
             const talkgroups: number[] = control.value || [];
 
             return talkgroups.length > 1 ? null : { tooFew: true };
-        };
-    }
-
-    /**
-     * The primary is where every copy of the conversation is filed, so it has
-     * to be one of the talkgroups the patch actually covers.
-     */
-    private validatePatchPrimary(): ValidatorFn {
-        return (control: AbstractControl): ValidationErrors | null => {
-            const primary = control.value;
-            const talkgroups: number[] = control.parent?.get('talkgroups')?.value || [];
-
-            if (primary === null || primary === undefined || !talkgroups.length) {
-                return null;
-            }
-
-            return talkgroups.includes(primary) ? null : { notAMember: true };
         };
     }
 

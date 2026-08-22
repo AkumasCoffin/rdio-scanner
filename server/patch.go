@@ -39,24 +39,17 @@ type Patch struct {
 	Order    uint   `json:"order"`
 	SystemId uint   `json:"systemId"`
 
-	// Where the surviving call is filed. Always one of Talkgroups, so a patch
-	// lands on the same talkgroup every time rather than on whichever copy the
-	// recorders happened to deliver first.
-	//
-	// When PrimaryTalkgroupId is also set, this is the everyday home — the
-	// secondary — and the primary takes over only for transmissions that
-	// really reached it.
-	TalkgroupId uint `json:"talkgroupId"`
-
-	// PrimaryTalkgroupId, when set, is the more important talkgroup a patch
-	// only sometimes covers — a dispatch channel joining a tactical patch. A
-	// transmission that actually arrived on it is filed under it; one that
-	// did not stays under TalkgroupId. Never claimed without a real receipt,
-	// which is the whole point: filing everything under dispatch would say
-	// dispatch carried traffic it never heard.
+	// Legacy homes from before the ranking was the member order itself.
+	// normalize folds them to the front of Talkgroups — primary first, then
+	// secondary — and then derives TalkgroupId back from the list so the
+	// column stays coherent for anything still reading it.
+	TalkgroupId        uint `json:"talkgroupId"`
 	PrimaryTalkgroupId uint `json:"primaryTalkgroupId"`
 
-	// Every talkgroup in the patch, the primary included.
+	// Every talkgroup in the patch, in display order — which is the ranking.
+	// The surviving call files under the highest-listed talkgroup that
+	// actually received a copy, and climbs when a copy arrives on a higher
+	// one. No talkgroup is ever claimed without a real receipt.
 	Talkgroups []uint `json:"talkgroups"`
 }
 
@@ -107,52 +100,49 @@ func (patch *Patch) FromMap(m map[string]any) *Patch {
 	return patch
 }
 
-// normalize keeps the primary inside the member list and drops repeats, so the
-// rest of the server can treat Talkgroups as the whole patch without checking.
+// normalize settles the member list into its canonical ranked form: repeats
+// and zeroes dropped, the legacy primary/secondary homes folded to the front
+// in that order, and TalkgroupId re-derived from the top of the list so the
+// stored column stays coherent. Idempotent, so a patch configured under the
+// ranked-list model passes through untouched.
 func (patch *Patch) normalize() {
 	seen := map[uint]bool{}
-	members := []uint{}
+	ordered := []uint{}
 
-	for _, id := range patch.Talkgroups {
+	add := func(id uint) {
 		if id == 0 || seen[id] {
-			continue
+			return
 		}
 
 		seen[id] = true
-		members = append(members, id)
+		ordered = append(ordered, id)
 	}
 
-	// An unset primary takes the first member rather than leaving the patch
-	// pointing at talkgroup zero, which no system has.
-	if patch.TalkgroupId == 0 && len(members) > 0 {
-		patch.TalkgroupId = members[0]
+	add(patch.PrimaryTalkgroupId)
+	add(patch.TalkgroupId)
+
+	for _, id := range patch.Talkgroups {
+		add(id)
 	}
 
-	if patch.TalkgroupId != 0 && !seen[patch.TalkgroupId] {
-		seen[patch.TalkgroupId] = true
-		members = append([]uint{patch.TalkgroupId}, members...)
-	}
+	patch.Talkgroups = ordered
+	patch.PrimaryTalkgroupId = 0
+	patch.TalkgroupId = 0
 
-	// The primary is a member like any other — it just carries the extra
-	// meaning of being the preferred home when it really receives a copy.
-	if patch.PrimaryTalkgroupId != 0 && !seen[patch.PrimaryTalkgroupId] {
-		members = append(members, patch.PrimaryTalkgroupId)
+	if len(ordered) > 0 {
+		patch.TalkgroupId = ordered[0]
 	}
-
-	patch.Talkgroups = members
 }
 
-// homeRank orders the places a patch's surviving call may be filed: the
-// primary above the secondary above any other member. A call only ever moves
-// up this ladder, and only onto a talkgroup that really received a copy — so
-// the ranks decide promotion, never placement by decree.
+// homeRank scores a talkgroup by its position in the ranked member list:
+// highest-listed scores highest, an outsider scores nothing. A call only ever
+// moves up this ladder, and only onto a talkgroup that really received a copy
+// — the ranks decide promotion, never placement by decree.
 func (patch *Patch) homeRank(talkgroupId uint) int {
-	if patch.PrimaryTalkgroupId != 0 && talkgroupId == patch.PrimaryTalkgroupId {
-		return 2
-	}
-
-	if talkgroupId == patch.TalkgroupId {
-		return 1
+	for i, id := range patch.Talkgroups {
+		if id == talkgroupId {
+			return len(patch.Talkgroups) - i
+		}
 	}
 
 	return 0
