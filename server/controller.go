@@ -652,11 +652,30 @@ func (controller *Controller) IngestCall(call *Call) {
 		}
 	}
 
-	// Patch collapsing is not the same intent as duplicate detection — one is
-	// "this conversation reached me several ways", the other "this recording
-	// reached me twice" — so a patch is still collapsed when duplicate
-	// detection is switched off.
-	if patched || !controller.Options.DisableDuplicateDetection {
+	// Patch collapsing is not duplicate detection — one is "this conversation
+	// reached me several ways", the other "this recording reached me twice" —
+	// so it neither uses the duplicate window nor obeys the switch that turns
+	// duplicate detection off. The copies of a patched transmission carry the
+	// same timestamp, so that is the whole match.
+	if patched {
+		if id, found := controller.Calls.GetPatchDuplicateId(call, controller.Database); found {
+			if !controller.PluginDispatch.KeepDuplicate(call) {
+				// The copy is dropped, but the talkgroup it arrived on is not:
+				// it joins the stored call, which is the whole record of which
+				// channels carried this transmission.
+				if err := controller.Calls.AddPatch(id, arrivedOn, controller.Database); err != nil {
+					logError(err)
+				}
+
+				logCall(call, LogLevelInfo, fmt.Sprintf("patched call already received, adding talkgroup %v", arrivedOn))
+
+				return
+			}
+
+			logCall(call, LogLevelInfo, "duplicate kept by plugin")
+		}
+
+	} else if !controller.Options.DisableDuplicateDetection {
 		if controller.Calls.CheckDuplicate(call, controller.Options.DuplicateDetectionTimeFrame, controller.Database) {
 			// Core has decided to reject. A plugin may overrule that, which is
 			// what makes a smarter duplicate rule possible without replacing the
@@ -664,20 +683,7 @@ func (controller *Controller) IngestCall(call *Call) {
 			// merely observes this point cannot accidentally disable duplicate
 			// detection for the whole server.
 			if !controller.PluginDispatch.KeepDuplicate(call) {
-				if patched {
-					// The copy is dropped, but the talkgroup it arrived on is
-					// not: it joins the stored call, which is the whole record
-					// of which channels carried this transmission.
-					if id, found := controller.Calls.GetDuplicateId(call, controller.Options.DuplicateDetectionTimeFrame, controller.Database); found {
-						if err := controller.Calls.AddPatch(id, arrivedOn, controller.Database); err != nil {
-							logError(err)
-						}
-					}
-
-					logCall(call, LogLevelInfo, fmt.Sprintf("patched call already received, adding talkgroup %v", arrivedOn))
-				} else {
-					logCall(call, LogLevelWarn, "duplicate call rejected")
-				}
+				logCall(call, LogLevelWarn, "duplicate call rejected")
 
 				return
 			}

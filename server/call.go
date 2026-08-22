@@ -245,6 +245,30 @@ func (calls *Calls) GetDuplicateId(call *Call, msTimeFrame uint, db *Database) (
 	return uint(id.Float64), true
 }
 
+// GetPatchDuplicateId finds the stored call a patched copy duplicates.
+//
+// Exact timestamp, not the duplicate-detection window: the copies of a patched
+// transmission are the same recording fanned out by the recorder, so they
+// carry the same dateTime, and matching wider would swallow a genuinely
+// separate transmission moments later as if it were a copy.
+//
+// The timestamp is a bound parameter for the same reason the cursor's is: a
+// literal built from DateTimeFormat does not match the text the driver wrote,
+// and an equality test forgives nothing.
+func (calls *Calls) GetPatchDuplicateId(call *Call, db *Database) (uint, bool) {
+	var id sql.NullFloat64
+
+	err := db.QueryRow(
+		"select `id` from `rdioScannerCalls` where `dateTime` = ? and `system` = ? and `talkgroup` = ? order by `id` limit 1",
+		call.DateTime.UTC(), call.System, call.Talkgroup,
+	).Scan(&id)
+	if err != nil || !id.Valid || id.Float64 <= 0 {
+		return 0, false
+	}
+
+	return uint(id.Float64), true
+}
+
 // AddPatch records another talkgroup a stored call was received on.
 //
 // A patched transmission arrives once per talkgroup, and only the first copy

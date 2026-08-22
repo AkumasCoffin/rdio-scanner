@@ -1,9 +1,9 @@
 <div class="row top">
     <p class="mat-body">A patch is a set of talkgroups on one system that carry the same conversation. The same
-        transmission arrives once per talkgroup; only one call is kept, filed under the primary and marked as patched
-        with the whole set — so it plays once, shows PATCH on the display, reaches anyone listening to any of its
-        talkgroups, and goes downstream like any other patched call. Collapsing uses the duplicate detection time frame
-        from Options, and happens even when duplicate detection is switched off.</p>
+        transmission arrives once per talkgroup with the same timestamp; only one call is kept, filed under the
+        primary and marked with the talkgroups it was actually received on — so it plays once, shows PATCH on the
+        display, reaches anyone listening to any of its talkgroups, and goes downstream like any other patched call.
+        Copies are matched by their exact timestamp, independent of the duplicate detection settings.</p>
     <button type="button" mat-button color="accent" (click)="add()">New patch</button>
 </div>
 <p *ngIf="!patches.length" class="mat-small text-center">No defined patches</p>

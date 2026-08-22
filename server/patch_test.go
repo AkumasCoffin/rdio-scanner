@@ -260,9 +260,10 @@ func TestPatchesReadWriteRoundTrip(t *testing.T) {
 }
 
 // The collapse itself: refiling every copy onto the primary is what makes the
-// second arrival a duplicate in the plainest sense, which is the whole reason
-// the patch is applied before the duplicate check rather than after it.
-func TestPatchedCopiesCollapseUnderTheDuplicateCheck(t *testing.T) {
+// later arrivals findable, and the match is the exact timestamp — the copies
+// of a patched transmission are one recording fanned out by the recorder, so
+// they share it, and a transmission even moments later is its own call.
+func TestPatchedCopiesCollapseOnTheExactTimestamp(t *testing.T) {
 	db := newTestDatabase(t)
 	defer db.Sql.Close()
 
@@ -278,34 +279,36 @@ func TestPatchedCopiesCollapseUnderTheDuplicateCheck(t *testing.T) {
 		t.Fatal("applyPatch refused the first copy")
 	}
 
-	if calls.CheckDuplicate(first, 500, db) {
-		t.Fatal("the first copy of a patched call was called a duplicate")
+	if _, found := calls.GetPatchDuplicateId(first, db); found {
+		t.Fatal("the first copy of a patched call matched a call that is not there")
 	}
 
-	if _, err := calls.WriteCall(first, db); err != nil {
+	id, err := calls.WriteCall(first, db)
+	if err != nil {
 		t.Fatalf("write first: %v", err)
 	}
 
-	// The same transmission, arriving on a different member 120 ms later.
-	second := &Call{System: 1, Talkgroup: 300, DateTime: at.Add(120 * time.Millisecond), Audio: []byte{0x02}, AudioName: "second.wav"}
+	// The same transmission, arriving on a different member with the same
+	// timestamp.
+	second := &Call{System: 1, Talkgroup: 300, DateTime: at, Audio: []byte{0x02}, AudioName: "second.wav"}
 
 	if _, ok := applyPatch(patch, second, system); !ok {
 		t.Fatal("applyPatch refused the second copy")
 	}
 
-	if !calls.CheckDuplicate(second, 500, db) {
-		t.Error("a patched copy on another talkgroup was not seen as a duplicate — both would be stored")
+	if found, ok := calls.GetPatchDuplicateId(second, db); !ok || found != id {
+		t.Errorf("the patched copy resolved to (%v, %v), want the stored call %v", found, ok, id)
 	}
 
-	// A genuinely later transmission on the patch is still its own call.
-	later := &Call{System: 1, Talkgroup: 300, DateTime: at.Add(30 * time.Second), Audio: []byte{0x03}, AudioName: "later.wav"}
+	// Moments later is not the same transmission.
+	later := &Call{System: 1, Talkgroup: 300, DateTime: at.Add(120 * time.Millisecond), Audio: []byte{0x03}, AudioName: "later.wav"}
 
 	if _, ok := applyPatch(patch, later, system); !ok {
 		t.Fatal("applyPatch refused the later call")
 	}
 
-	if calls.CheckDuplicate(later, 500, db) {
-		t.Error("a transmission 30s later was collapsed into the earlier one")
+	if _, found := calls.GetPatchDuplicateId(later, db); found {
+		t.Error("a transmission 120ms later was collapsed into the earlier one")
 	}
 }
 
@@ -331,13 +334,13 @@ func TestPatchedSiblingsJoinTheStoredCall(t *testing.T) {
 		t.Fatalf("write first: %v", err)
 	}
 
-	// Second copy, on Tac, 120 ms later — dropped, but its talkgroup is kept.
-	second := &Call{System: 1, Talkgroup: 300, DateTime: at.Add(120 * time.Millisecond)}
+	// Second copy, on Tac, same timestamp — dropped, but its talkgroup is kept.
+	second := &Call{System: 1, Talkgroup: 300, DateTime: at}
 	arrivedOn := second.Talkgroup
 
 	applyPatch(patch, second, system)
 
-	found, ok := calls.GetDuplicateId(second, 500, db)
+	found, ok := calls.GetPatchDuplicateId(second, db)
 	if !ok {
 		t.Fatal("the second copy was not recognised as a duplicate")
 	}
