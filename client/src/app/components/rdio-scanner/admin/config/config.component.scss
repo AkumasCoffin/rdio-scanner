@@ -60,6 +60,22 @@ rdio-scanner-admin-config {
       flex: 1;
       max-width: 36rem;
     }
+
+    /* Sits with the count, not with the search box, so the row still reads
+       as "what is listed" then "what to do with it". */
+    .admin-config-list-select-all {
+      flex: 0 0 auto;
+      line-height: 1.8rem;
+      min-width: auto;
+      padding: 0 0.5rem;
+      white-space: nowrap;
+    }
+  }
+
+  /* The bulk editor's one-line explanation of what a blank field means. */
+  .bulk-hint {
+    margin: 0 0 0.5rem;
+    opacity: 0.7;
   }
 
   .admin-config-virtual-list {

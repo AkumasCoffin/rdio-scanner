@@ -70,6 +70,9 @@ export class RdioScannerAdminSystemComponent {
         this.talkgroupQuery = '';
         this.unitQuery = '';
 
+        this.clearTalkgroupSelection();
+        this.clearUnitSelection();
+
         this.refreshLists();
     }
 
@@ -95,6 +98,12 @@ export class RdioScannerAdminSystemComponent {
 
     selectedTalkgroup: FormGroup | undefined;
 
+    // Everything currently picked out. The single-selection field above is
+    // still what the one-talkgroup editor binds to; this is what the bulk
+    // editor and the bulk delete act on, and the two are kept in step —
+    // a lone selection is an array of one.
+    selectedTalkgroups: FormGroup[] = [];
+
     talkgroupQuery = '';
 
     units: FormGroup[] = [];
@@ -103,7 +112,15 @@ export class RdioScannerAdminSystemComponent {
 
     selectedUnit: FormGroup | undefined;
 
+    selectedUnits: FormGroup[] = [];
+
     unitQuery = '';
+
+    // Where a shift-click measures its range from: the last row picked
+    // without shift held.
+    private talkgroupAnchor: FormGroup | undefined;
+
+    private unitAnchor: FormGroup | undefined;
 
     @ViewChild('talkgroupList') private talkgroupList: ElementRef<HTMLElement> | undefined;
 
@@ -136,7 +153,9 @@ export class RdioScannerAdminSystemComponent {
 
         this.form.markAsDirty();
         this.refreshLists();
+        this.selectedTalkgroups = [talkgroup];
         this.selectedTalkgroup = talkgroup;
+        this.talkgroupAnchor = talkgroup;
         if (this.talkgroupList) {
             this.talkgroupList.nativeElement.scrollTop = 0;
         }
@@ -150,7 +169,9 @@ export class RdioScannerAdminSystemComponent {
 
         this.form.markAsDirty();
         this.refreshLists();
+        this.selectedUnits = [unit];
         this.selectedUnit = unit;
+        this.unitAnchor = unit;
         if (this.unitList) {
             this.unitList.nativeElement.scrollTop = 0;
         }
@@ -200,22 +221,152 @@ export class RdioScannerAdminSystemComponent {
 
     removeTalkgroup(talkgroup: FormGroup): void {
         this.removeControl('talkgroups', talkgroup);
-        this.selectedTalkgroup = undefined;
+        this.clearTalkgroupSelection();
         this.refreshLists();
     }
 
     removeUnit(unit: FormGroup): void {
         this.removeControl('units', unit);
-        this.selectedUnit = undefined;
+        this.clearUnitSelection();
         this.refreshLists();
     }
 
-    selectTalkgroup(talkgroup: FormGroup): void {
-        this.selectedTalkgroup = talkgroup;
+    selectTalkgroup(talkgroup: FormGroup, event?: MouseEvent): void {
+        this.selectedTalkgroups = this.pick(
+            this.filteredTalkgroups, this.selectedTalkgroups, talkgroup, event, 'talkgroupAnchor');
+
+        // The single editor follows the selection while there is exactly one
+        // thing selected, and gets out of the way otherwise.
+        this.selectedTalkgroup = this.selectedTalkgroups.length === 1 ? this.selectedTalkgroups[0] : undefined;
     }
 
-    selectUnit(unit: FormGroup): void {
-        this.selectedUnit = unit;
+    selectUnit(unit: FormGroup, event?: MouseEvent): void {
+        this.selectedUnits = this.pick(this.filteredUnits, this.selectedUnits, unit, event, 'unitAnchor');
+
+        this.selectedUnit = this.selectedUnits.length === 1 ? this.selectedUnits[0] : undefined;
+    }
+
+    isTalkgroupSelected(talkgroup: FormGroup): boolean {
+        return this.selectedTalkgroups.includes(talkgroup);
+    }
+
+    isUnitSelected(unit: FormGroup): boolean {
+        return this.selectedUnits.includes(unit);
+    }
+
+    /**
+     * Works out the new selection for a click.
+     *
+     * Ctrl (or Cmd) adds and removes one row, shift takes everything between
+     * the anchor and the clicked row, and a plain click replaces the
+     * selection — the arrangement every file list uses, so it needs no
+     * explaining. The range is measured over the filtered list, which is what
+     * is on screen: shift-clicking across a search result selects what the
+     * user can see between the two rows, not what the search hid.
+     */
+    private pick(
+        visible: FormGroup[],
+        selected: FormGroup[],
+        clicked: FormGroup,
+        event: MouseEvent | undefined,
+        anchorField: 'talkgroupAnchor' | 'unitAnchor',
+    ): FormGroup[] {
+        const anchor = this[anchorField];
+
+        if (event?.shiftKey && anchor && visible.includes(anchor)) {
+            const from = visible.indexOf(anchor);
+            const to = visible.indexOf(clicked);
+
+            // The anchor stays put, so dragging the range back and forth
+            // keeps re-measuring from the same row rather than creeping.
+            return visible.slice(Math.min(from, to), Math.max(from, to) + 1);
+        }
+
+        this[anchorField] = clicked;
+
+        if (event?.ctrlKey || event?.metaKey) {
+            return selected.includes(clicked)
+                ? selected.filter((control) => control !== clicked)
+                : [...selected, clicked];
+        }
+
+        return [clicked];
+    }
+
+    // ------------------------------------------------------------ bulk edit
+
+    /**
+     * The value to show for a field across the selection: the shared value
+     * when they all agree, undefined when they do not. Undefined renders as
+     * an empty control, so a mixed field says "mixed" by showing nothing
+     * rather than by claiming one row's value stands for all of them.
+     */
+    sharedValue(field: string): any {
+        const values = this.selectedTalkgroups.map((talkgroup) => talkgroup.get(field)?.value);
+
+        if (!values.length) {
+            return undefined;
+        }
+
+        return values.every((value) => value === values[0]) ? values[0] : undefined;
+    }
+
+    /** Writes one field across every selected talkgroup. */
+    applyToSelection(field: string, value: any): void {
+        this.selectedTalkgroups.forEach((talkgroup) => {
+            const control = talkgroup.get(field);
+
+            if (control) {
+                control.setValue(value);
+                control.markAsDirty();
+            }
+        });
+
+        this.form.markAsDirty();
+    }
+
+    /** Reads a bulk number input, where an empty box means "clear it". */
+    applyNumberToSelection(field: string, event: Event): void {
+        const raw = (event.target as HTMLInputElement).value.trim();
+
+        this.applyToSelection(field, raw === '' ? null : Number(raw));
+    }
+
+    removeSelectedTalkgroups(): void {
+        this.selectedTalkgroups.forEach((talkgroup) => this.removeControl('talkgroups', talkgroup));
+
+        this.clearTalkgroupSelection();
+        this.refreshLists();
+    }
+
+    removeSelectedUnits(): void {
+        this.selectedUnits.forEach((unit) => this.removeControl('units', unit));
+
+        this.clearUnitSelection();
+        this.refreshLists();
+    }
+
+    clearTalkgroupSelection(): void {
+        this.selectedTalkgroups = [];
+        this.selectedTalkgroup = undefined;
+        this.talkgroupAnchor = undefined;
+    }
+
+    clearUnitSelection(): void {
+        this.selectedUnits = [];
+        this.selectedUnit = undefined;
+        this.unitAnchor = undefined;
+    }
+
+    /** Adds every row the current search matched to the selection. */
+    selectAllTalkgroups(): void {
+        this.selectedTalkgroups = [...this.filteredTalkgroups];
+        this.selectedTalkgroup = this.selectedTalkgroups.length === 1 ? this.selectedTalkgroups[0] : undefined;
+    }
+
+    selectAllUnits(): void {
+        this.selectedUnits = [...this.filteredUnits];
+        this.selectedUnit = this.selectedUnits.length === 1 ? this.selectedUnits[0] : undefined;
     }
 
     trackByControl(_index: number, control: FormGroup): FormGroup {

@@ -129,8 +129,9 @@
     </div>
     <div class="system-pane" *ngIf="tab === 'talkgroups'">
                 <div class="row top">
-                    <p class="mat-caption">System talkgroups. Select one to edit it. You can drag and drop talkgroups
-                        when the list is not filtered. They
+                    <p class="mat-caption">System talkgroups. Select one to edit it; ctrl-click (cmd on a Mac) to
+                        pick several and shift-click for a range, then edit what they share or delete them together.
+                        You can drag and drop talkgroups when the list is not filtered. They
                         will appear with the same order on the talkgroup selection panel unless the sort talkgroups
                         option is enabled.</p>
                     <button type="button" mat-button color="accent" (click)="addTalkgroup()">New talkgroup</button>
@@ -144,13 +145,15 @@
                             [value]="talkgroupQuery" (input)="filterTalkgroups($event)">
                     </mat-form-field>
                     <span class="mat-caption">{{ filteredTalkgroups.length }} of {{ talkgroups.length }}</span>
+                    <button type="button" mat-button class="admin-config-list-select-all"
+                        *ngIf="filteredTalkgroups.length > 1" (click)="selectAllTalkgroups()">Select all</button>
                 </div>
                 <div #talkgroupList class="admin-config-virtual-list" cdkDropList [cdkDropListData]="filteredTalkgroups"
                     [cdkDropListDisabled]="!!talkgroupQuery" (cdkDropListDropped)="dropTalkgroup($event)">
                     <button type="button" class="admin-config-virtual-row"
                         *ngFor="let talkgroup of filteredTalkgroups; trackBy: trackByControl"
-                        [class.selected]="selectedTalkgroup === talkgroup" cdkDrag [cdkDragData]="talkgroup"
-                        [cdkDragDisabled]="!!talkgroupQuery" (click)="selectTalkgroup(talkgroup)">
+                        [class.selected]="isTalkgroupSelected(talkgroup)" cdkDrag [cdkDragData]="talkgroup"
+                        [cdkDragDisabled]="!!talkgroupQuery" (click)="selectTalkgroup(talkgroup, $event)">
                         <mat-icon cdkDragHandle (click)="$event.stopPropagation()">drag_indicator</mat-icon>
                         <span class="admin-config-row-id">{{ talkgroup.value.id ?? '—' }}</span>
                         <span class="admin-config-row-label">{{ talkgroup.value.label?.trim() || 'NewTalkgroup' }}</span>
@@ -163,7 +166,7 @@
                     <div class="admin-config-editor-title">
                         <strong>{{ selectedTalkgroup.value.label?.trim() || 'NewTalkgroup' }}</strong>
                         <button type="button" mat-icon-button aria-label="Close talkgroup editor"
-                            (click)="selectedTalkgroup = undefined">
+                            (click)="clearTalkgroupSelection()">
                             <mat-icon>close</mat-icon>
                         </button>
                     </div>
@@ -172,14 +175,125 @@
                         (remove)="removeTalkgroup(selectedTalkgroup)">
                     </rdio-scanner-admin-talkgroup>
                 </div>
-                <p class="mat-caption entity-empty" *ngIf="!selectedTalkgroup">Select a talkgroup to edit it.</p>
+                <!--
+                    The bulk editor. Only the fields a group of talkgroups can
+                    sensibly share are here: id, label and name are what tells
+                    them apart, so they stay in the one-talkgroup editor.
+                -->
+                <div *ngIf="selectedTalkgroups.length > 1" class="admin-config-selected-editor">
+                    <div class="admin-config-editor-title">
+                        <strong>{{ selectedTalkgroups.length }} talkgroups selected</strong>
+                        <button type="button" mat-icon-button aria-label="Clear selection"
+                            (click)="clearTalkgroupSelection()">
+                            <mat-icon>close</mat-icon>
+                        </button>
+                    </div>
+                    <p class="mat-caption bulk-hint">Setting a field writes it to every selected talkgroup. A field
+                        they do not already agree on shows empty until you set it.</p>
+                    <div class="row">
+                        <p>
+                            <span class="mat-body">Group</span><br>
+                            <span class="mat-caption">Group to which these talkgroups belong.</span>
+                        </p>
+                        <mat-form-field floatLabel="never">
+                            <mat-select [value]="sharedValue('groupId')" placeholder="Group"
+                                (selectionChange)="applyToSelection('groupId', $event.value)">
+                                <mat-option *ngFor="let group of groups" [value]="group._id">
+                                    {{ group.label }}
+                                </mat-option>
+                            </mat-select>
+                        </mat-form-field>
+                    </div>
+                    <div class="row">
+                        <p>
+                            <span class="mat-body">Tag</span><br>
+                            <span class="mat-caption">Tag to which these talkgroups belong.</span>
+                        </p>
+                        <mat-form-field floatLabel="never">
+                            <mat-select [value]="sharedValue('tagId')" placeholder="Tag"
+                                (selectionChange)="applyToSelection('tagId', $event.value)">
+                                <mat-option *ngFor="let tag of tags" [value]="tag._id">
+                                    {{ tag.label }}
+                                </mat-option>
+                            </mat-select>
+                        </mat-form-field>
+                    </div>
+                    <div class="row">
+                        <p>
+                            <span class="mat-body">Led Color</span><br>
+                            <span class="mat-caption">Indicator color when playing an audio file from these
+                                talkgroups.</span>
+                        </p>
+                        <mat-form-field floatLabel="never">
+                            <mat-select [value]="sharedValue('led')" placeholder="Color"
+                                (selectionChange)="applyToSelection('led', $event.value)">
+                                <mat-option [value]="null">Default</mat-option>
+                                <mat-option *ngFor="let led of leds" [value]="led">
+                                    <span [style.background]="ledHex[led]"
+                                        style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:baseline;"></span>{{ led | titlecase }}
+                                </mat-option>
+                            </mat-select>
+                        </mat-form-field>
+                    </div>
+                    <div class="row" *ngIf="dualLed">
+                        <p>
+                            <span class="mat-body">Led Color 2</span><br>
+                            <span class="mat-caption">Second indicator color for the dual LED.</span>
+                        </p>
+                        <mat-form-field floatLabel="never">
+                            <mat-select [value]="sharedValue('led2')" placeholder="Color"
+                                (selectionChange)="applyToSelection('led2', $event.value)">
+                                <mat-option [value]="null">Default</mat-option>
+                                <mat-option *ngFor="let led of leds" [value]="led">
+                                    <span [style.background]="ledHex[led]"
+                                        style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:baseline;"></span>{{ led | titlecase }}
+                                </mat-option>
+                            </mat-select>
+                        </mat-form-field>
+                    </div>
+                    <div class="row">
+                        <p>
+                            <span class="mat-body">Delay (seconds)</span><br>
+                            <span class="mat-caption">Hold calls on these talkgroups before forwarding. Blank or 0
+                                emits immediately.</span>
+                        </p>
+                        <mat-form-field floatLabel="never">
+                            <input type="number" min="0" matInput placeholder="Delay" [value]="sharedValue('delay')"
+                                (change)="applyNumberToSelection('delay', $event)">
+                        </mat-form-field>
+                    </div>
+                    <div class="row">
+                        <p>
+                            <span class="mat-body">Alert Tone</span><br>
+                            <span class="mat-caption">Announcement tone played before the call audio.</span>
+                        </p>
+                        <mat-form-field floatLabel="never">
+                            <mat-select [value]="sharedValue('alert')" placeholder="Alert"
+                                (selectionChange)="applyToSelection('alert', $event.value)">
+                                <mat-option [value]="null">None</mat-option>
+                                <mat-option *ngFor="let alert of alerts" [value]="alert">
+                                    {{ alert | titlecase }}
+                                </mat-option>
+                            </mat-select>
+                        </mat-form-field>
+                    </div>
+                    <div class="row bottom">
+                        <span></span>
+                        <button type="button" mat-button color="warn" (click)="removeSelectedTalkgroups()">
+                            Delete {{ selectedTalkgroups.length }} talkgroups
+                        </button>
+                    </div>
+                </div>
+                <p class="mat-caption entity-empty" *ngIf="!selectedTalkgroup && !selectedTalkgroups.length">Select a talkgroup to edit it.</p>
                 </div>
                 </div>
     </div>
     <div class="system-pane" *ngIf="tab === 'units'">
                 <div class="row top">
                     <p class="mat-caption">Create units to display the label instead of showing the unit id on the main
-                        screen. Select one to edit it.<br>You can drag and drop them when the list is not filtered.</p>
+                        screen. Select one to edit it; ctrl-click (cmd on a Mac) to pick several and shift-click for a
+                        range, then delete them together.<br>You can drag and drop them when the list is not
+                        filtered.</p>
                     <button type="button" mat-button color="accent" (click)="addUnit()">New unit</button>
                 </div>
                 <div class="entity-split">
@@ -191,13 +305,15 @@
                             (input)="filterUnits($event)">
                     </mat-form-field>
                     <span class="mat-caption">{{ filteredUnits.length }} of {{ units.length }}</span>
+                    <button type="button" mat-button class="admin-config-list-select-all"
+                        *ngIf="filteredUnits.length > 1" (click)="selectAllUnits()">Select all</button>
                 </div>
                 <div #unitList class="admin-config-virtual-list" cdkDropList [cdkDropListData]="filteredUnits"
                     [cdkDropListDisabled]="!!unitQuery" (cdkDropListDropped)="dropUnit($event)">
                     <button type="button" class="admin-config-virtual-row"
                         *ngFor="let unit of filteredUnits; trackBy: trackByControl"
-                        [class.selected]="selectedUnit === unit" cdkDrag [cdkDragData]="unit"
-                        [cdkDragDisabled]="!!unitQuery" (click)="selectUnit(unit)">
+                        [class.selected]="isUnitSelected(unit)" cdkDrag [cdkDragData]="unit"
+                        [cdkDragDisabled]="!!unitQuery" (click)="selectUnit(unit, $event)">
                         <mat-icon cdkDragHandle (click)="$event.stopPropagation()">drag_indicator</mat-icon>
                         <span class="admin-config-row-id">{{ unit.value.id ?? '—' }}</span>
                         <span class="admin-config-row-label">{{ unit.value.label?.trim() || 'NewUnit' }}</span>
@@ -210,14 +326,35 @@
                     <div class="admin-config-editor-title">
                         <strong>{{ selectedUnit.value.label?.trim() || 'NewUnit' }}</strong>
                         <button type="button" mat-icon-button aria-label="Close unit editor"
-                            (click)="selectedUnit = undefined">
+                            (click)="clearUnitSelection()">
                             <mat-icon>close</mat-icon>
                         </button>
                     </div>
                     <rdio-scanner-admin-unit [form]="selectedUnit" (remove)="removeUnit(selectedUnit)">
                     </rdio-scanner-admin-unit>
                 </div>
-                <p class="mat-caption entity-empty" *ngIf="!selectedUnit">Select a unit to edit it.</p>
+                <!--
+                    Units carry only an id and a label — nothing several of
+                    them can share — so their bulk panel is the delete.
+                -->
+                <div *ngIf="selectedUnits.length > 1" class="admin-config-selected-editor">
+                    <div class="admin-config-editor-title">
+                        <strong>{{ selectedUnits.length }} units selected</strong>
+                        <button type="button" mat-icon-button aria-label="Clear selection"
+                            (click)="clearUnitSelection()">
+                            <mat-icon>close</mat-icon>
+                        </button>
+                    </div>
+                    <p class="mat-caption bulk-hint">A unit is just an id and a label, so there is nothing to edit
+                        across several of them — but they can go together.</p>
+                    <div class="row bottom">
+                        <span></span>
+                        <button type="button" mat-button color="warn" (click)="removeSelectedUnits()">
+                            Delete {{ selectedUnits.length }} units
+                        </button>
+                    </div>
+                </div>
+                <p class="mat-caption entity-empty" *ngIf="!selectedUnit && !selectedUnits.length">Select a unit to edit it.</p>
                 </div>
                 </div>
     </div>
