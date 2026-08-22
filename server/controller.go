@@ -326,6 +326,29 @@ func applyPatch(patch *Patch, call *Call, system *System) (*Talkgroup, bool) {
 	return primary, true
 }
 
+// normalizeReportedPatches canonicalizes a call's patch list: whatever shape
+// the recorder sent, minus the call's own talkgroup.
+//
+// Recorders sometimes announce a patch that only ever covers the talkgroup the
+// call is already on — a patches list of exactly [own talkgroup]. That is an
+// announcement, not a patch: the transmission went over one talkgroup, and
+// flagging it PATCH on every display was noise. Removing the own id makes such
+// a list empty, which is the honest record; a real patch keeps its other
+// members and reads exactly as before, since every display already skips the
+// own talkgroup when naming them.
+func normalizeReportedPatches(patches any, own uint) []uint {
+	merged := mergePatches(patches, nil)
+	out := make([]uint, 0, len(merged))
+
+	for _, id := range merged {
+		if id != own {
+			out = append(out, id)
+		}
+	}
+
+	return out
+}
+
 // mergePatches folds the declared members of a patch into whatever the
 // recorder already reported, so a call that is both externally patched and
 // covered by a configured patch keeps both sets rather than losing one.
@@ -691,6 +714,12 @@ func (controller *Controller) IngestCall(call *Call) {
 			logCall(call, LogLevelInfo, "duplicate kept by plugin")
 		}
 	}
+
+	// The call's talkgroup is final now (a manual patch may have refiled it),
+	// so the reported patch list can be reduced to what it actually says: the
+	// other talkgroups this transmission went over. See the function comment
+	// for why a list naming only the call's own talkgroup becomes no patch.
+	call.Patches = normalizeReportedPatches(call.Patches, call.Talkgroup)
 
 	// A plugin may take over conversion entirely — a different encoder, a
 	// different bitrate policy, or none at all. When none does, the built-in

@@ -1352,6 +1352,16 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     private static readonly BURST_GAP_MS = 30 * 1000;
 
     /**
+     * How far, in list positions, grouping may move a call from where it
+     * naturally sits. A run only absorbs calls born within this many rows of
+     * where it started, which bounds both the pull-up of a joining call and
+     * the push-down of the calls it leaps over. A conversation longer than
+     * the window splits into consecutive runs — invisible, since they render
+     * back to back.
+     */
+    private static readonly BURST_WINDOW = 8;
+
+    /**
      * The loaded calls, with a burst header in front of each group.
      *
      * Derived rather than stored: the list grows as you scroll, and a call
@@ -1394,6 +1404,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         interface Burst {
             calls: RdioScannerCall[];
             last: number;
+            firstIndex: number;
         }
 
         // The list is time-ordered (either direction), so once a talkgroup's
@@ -1402,27 +1413,29 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         const bursts: Burst[] = [];
         const open = new Map<string, Burst>();
 
-        for (const call of calls) {
+        calls.forEach((call, index) => {
             if (!call) {
-                continue;
+                return;
             }
 
             const key = `${call.system}:${call.talkgroup}`;
             const at = new Date(call.dateTime).getTime();
             const current = open.get(key);
 
-            if (current && Math.abs(at - current.last) <= RdioScannerSearchComponent.BURST_GAP_MS) {
+            if (current
+                && Math.abs(at - current.last) <= RdioScannerSearchComponent.BURST_GAP_MS
+                && index - current.firstIndex <= RdioScannerSearchComponent.BURST_WINDOW) {
                 current.calls.push(call);
                 current.last = at;
 
-                continue;
+                return;
             }
 
-            const burst: Burst = { calls: [call], last: at };
+            const burst: Burst = { calls: [call], last: at, firstIndex: index };
 
             bursts.push(burst);
             open.set(key, burst);
-        }
+        });
 
         // No headers, no markers: grouping only reorders. The rows read
         // exactly as they do ungrouped; an exchange's calls simply sit

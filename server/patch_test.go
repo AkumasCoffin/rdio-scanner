@@ -375,3 +375,26 @@ func TestPatchedSiblingsJoinTheStoredCall(t *testing.T) {
 		t.Errorf("stored call reports %v after a repeat, want two talkgroups", got)
 	}
 }
+
+// Recorders sometimes announce a patch that only covers the talkgroup the
+// call is already on. That is not a patch, and it must not read as one.
+func TestNormalizeReportedPatches(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		reported any
+		own      uint
+		want     []uint
+	}{
+		{name: "own talkgroup alone becomes no patch", reported: []uint{10128}, own: 10128, want: []uint{}},
+		{name: "own talkgroup drops out of a real patch", reported: []uint{30003, 30013, 10075}, own: 30003, want: []uint{30013, 10075}},
+		{name: "a list without the own talkgroup is untouched", reported: []uint{30013, 10075}, own: 30003, want: []uint{30013, 10075}},
+		{name: "nothing reported stays nothing", reported: nil, own: 30003, want: []uint{}},
+		{name: "decoded json shape", reported: []any{float64(10128), float64(10123)}, own: 10128, want: []uint{10123}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeReportedPatches(tc.reported, tc.own); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("normalized to %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
