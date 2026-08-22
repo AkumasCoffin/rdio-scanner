@@ -1342,7 +1342,14 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
      * incident splits into a dozen groups; too long and a quiet night becomes
      * one group holding everything.
      */
-    private static readonly BURST_GAP_MS = 2 * 60 * 1000;
+    /**
+     * A burst is one talkgroup transmitting back and forth: calls on the same
+     * talkgroup no more than this far apart belong to the same exchange.
+     */
+    private static readonly BURST_GAP_MS = 10 * 1000;
+
+    /** A lull in the whole list long enough to be worth naming. */
+    private static readonly QUIET_GAP_MS = 2 * 60 * 1000;
 
     /**
      * The loaded calls, with a burst header in front of each group.
@@ -1372,67 +1379,96 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
 
     private rowCache: { calls: RdioScannerCall[]; grouped: boolean; rows: SearchRow[] } | undefined;
 
+    /**
+     * Groups an exchange on one talkgroup into a single block, even when
+     * traffic on other talkgroups landed in between. A call joins its
+     * talkgroup's open burst while the gap to that burst's newest member is
+     * within BURST_GAP_MS; anything else starts a burst of its own, in list
+     * position. A burst of one call renders as a plain row — a header over a
+     * single call says nothing.
+     */
     private buildRows(calls: RdioScannerCall[]): SearchRow[] {
         if (!this.groupByBurst) {
             return calls.map((call, index) => this.callRow(call, calls[index - 1]));
         }
 
-        const out: SearchRow[] = [];
-        let group: RdioScannerCall[] = [];
-        let emitted: RdioScannerCall | null = null;
+        interface Burst {
+            calls: RdioScannerCall[];
+            last: number;
+        }
 
-        const flush = () => {
-            if (!group.length) {
-                return;
-            }
-
-            const times = group.map((c) => new Date(c.dateTime).getTime());
-            const first = Math.min(...times);
-            const last = Math.max(...times);
-            const services = new Set(group.map((c) => c.systemData?.label ?? `${c.system}`));
-
-            out.push({
-                kind: 'burst',
-                count: group.length,
-                from: new Date(first),
-                to: new Date(last),
-                spanMs: last - first,
-                services: Array.from(services),
-            });
-
-            // Compared against the last call emitted anywhere, not the last in
-            // this group: otherwise every group reprints the date, and on an
-            // evening of traffic that is the same date over and over.
-            group.forEach((call) => {
-                out.push(this.callRow(call, emitted));
-                emitted = call;
-            });
-
-            group = [];
-        };
-
-        let previous: number | undefined;
+        // The list is time-ordered (either direction), so once a talkgroup's
+        // newest member is further than the gap from the point of iteration,
+        // no later call can rejoin it — replacing the map entry is closure.
+        const bursts: Burst[] = [];
+        const open = new Map<string, Burst>();
 
         for (const call of calls) {
             if (!call) {
                 continue;
             }
 
+            const key = `${call.system}:${call.talkgroup}`;
             const at = new Date(call.dateTime).getTime();
+            const current = open.get(key);
 
-            if (previous !== undefined) {
-                const gap = Math.abs(at - previous);
-                if (gap > RdioScannerSearchComponent.BURST_GAP_MS) {
-                    flush();
+            if (current && Math.abs(at - current.last) <= RdioScannerSearchComponent.BURST_GAP_MS) {
+                current.calls.push(call);
+                current.last = at;
+
+                continue;
+            }
+
+            const burst: Burst = { calls: [call], last: at };
+
+            bursts.push(burst);
+            open.set(key, burst);
+        }
+
+        const out: SearchRow[] = [];
+        let emitted: RdioScannerCall | null = null;
+        let boundary: number | undefined;
+
+        for (const burst of bursts) {
+            const times = burst.calls.map((c) => new Date(c.dateTime).getTime());
+            const first = Math.min(...times);
+            const last = Math.max(...times);
+
+            // A lull between blocks is information on a scanner, so it is
+            // named rather than left as blank space.
+            if (boundary !== undefined) {
+                const gap = Math.abs((this.form.value.sort === 1 ? first : last) - boundary);
+
+                if (gap > RdioScannerSearchComponent.QUIET_GAP_MS) {
                     out.push({ kind: 'quiet', gapMs: gap });
                 }
             }
 
-            group.push(call);
-            previous = at;
-        }
+            boundary = this.form.value.sort === 1 ? last : first;
 
-        flush();
+            if (burst.calls.length > 1) {
+                const lead = burst.calls[0];
+                const label = `${lead.talkgroupData?.label ?? lead.talkgroup}`;
+                const system = `${lead.systemData?.label ?? lead.system}`;
+
+                out.push({
+                    kind: 'burst',
+                    count: burst.calls.length,
+                    from: new Date(first),
+                    to: new Date(last),
+                    spanMs: last - first,
+                    services: [`${system} ${label}`],
+                });
+            }
+
+            // Compared against the last call emitted anywhere, not the last in
+            // this group: otherwise every group reprints the date, and on an
+            // evening of traffic that is the same date over and over.
+            for (const call of burst.calls) {
+                out.push(this.callRow(call, emitted));
+                emitted = call;
+            }
+        }
 
         return out;
     }
