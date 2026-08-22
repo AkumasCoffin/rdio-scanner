@@ -1344,9 +1344,12 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
      */
     /**
      * A burst is one talkgroup transmitting back and forth: calls on the same
-     * talkgroup no more than this far apart belong to the same exchange.
+     * talkgroup no more than this far apart belong to the same exchange. The
+     * gap is between call starts, so it swallows the transmission itself plus
+     * the pause before the reply — on real traffic consecutive turns of one
+     * conversation commonly start 15–25s apart.
      */
-    private static readonly BURST_GAP_MS = 10 * 1000;
+    private static readonly BURST_GAP_MS = 30 * 1000;
 
     /**
      * The loaded calls, with a burst header in front of each group.
