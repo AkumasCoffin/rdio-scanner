@@ -64,6 +64,13 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
     callSystem = 'System';
     callTag = 'Tag';
     callTalkgroup = 'Talkgroup';
+
+    /**
+     * The other talkgroups this transmission was received on, resolved to their
+     * labels. A patch declares which talkgroups carry one conversation; this is
+     * which of them actually delivered this call.
+     */
+    callPatches: string[] = [];
     callTalkgroupId = '0';
 
     //
@@ -823,6 +830,26 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
         return `${(n >> 7 & 15).toString().padStart(2, '0')}-${(n >> 3 & 15).toString().padStart(2, '0')}${n & 7}`;
     }
 
+    /**
+     * Patch ids are talkgroups of the call's own system, so they resolve
+     * against that system's talkgroup list. An id with no configured talkgroup
+     * still shows as the bare number rather than vanishing — it is the honest
+     * answer, and a talkgroup missing from the config is worth seeing.
+     */
+    private resolvePatches(call: RdioScannerCall | undefined): string[] {
+        const patches = Array.isArray(call?.patches) ? call?.patches as number[] : [];
+
+        if (!patches?.length) {
+            return [];
+        }
+
+        const talkgroups = this.config?.systems?.find((system) => system.id === call?.system)?.talkgroups || [];
+
+        return patches
+            .filter((id) => id !== call?.talkgroup)
+            .map((id) => talkgroups.find((talkgroup) => talkgroup.id === id)?.label || `${id}`);
+    }
+
     private formatFrequency(frequency: number | undefined): string {
         return typeof frequency === 'number' ? frequency
             .toString()
@@ -885,6 +912,8 @@ export class RdioScannerMainComponent implements OnDestroy, OnInit {
             this.callTalkgroup = this.call.talkgroupData?.label || `${isAfs ? this.formatAfs(this.call.talkgroup) : this.call.talkgroup}`;
 
             this.callTalkgroupName = this.call.talkgroupData?.name || this.formatFrequency(this.call?.frequency);
+
+            this.callPatches = this.resolvePatches(this.call);
 
             if (Array.isArray(this.call.frequencies) && this.call.frequencies.length) {
                 const frequency = this.call.frequencies.reduce((p, v) => (v.pos || 0) <= time ? v : p, {});

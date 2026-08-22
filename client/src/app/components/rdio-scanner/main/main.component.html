@@ -51,6 +51,10 @@
     <div class="row big">
         <span>{{ callTalkgroupName }}</span>
     </div>
+    <!-- Which of the patch's talkgroups actually carried this transmission. -->
+    <div class="row small patched-from" *ngIf="callPatches.length">
+        <span>ALSO ON: {{ callPatches.join(', ') }}</span>
+    </div>
     <div class="row">
         <div>
             <span>F: {{ callFrequency || 0 }}</span>

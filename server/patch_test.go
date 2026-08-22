@@ -147,8 +147,26 @@ func TestApplyPatchRefilesOntoThePrimary(t *testing.T) {
 		t.Errorf("call filed under talkgroup %v, want 100", call.Talkgroup)
 	}
 
-	if got, want := call.Patches, []uint{100, 200, 300}; !reflect.DeepEqual(got, want) {
+	// Only the talkgroup this copy came in on: the patch's other members are
+	// not claimed until a copy really arrives on them.
+	if got, want := call.Patches, []uint{200}; !reflect.DeepEqual(got, want) {
 		t.Errorf("patches are %v, want %v", got, want)
+	}
+}
+
+// A copy that arrived on the primary was not received anywhere else, so it has
+// nothing to report — otherwise every call on a patched talkgroup would claim
+// to be patched with itself.
+func TestApplyPatchOnThePrimaryRecordsNothing(t *testing.T) {
+	patch := &Patch{SystemId: 1, TalkgroupId: 100, Talkgroups: []uint{100, 200, 300}}
+	call := &Call{System: 1, Talkgroup: 100}
+
+	if _, ok := applyPatch(patch, call, patchSystem()); !ok {
+		t.Fatal("applyPatch refused a copy arriving on the primary")
+	}
+
+	if got := mergePatches(call.Patches, nil); len(got) != 0 {
+		t.Errorf("patches are %v, want none", got)
 	}
 }
 
@@ -288,5 +306,69 @@ func TestPatchedCopiesCollapseUnderTheDuplicateCheck(t *testing.T) {
 
 	if calls.CheckDuplicate(later, 500, db) {
 		t.Error("a transmission 30s later was collapsed into the earlier one")
+	}
+}
+
+// The dropped copies are what tell you which channels carried the
+// transmission, so dropping them must not lose that.
+func TestPatchedSiblingsJoinTheStoredCall(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	calls := NewCalls()
+	system := patchSystem()
+	patch := &Patch{SystemId: 1, TalkgroupId: 100, Talkgroups: []uint{100, 200, 300}}
+
+	at := time.Date(2026, 8, 22, 19, 30, 0, 0, time.UTC)
+
+	// First copy, on Fireground.
+	first := &Call{System: 1, Talkgroup: 200, DateTime: at, Audio: []byte{0x01}, AudioName: "first.wav"}
+
+	applyPatch(patch, first, system)
+
+	id, err := calls.WriteCall(first, db)
+	if err != nil {
+		t.Fatalf("write first: %v", err)
+	}
+
+	// Second copy, on Tac, 120 ms later — dropped, but its talkgroup is kept.
+	second := &Call{System: 1, Talkgroup: 300, DateTime: at.Add(120 * time.Millisecond)}
+	arrivedOn := second.Talkgroup
+
+	applyPatch(patch, second, system)
+
+	found, ok := calls.GetDuplicateId(second, 500, db)
+	if !ok {
+		t.Fatal("the second copy was not recognised as a duplicate")
+	}
+
+	if found != id {
+		t.Fatalf("duplicate resolved to call %v, want %v", found, id)
+	}
+
+	if err := calls.AddPatch(found, arrivedOn, db); err != nil {
+		t.Fatalf("add patch: %v", err)
+	}
+
+	stored, err := calls.GetCall(id, db)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+
+	got := mergePatches(stored.Patches, nil)
+
+	if want := []uint{200, 300}; !reflect.DeepEqual(got, want) {
+		t.Errorf("stored call reports %v, want %v — both channels carried it", got, want)
+	}
+
+	// A third copy on a talkgroup already recorded must not double it up.
+	if err := calls.AddPatch(id, 300, db); err != nil {
+		t.Fatalf("add patch again: %v", err)
+	}
+
+	stored, _ = calls.GetCall(id, db)
+
+	if got := mergePatches(stored.Patches, nil); len(got) != 2 {
+		t.Errorf("stored call reports %v after a repeat, want two talkgroups", got)
 	}
 }

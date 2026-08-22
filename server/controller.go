@@ -313,8 +313,15 @@ func applyPatch(patch *Patch, call *Call, system *System) (*Talkgroup, bool) {
 		return nil, false
 	}
 
+	// Only the talkgroup this copy actually came in on is recorded. The other
+	// members of the patch are not claimed until a copy really arrives on them,
+	// so what the call reports is what was heard rather than what was declared.
+	// The talkgroup it is filed under is not one of the "others".
+	if arrived := call.Talkgroup; arrived != patch.TalkgroupId {
+		call.Patches = mergePatches(call.Patches, []uint{arrived})
+	}
+
 	call.Talkgroup = patch.TalkgroupId
-	call.Patches = mergePatches(call.Patches, patch.Talkgroups)
 
 	return primary, true
 }
@@ -612,6 +619,10 @@ func (controller *Controller) IngestCall(call *Call) {
 	// LCD, and carries it downstream, exactly as a recorder-reported patch does.
 	patched := false
 
+	// Kept from before the refile below, so a copy that turns out to be a
+	// duplicate can still say which talkgroup carried it.
+	arrivedOn := call.Talkgroup
+
 	if patch, ok := controller.Patches.GetPatch(call.System, call.Talkgroup); ok {
 		primary, applied := applyPatch(patch, call, system)
 
@@ -654,7 +665,16 @@ func (controller *Controller) IngestCall(call *Call) {
 			// detection for the whole server.
 			if !controller.PluginDispatch.KeepDuplicate(call) {
 				if patched {
-					logCall(call, LogLevelInfo, "patched call already received on another talkgroup")
+					// The copy is dropped, but the talkgroup it arrived on is
+					// not: it joins the stored call, which is the whole record
+					// of which channels carried this transmission.
+					if id, found := controller.Calls.GetDuplicateId(call, controller.Options.DuplicateDetectionTimeFrame, controller.Database); found {
+						if err := controller.Calls.AddPatch(id, arrivedOn, controller.Database); err != nil {
+							logError(err)
+						}
+					}
+
+					logCall(call, LogLevelInfo, fmt.Sprintf("patched call already received, adding talkgroup %v", arrivedOn))
 				} else {
 					logCall(call, LogLevelWarn, "duplicate call rejected")
 				}

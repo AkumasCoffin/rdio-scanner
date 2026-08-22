@@ -206,7 +206,17 @@ func (calls *Calls) putSearchMeta(key string, m *callsSearchMeta) {
 }
 
 func (calls *Calls) CheckDuplicate(call *Call, msTimeFrame uint, db *Database) bool {
-	var count uint
+	_, found := calls.GetDuplicateId(call, msTimeFrame, db)
+
+	return found
+}
+
+// GetDuplicateId is CheckDuplicate with the row it matched.
+//
+// The id is what lets a patched copy add the talkgroup it arrived on to the
+// call already stored, instead of being dropped without trace.
+func (calls *Calls) GetDuplicateId(call *Call, msTimeFrame uint, db *Database) (uint, bool) {
+	var id sql.NullFloat64
 
 	// Read-only — rely on the database driver's own concurrency guard.
 	d := time.Duration(msTimeFrame) * time.Millisecond
@@ -214,12 +224,64 @@ func (calls *Calls) CheckDuplicate(call *Call, msTimeFrame uint, db *Database) b
 	to := call.DateTime.Add(d)
 
 	df := db.DateTimeFormat
-	query := fmt.Sprintf("select count(*) from `rdioScannerCalls` where (`dateTime` between '%v' and '%v') and `system` = %v and `talkgroup` = %v", from.Format(df), to.Format(df), call.System, call.Talkgroup)
-	if err := db.QueryRow(query).Scan(&count); err != nil {
-		return false
+	query := fmt.Sprintf("select `id` from `rdioScannerCalls` where (`dateTime` between '%v' and '%v') and `system` = %v and `talkgroup` = %v order by `id` limit 1", from.Format(df), to.Format(df), call.System, call.Talkgroup)
+	if err := db.QueryRow(query).Scan(&id); err != nil {
+		return 0, false
 	}
 
-	return count > 0
+	if !id.Valid || id.Float64 <= 0 {
+		return 0, false
+	}
+
+	return uint(id.Float64), true
+}
+
+// AddPatch records another talkgroup a stored call was received on.
+//
+// A patched transmission arrives once per talkgroup, and only the first copy
+// becomes a row — the rest are dropped as duplicates. Without this the stored
+// call would name only whichever copy happened to arrive first, and "received
+// on Fireground and Tac" would read as "received on Fireground".
+func (calls *Calls) AddPatch(id uint, talkgroup uint, db *Database) error {
+	calls.mutex.Lock()
+	defer calls.mutex.Unlock()
+
+	formatError := func(err error) error {
+		return fmt.Errorf("calls.addpatch: %v", err)
+	}
+
+	var current string
+
+	if err := db.QueryRow("select `patches` from `rdioScannerCalls` where `id` = ?", id).Scan(&current); err != nil {
+		return formatError(err)
+	}
+
+	patches := []uint{}
+
+	if len(current) > 0 {
+		if err := json.Unmarshal([]byte(current), &patches); err != nil {
+			patches = []uint{}
+		}
+	}
+
+	for _, existing := range patches {
+		if existing == talkgroup {
+			return nil
+		}
+	}
+
+	patches = append(patches, talkgroup)
+
+	b, err := json.Marshal(patches)
+	if err != nil {
+		return formatError(err)
+	}
+
+	if _, err = db.Exec("update `rdioScannerCalls` set `patches` = ? where `id` = ?", string(b), id); err != nil {
+		return formatError(err)
+	}
+
+	return nil
 }
 
 func (calls *Calls) GetCall(id uint, db *Database) (*Call, error) {
