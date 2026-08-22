@@ -492,6 +492,12 @@ func (db *Database) ParseDateTime(f any) (time.Time, error) {
 		db.DateTimeFormat,             // Database's expected format
 		"2006-01-02 15:04:05",         // MySQL standard format
 		"2006-01-02 15:04:05.000",     // With milliseconds, no timezone
+		// Go's own time.Time rendering. SQLite stores a bound time.Time as
+		// this string, and while a plain column select comes back converted
+		// (the column's declared type tells the driver), an aggregate like
+		// min(dateTime) loses the declared type and hands back the raw text.
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05.999999999 -0700 MST",
 	}
 
 	var lastErr error
@@ -529,6 +535,34 @@ func (db *Database) runner() dbExecutor {
 		return db.executor
 	}
 	return db.Sql
+}
+
+// approxCallCountFloor: below this many rows the estimate is not used —
+// exact counting is cheap when the table is small, and the estimate's
+// percentage error only matters when the number itself is small.
+const approxCallCountFloor = 100_000
+
+// ApproxCallCount returns the planner's row estimate for rdioScannerCalls,
+// when there is one worth trusting.
+//
+// On Postgres, an exact count(*) walks an index over every live row — seconds
+// on a large table, and this table is the large one. reltuples is maintained
+// by autovacuum and analyze (the index migrations analyze explicitly), and at
+// the scale where the exact count hurts, the estimate is within a fraction of
+// a percent. Other backends return false and the caller counts exactly.
+func (db *Database) ApproxCallCount() (uint, bool) {
+	if db.Config.DbType != DbTypePostgres {
+		return 0, false
+	}
+
+	var estimate int64
+
+	err := db.QueryRow(`select reltuples::bigint from pg_class where oid = '"rdioScannerCalls"'::regclass`).Scan(&estimate)
+	if err != nil || estimate < approxCallCountFloor {
+		return 0, false
+	}
+
+	return uint(estimate), true
 }
 
 // slowQueryThreshold is when a statement is worth naming. Everything the server

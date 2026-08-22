@@ -177,6 +177,15 @@ func NewCalls() *Calls {
 	}
 }
 
+// InvalidateSearchMeta drops every cached range and count.
+//
+// Called on prune, where rows genuinely disappear and the earliest-call bound
+// moves. It is deliberately NOT called on insert any more: a new call only
+// ever extends the future edge of a range, every entry already expires within
+// callsSearchMetaTTL, and wiping the cache per insert meant a busy install
+// re-ran the bound probes and counts on essentially every search — the cache
+// existed and did nothing. Bounds and counts may now lag reality by up to the
+// TTL, which is the same freshness the stats dashboard already serves.
 func (calls *Calls) InvalidateSearchMeta() {
 	calls.metaMutex.Lock()
 	calls.metaCache = make(map[string]*callsSearchMeta)
@@ -462,6 +471,52 @@ type callsSearchPlan struct {
 	// large install it is a full scan — and it exists only to number pages that
 	// a cursor client does not draw.
 	withCount bool
+	// probePairs, when set, is the exact (system, talkgroup) set probeWhere
+	// matches, and licenses the fast form of the date-bound probes: one index
+	// seek per pair instead of walking the time index past every
+	// non-matching row. Nil whenever the filters cannot be reduced to a
+	// finite pair set — a free-text term, a scoped client, the legacy scalar
+	// filters — and the probes then run against probeWhere as always.
+	probePairs []CallsSearchTalkgroup
+}
+
+// probePairLimit bounds the fast probe's union: past this many pairs the
+// statement itself becomes the cost, and the plain probe walks less.
+const probePairLimit = 200
+
+// intersectScopes reduces several OR-of-(system, talkgroup) constraints ANDed
+// together to the single pair set matching all of them.
+func intersectScopes(sets []map[uint][]uint) map[uint][]uint {
+	if len(sets) == 0 {
+		return nil
+	}
+
+	result := map[uint][]uint{}
+
+	for systemId, talkgroups := range sets[0] {
+		result[systemId] = append([]uint{}, talkgroups...)
+	}
+
+	for _, set := range sets[1:] {
+		next := map[uint][]uint{}
+
+		for systemId, talkgroups := range result {
+			allowed := map[uint]bool{}
+			for _, talkgroup := range set[systemId] {
+				allowed[talkgroup] = true
+			}
+
+			for _, talkgroup := range talkgroups {
+				if allowed[talkgroup] {
+					next[systemId] = append(next[systemId], talkgroup)
+				}
+			}
+		}
+
+		result = next
+	}
+
+	return result
 }
 
 // countKey is the search-meta cache key for this plan's count(*).
@@ -492,11 +547,21 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 		limit uint
 		order string
 		where string = "true"
+
+		// The structured half of what the string above accumulates: each
+		// entry is one OR-of-pairs constraint, each systems filter one OR of
+		// system ids, and probeExact goes false at any filter that cannot be
+		// expressed as a finite pair set. See callsSearchPlan.probePairs.
+		pairSets      []map[uint][]uint
+		systemFilters [][]uint
+		probeExact    = true
 	)
 
 	if client.Access != nil {
 		switch v := client.Access.Systems.(type) {
 		case []any:
+			probeExact = false
+
 			a := []string{}
 			for _, scope := range v {
 				var c string
@@ -524,6 +589,8 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 
 	switch v := searchOptions.System.(type) {
 	case uint:
+		probeExact = false
+
 		a := []string{
 			fmt.Sprintf("`system` = %v", v),
 		}
@@ -545,6 +612,8 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 	switch v := searchOptions.Systems.(type) {
 	case []uint:
 		if len(v) > 0 {
+			systemFilters = append(systemFilters, v)
+
 			a := make([]string, 0, len(v))
 			for _, id := range v {
 				a = append(a, fmt.Sprintf("%v", id))
@@ -571,11 +640,14 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 			}
 			bySystem[pair.System] = append(bySystem[pair.System], pair.Talkgroup)
 		}
+		pairSets = append(pairSets, bySystem)
 		where += andScopeClause(bySystem, systemIds)
 	}
 
 	switch v := searchOptions.Group.(type) {
 	case string:
+		pairSets = append(pairSets, client.GroupsMap[v])
+
 		a := []string{}
 		for id, m := range client.GroupsMap[v] {
 			b := strings.ReplaceAll(fmt.Sprintf("%v", m), " ", ", ")
@@ -590,6 +662,8 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 
 	switch v := searchOptions.Tag.(type) {
 	case string:
+		pairSets = append(pairSets, client.TagsMap[v])
+
 		a := []string{}
 		for id, m := range client.TagsMap[v] {
 			b := strings.ReplaceAll(fmt.Sprintf("%v", m), " ", ", ")
@@ -609,16 +683,20 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 	switch v := searchOptions.Groups.(type) {
 	case []string:
 		bySystem, systemIds := mergeScopes(v, client.GroupsMap)
+		pairSets = append(pairSets, bySystem)
 		where += andScopeClause(bySystem, systemIds)
 	}
 
 	switch v := searchOptions.Tags.(type) {
 	case []string:
 		bySystem, systemIds := mergeScopes(v, client.TagsMap)
+		pairSets = append(pairSets, bySystem)
 		where += andScopeClause(bySystem, systemIds)
 	}
 
 	if q, ok := searchOptions.Q.(string); ok && q != "" {
+		probeExact = false
+
 		esc := strings.ReplaceAll(q, "'", "''")
 		op := "like"
 		if db.Config.DbType == DbTypePostgres {
@@ -655,6 +733,42 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 	// what the date-bound probes measure. Everything below picks a window and a
 	// page inside that set.
 	plan := callsSearchPlan{probeWhere: where, withCount: true}
+
+	// The fast probe form needs the filters to reduce to a finite pair set:
+	// at least one pair constraint, everything else expressible against it.
+	if probeExact && len(pairSets) > 0 {
+		pairs := intersectScopes(pairSets)
+
+		for _, systems := range systemFilters {
+			allowed := map[uint]bool{}
+			for _, id := range systems {
+				allowed[id] = true
+			}
+			for systemId := range pairs {
+				if !allowed[systemId] {
+					delete(pairs, systemId)
+				}
+			}
+		}
+
+		flat := []CallsSearchTalkgroup{}
+		systemIds := make([]uint, 0, len(pairs))
+		for systemId := range pairs {
+			systemIds = append(systemIds, systemId)
+		}
+		sort.Slice(systemIds, func(i, j int) bool { return systemIds[i] < systemIds[j] })
+		for _, systemId := range systemIds {
+			talkgroups := append([]uint{}, pairs[systemId]...)
+			sort.Slice(talkgroups, func(i, j int) bool { return talkgroups[i] < talkgroups[j] })
+			for _, talkgroup := range talkgroups {
+				flat = append(flat, CallsSearchTalkgroup{System: systemId, Talkgroup: talkgroup})
+			}
+		}
+
+		if len(flat) > 0 && len(flat) <= probePairLimit {
+			plan.probePairs = flat
+		}
+	}
 
 	switch v := searchOptions.Sort.(type) {
 	case float64:
@@ -859,18 +973,50 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		searchResults.DateStart = cached.dateStart
 		searchResults.DateStop = cached.dateStop
 	} else {
-		query = fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %v order by `dateTime` asc limit 1", plan.probeWhere)
-		if err = db.QueryRow(query).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
-			return nil, formatError(fmt.Errorf("%v, %v", err, query))
+		// One statement per bound. With an exact pair set, each bound is the
+		// min (or max) over per-pair index seeks on (system, talkgroup,
+		// dateTime) — milliseconds however large the table — where the plain
+		// form walks the time index discarding every non-matching row.
+		probe := func(direction string) (any, error) {
+			var value any
+
+			if plan.probePairs != nil {
+				arm := fmt.Sprintf("select %s(`dateTime`) as dt from `rdioScannerCalls` where `system` = ? and `talkgroup` = ?", direction)
+				arms := make([]string, len(plan.probePairs))
+				args := make([]any, 0, 2*len(plan.probePairs))
+
+				for i, pair := range plan.probePairs {
+					arms[i] = arm
+					args = append(args, pair.System, pair.Talkgroup)
+				}
+
+				query := fmt.Sprintf("select %s(dt) from (%s) as bounds", direction, strings.Join(arms, " union all "))
+				err := db.QueryRow(query, args...).Scan(&value)
+
+				return value, err
+			}
+
+			order := "asc"
+			if direction == "max" {
+				order = "desc"
+			}
+
+			query := fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %v order by `dateTime` %s limit 1", plan.probeWhere, order)
+			err := db.QueryRow(query).Scan(&value)
+
+			return value, err
+		}
+
+		if dateTime, err = probe("min"); err != nil && err != sql.ErrNoRows {
+			return nil, formatError(err)
 		}
 
 		if t, err = db.ParseDateTime(dateTime); err == nil {
 			searchResults.DateStart = t
 		}
 
-		query = fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %v order by `dateTime` desc limit 1", plan.probeWhere)
-		if err = db.QueryRow(query).Scan(&dateTime); err != nil && err != sql.ErrNoRows {
-			return nil, formatError(fmt.Errorf("%v, %v", err, query))
+		if dateTime, err = probe("max"); err != nil && err != sql.ErrNoRows {
+			return nil, formatError(err)
 		}
 
 		if t, err = db.ParseDateTime(dateTime); err == nil {
@@ -891,9 +1037,15 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		if cached, ok := calls.getSearchMeta(countKey); ok {
 			searchResults.Count = cached.count
 		} else {
-			query = fmt.Sprintf("select count(*) from `rdioScannerCalls` where %v", plan.where)
-			if err = db.QueryRow(query, plan.whereArgs...).Scan(&searchResults.Count); err != nil && err != sql.ErrNoRows {
-				return nil, formatError(fmt.Errorf("%v, %v", err, query))
+			// An unfiltered search counts the whole table, which is the one
+			// count the planner's estimate can stand in for.
+			if estimate, ok := db.ApproxCallCount(); ok && plan.where == "true" {
+				searchResults.Count = estimate
+			} else {
+				query = fmt.Sprintf("select count(*) from `rdioScannerCalls` where %v", plan.where)
+				if err = db.QueryRow(query, plan.whereArgs...).Scan(&searchResults.Count); err != nil && err != sql.ErrNoRows {
+					return nil, formatError(fmt.Errorf("%v, %v", err, query))
+				}
 			}
 			calls.putSearchMeta(countKey, &callsSearchMeta{
 				count:   searchResults.Count,
@@ -1072,7 +1224,6 @@ func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 		if err != nil {
 			return 0, formatError(err)
 		}
-		calls.InvalidateSearchMeta()
 		return uint(id), nil
 	}
 
@@ -1081,7 +1232,6 @@ func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 	}
 
 	if id, err = res.LastInsertId(); err == nil {
-		calls.InvalidateSearchMeta()
 		return uint(id), nil
 	} else {
 		return 0, formatError(err)
@@ -1123,9 +1273,19 @@ func (calls *Calls) WarmSearchMeta(db *Database) {
 		expires:   time.Now().Add(callsSearchMetaTTL),
 	})
 
-	var count uint
-	countQuery := fmt.Sprintf("select count(*) from `rdioScannerCalls` where %s", where)
-	if err := db.QueryRow(countQuery).Scan(&count); err == nil {
+	var (
+		count uint
+		ok    bool
+	)
+
+	if count, ok = db.ApproxCallCount(); !ok {
+		countQuery := fmt.Sprintf("select count(*) from `rdioScannerCalls` where %s", where)
+		if err := db.QueryRow(countQuery).Scan(&count); err != nil {
+			return
+		}
+	}
+
+	{
 		// Through the plan's own key builder, so an unfiltered search finds
 		// this entry instead of paying for the scan it was warmed to avoid.
 		calls.putSearchMeta(callsSearchPlan{where: where}.countKey(), &callsSearchMeta{

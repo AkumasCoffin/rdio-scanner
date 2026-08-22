@@ -57,6 +57,63 @@ type Stats struct {
 	// building guards the background refresh so a burst of viewers triggers
 	// one rebuild, not one each.
 	building bool
+	// lastBuild is how long the previous rebuild took. The refresh interval
+	// scales with it (see refreshInterval), so a database where a build costs
+	// a minute is not asked for one every two.
+	lastBuild time.Duration
+
+	// tgUnits caches per-talkgroup unit rollups. The endpoint that serves
+	// them is public and was entirely uncached: every click on a talkgroup
+	// panel ran the hour-long row scan again. Same shape as the search meta
+	// cache in call.go: TTL entries, small cap, drop everything on overflow.
+	tgUnitsMu sync.Mutex
+	tgUnits   map[string]*statsTgUnitsEntry
+}
+
+const statsTgUnitsTTL = time.Minute
+
+type statsTgUnitsEntry struct {
+	units   []StatsTalkgroupUnit
+	expires time.Time
+}
+
+func (stats *Stats) cachedTalkgroupUnits(db *Database, systemId, talkgroupId uint) ([]StatsTalkgroupUnit, error) {
+	key := fmt.Sprintf("%d:%d", systemId, talkgroupId)
+
+	stats.tgUnitsMu.Lock()
+	if entry, ok := stats.tgUnits[key]; ok && time.Now().Before(entry.expires) {
+		stats.tgUnitsMu.Unlock()
+		return entry.units, nil
+	}
+	stats.tgUnitsMu.Unlock()
+
+	units, err := stats.GetTalkgroupUnits(db, systemId, talkgroupId)
+	if err != nil {
+		return nil, err
+	}
+
+	stats.tgUnitsMu.Lock()
+	if stats.tgUnits == nil || len(stats.tgUnits) > 256 {
+		stats.tgUnits = make(map[string]*statsTgUnitsEntry)
+	}
+	stats.tgUnits[key] = &statsTgUnitsEntry{units: units, expires: time.Now().Add(statsTgUnitsTTL)}
+	stats.tgUnitsMu.Unlock()
+
+	return units, nil
+}
+
+// refreshInterval is how stale the snapshot may get before a rebuild is
+// kicked. The floor is statsCacheTTL; on a database where a build takes
+// seconds, the interval stretches so the build is a small fraction of the
+// wall clock rather than a treadmill the database never steps off.
+//
+// Callers hold stats.mu.
+func (stats *Stats) refreshInterval() time.Duration {
+	if interval := 4 * stats.lastBuild; interval > statsCacheTTL {
+		return interval
+	}
+
+	return statsCacheTTL
 }
 
 // statsRangeSince maps a filter key from the dashboard to the start of its
@@ -166,22 +223,22 @@ type StatsListenerBucket struct {
 }
 
 type StatsResponse struct {
-	Overview           StatsOverview            `json:"overview"`
-	HourBuckets        []StatsHourBucket        `json:"hourBuckets"`
+	Overview    StatsOverview     `json:"overview"`
+	HourBuckets []StatsHourBucket `json:"hourBuckets"`
 	// CallFineBuckets — dense 10-minute call counts for the last 48 hours,
 	// for the short filter ranges. Zeros are pre-seeded like HourBuckets: a
 	// zero genuinely means no calls.
-	CallFineBuckets    []StatsHourBucket        `json:"callFineBuckets,omitempty"`
+	CallFineBuckets []StatsHourBucket `json:"callFineBuckets,omitempty"`
 	// CallMicroBuckets — dense 5-minute counts for the last 6 hours, for the
 	// by-time chart on the 1-hour range.
-	CallMicroBuckets   []StatsHourBucket        `json:"callMicroBuckets,omitempty"`
-	TopTalkgroups      []StatsTopTalkgroup      `json:"topTalkgroups"`
-	TopSystems         []StatsTopSystem         `json:"topSystems"`
+	CallMicroBuckets []StatsHourBucket   `json:"callMicroBuckets,omitempty"`
+	TopTalkgroups    []StatsTopTalkgroup `json:"topTalkgroups"`
+	TopSystems       []StatsTopSystem    `json:"topSystems"`
 	// TopCategories is what the "Top ..." chart renders: by group when
 	// SortByGroups is on, by tag when SortByTags is on, else by system.
 	// TopSystems stays for compatibility.
-	TopCategories     []StatsTopCategory `json:"topCategories,omitempty"`
-	TopCategoriesKind string             `json:"topCategoriesKind,omitempty"`
+	TopCategories      []StatsTopCategory       `json:"topCategories,omitempty"`
+	TopCategoriesKind  string                   `json:"topCategoriesKind,omitempty"`
 	TopUnits           []StatsTopUnit           `json:"topUnits"`
 	LastHourTalkgroups []StatsLastHourTalkgroup `json:"lastHourTalkgroups"`
 	// ListenerBuckets is admin-only unless Options.ShowListenerStats is on;
@@ -213,7 +270,12 @@ func (stats *Stats) GetOverview(db *Database) (*StatsOverview, error) {
 	overview := &StatsOverview{}
 	df := db.DateTimeFormat
 
-	if err := db.QueryRow("select count(*) from `rdioScannerCalls`").Scan(&overview.TotalCalls); err != nil && err != sql.ErrNoRows {
+	// The total-calls tile. The estimate spares a full index walk on the one
+	// table that is large; where it is unavailable or the table is small the
+	// exact count runs, and exact is cheap exactly then.
+	if estimate, ok := db.ApproxCallCount(); ok {
+		overview.TotalCalls = estimate
+	} else if err := db.QueryRow("select count(*) from `rdioScannerCalls`").Scan(&overview.TotalCalls); err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("stats.overview.total: %v", err)
 	}
 
@@ -718,15 +780,85 @@ func (stats *Stats) lookupSystemAndUnit(systemId, unitId uint) (sysLabel, unitLa
 	return
 }
 
+// statsUnitKey identifies one unit on one system in the top-units tally.
+type statsUnitKey struct{ sys, unit uint }
+
 // GetTopUnits: top N units by call count over the last 7 days.
 //
-// Aggregates in Go (not SQL) so we can count units that only appear in
-// the per-call sources JSON array, not just the scalar source column.
-// See extractUnitsFromSources for the rationale.
+// A unit can appear as the scalar source column or only inside the per-call
+// sources JSON (see extractUnitsFromSources), so the count has to look at
+// both, deduped per call. On Postgres that whole union runs in SQL; elsewhere
+// — and on Postgres when a malformed sources value breaks the jsonb cast —
+// the rows are scanned and tallied in Go.
 func (stats *Stats) GetTopUnits(db *Database, limit int) ([]StatsTopUnit, error) {
-	result := []StatsTopUnit{}
 	since := time.Now().UTC().AddDate(0, 0, -7)
 
+	if db.Config.DbType == DbTypePostgres {
+		counts, err := stats.topUnitsSql(db, since)
+		if err == nil {
+			return stats.topUnitsRank(counts, limit), nil
+		}
+
+		// Almost certainly a sources value that is not valid jsonb. The Go
+		// scan below parses each row defensively, so the panel still fills —
+		// at the price this query existed to avoid.
+		stats.Controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("stats.topUnits: sql aggregation failed, falling back to a row scan: %v", err))
+	}
+
+	counts, err := stats.topUnitsScan(db, since)
+	if err != nil {
+		return nil, err
+	}
+
+	return stats.topUnitsRank(counts, limit), nil
+}
+
+// topUnitsSql tallies units server-side. The shape mirrors the Go scan
+// exactly: the scalar source and every src in the sources JSON, made distinct
+// per call before counting, so a call whose scalar source repeats inside its
+// JSON still counts that unit once.
+//
+// This exists because the Go scan ships every row of the window — system,
+// source and the sources JSON text — across the wire to count them, which on
+// a large table was megabytes per dashboard refresh for ten output rows.
+func (stats *Stats) topUnitsSql(db *Database, since time.Time) (map[statsUnitKey]uint, error) {
+	rows, err := db.Query(
+		"select `system`, unit, count(*) as n from ("+
+			" select distinct `id`, `system`, unit from ("+
+			" select `id`, `system`, `source`::bigint as unit from `rdioScannerCalls` where `dateTime` >= ? and `source` > 0"+
+			" union all"+
+			" select cl.`id`, cl.`system`, (e->>'src')::bigint as unit"+
+			" from `rdioScannerCalls` cl"+
+			" cross join lateral jsonb_array_elements(cl.`sources`::jsonb) e"+
+			" where cl.`dateTime` >= ? and cl.`sources` like '[%'"+
+			" and e->>'src' ~ '^[0-9]+$' and (e->>'src')::bigint > 0"+
+			" ) u"+
+			" ) d group by `system`, unit",
+		since.Format(db.DateTimeFormat), since.Format(db.DateTimeFormat),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := map[statsUnitKey]uint{}
+
+	for rows.Next() {
+		var sysId, unit, n uint
+
+		if err := rows.Scan(&sysId, &unit, &n); err != nil {
+			return nil, err
+		}
+
+		counts[statsUnitKey{sysId, unit}] = n
+	}
+
+	return counts, rows.Err()
+}
+
+// topUnitsScan is the row-shipping fallback: every row of the window comes to
+// the server process and is tallied here.
+func (stats *Stats) topUnitsScan(db *Database, since time.Time) (map[statsUnitKey]uint, error) {
 	rows, err := db.Query(
 		"select `system`, `source`, `sources` from `rdioScannerCalls` where `dateTime` >= ?",
 		since.Format(db.DateTimeFormat),
@@ -736,8 +868,7 @@ func (stats *Stats) GetTopUnits(db *Database, limit int) ([]StatsTopUnit, error)
 	}
 	defer rows.Close()
 
-	type key struct{ sys, unit uint }
-	counts := map[key]uint{}
+	counts := map[statsUnitKey]uint{}
 
 	for rows.Next() {
 		var sysId uint
@@ -755,11 +886,17 @@ func (stats *Stats) GetTopUnits(db *Database, limit int) ([]StatsTopUnit, error)
 			units[u] = true
 		}
 		for u := range units {
-			counts[key{sysId, u}]++
+			counts[statsUnitKey{sysId, u}]++
 		}
 	}
 
-	// Materialize, sort by count desc, trim to limit.
+	return counts, nil
+}
+
+// topUnitsRank materializes a tally, sorts by count desc and trims to limit.
+func (stats *Stats) topUnitsRank(counts map[statsUnitKey]uint, limit int) []StatsTopUnit {
+	result := []StatsTopUnit{}
+
 	type entry struct {
 		sys, unit, count uint
 	}
@@ -767,7 +904,16 @@ func (stats *Stats) GetTopUnits(db *Database, limit int) ([]StatsTopUnit, error)
 	for k, c := range counts {
 		all = append(all, entry{k.sys, k.unit, c})
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].count > all[j].count })
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].count != all[j].count {
+			return all[i].count > all[j].count
+		}
+		// Deterministic order among equals, so the SQL and scan paths agree.
+		if all[i].sys != all[j].sys {
+			return all[i].sys < all[j].sys
+		}
+		return all[i].unit < all[j].unit
+	})
 	if limit > 0 && len(all) > limit {
 		all = all[:limit]
 	}
@@ -783,7 +929,8 @@ func (stats *Stats) GetTopUnits(db *Database, limit int) ([]StatsTopUnit, error)
 		}
 		result = append(result, item)
 	}
-	return result, nil
+
+	return result
 }
 
 // GetLastHourTalkgroups: top 20 talkgroups active in the last hour with last
@@ -921,10 +1068,13 @@ func (stats *Stats) GetTalkgroupUnits(db *Database, systemId, talkgroupId uint) 
 // Build runs every stats query and assembles the response. Callers should
 // prefer cachedBuild which serves this behind a short TTL cache.
 //
-// The eight sub-queries run in parallel against the DB pool — one slow query
-// no longer blocks the others, so wall time is close to max(query) instead
-// of sum. That keeps a cold-cache load well under the Cloudflare 100 s edge
-// timeout on big tables (~300 k rows).
+// The sub-queries run one after another, on one pooled connection at a time.
+// They used to fan out in parallel to make a cold build finish sooner — and on
+// a large table that meant nine of the pool's twenty-five connections taken at
+// once by dashboard aggregation, with call inserts and every other request
+// queueing behind it for seconds. Nobody is waiting on this build (the cache
+// serves the previous snapshot while it runs), so its wall time is the one
+// cost that does not matter; the pool it holds is the one that does.
 func (stats *Stats) build(db *Database) *StatsResponse {
 	resp := &StatsResponse{}
 
@@ -936,13 +1086,8 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 		stats.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("stats.handler: %v", err))
 	}
 
-	var wg sync.WaitGroup
 	run := func(fn func()) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			fn()
-		}()
+		fn()
 	}
 
 	run(func() {
@@ -974,8 +1119,8 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 		}
 	})
 	// The lens is decided once per build; the systems case is filled in
-	// after the wait from the TopSystems aggregation instead of re-running
-	// the identical query.
+	// afterwards from the TopSystems aggregation instead of re-running the
+	// identical query.
 	topKind := stats.topCategoriesKind()
 	if topKind != "systems" {
 		run(func() {
@@ -1016,8 +1161,6 @@ func (stats *Stats) build(db *Database) *StatsResponse {
 		}
 	})
 
-	wg.Wait()
-
 	resp.TopCategoriesKind = topKind
 	if topKind == "systems" {
 		categories := make([]StatsTopCategory, 0, len(resp.TopSystems))
@@ -1046,7 +1189,7 @@ func (stats *Stats) cachedBuild(db *Database) *StatsResponse {
 	cached, cachedAt, building := stats.cached, stats.cachedAt, stats.building
 
 	if cached != nil {
-		stale := time.Since(cachedAt) >= statsCacheTTL
+		stale := time.Since(cachedAt) >= stats.refreshInterval()
 
 		if stale && !building {
 			// Single-flight: one refresh at a time however many viewers ask.
@@ -1091,6 +1234,7 @@ func (stats *Stats) rebuild(db *Database) (resp *StatsResponse) {
 	stats.mu.Lock()
 	stats.cached = resp
 	stats.cachedAt = time.Now()
+	stats.lastBuild = elapsed
 	stats.mu.Unlock()
 
 	// Logged so a slow database is visible as a number rather than as a
@@ -1241,7 +1385,7 @@ func (stats *Stats) handleTalkgroupUnitsRequest(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	units, err := stats.GetTalkgroupUnits(stats.Controller.Database, sysId, tgId)
+	units, err := stats.cachedTalkgroupUnits(stats.Controller.Database, sysId, tgId)
 	if err != nil {
 		stats.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("stats.talkgroupUnits: %v", err))
 		w.WriteHeader(http.StatusInternalServerError)

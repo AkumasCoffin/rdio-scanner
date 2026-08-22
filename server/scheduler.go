@@ -70,6 +70,10 @@ func (scheduler *Scheduler) pruneDatabase() error {
 			if err := scheduler.Controller.Calls.Prune(db, days); err != nil {
 				return err
 			}
+
+			// Rows are gone, so the cached earliest-call bounds are wrong in
+			// the one direction a TTL cannot heal.
+			scheduler.Controller.Calls.InvalidateSearchMeta()
 		}
 	}
 

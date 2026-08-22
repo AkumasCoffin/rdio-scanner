@@ -847,3 +847,165 @@ func TestCallsSearchFiltersAgainstRows(t *testing.T) {
 		}
 	})
 }
+
+// The meta cache used to be wiped on every insert, which on a busy install
+// meant the bound probes and counts re-ran for essentially every search — the
+// cache existed and did nothing. An insert only extends the future edge of a
+// range and every entry expires within the TTL, so entries now live through
+// ingest; pruning, which genuinely removes rows, still clears them.
+func TestSearchMetaSurvivesInsertAndDiesOnPrune(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	calls := NewCalls()
+
+	warm := &callsSearchMeta{count: 42, expires: time.Now().Add(time.Minute)}
+	calls.putSearchMeta("range:true", warm)
+
+	call := &Call{System: 1, Talkgroup: 1, DateTime: time.Now().UTC(), Audio: []byte{1}, AudioName: "a.wav"}
+	if _, err := calls.WriteCall(call, db); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := calls.getSearchMeta("range:true"); !ok {
+		t.Fatal("an insert wiped the search meta cache; it should live out its TTL")
+	}
+
+	calls.InvalidateSearchMeta()
+
+	if _, ok := calls.getSearchMeta("range:true"); ok {
+		t.Fatal("invalidation left the entry in place")
+	}
+}
+
+// The fast probe only exists where it is exactly equivalent: filters that
+// reduce to a finite (system, talkgroup) set. Everything else must leave
+// probePairs nil and take the plain probe.
+func TestSearchPlanProbePairsGating(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	client := searchTestClient(db)
+
+	pairs := func(spec ...uint) []CallsSearchTalkgroup {
+		out := []CallsSearchTalkgroup{}
+		for i := 0; i+1 < len(spec); i += 2 {
+			out = append(out, CallsSearchTalkgroup{System: spec[i], Talkgroup: spec[i+1]})
+		}
+		return out
+	}
+
+	for _, tc := range []struct {
+		name    string
+		options CallsSearchOptions
+		access  *Access
+		want    []CallsSearchTalkgroup
+	}{
+		{
+			name:    "talkgroup pairs alone",
+			options: CallsSearchOptions{Talkgroups: pairs(2, 210, 1, 110)},
+			want:    pairs(1, 110, 2, 210),
+		},
+		{
+			name: "pairs narrowed by a systems filter",
+			options: CallsSearchOptions{
+				Talkgroups: pairs(2, 210, 1, 110),
+				Systems:    []uint{2},
+			},
+			want: pairs(2, 210),
+		},
+		{
+			name: "pairs intersected with a groups filter",
+			options: CallsSearchOptions{
+				Talkgroups: pairs(1, 100, 1, 110, 3, 300),
+				Groups:     []string{"Fire"},
+			},
+			// Fire covers 1:{100,101} and 2:{200}; only 1:100 survives.
+			want: pairs(1, 100),
+		},
+		{
+			name:    "a free-text term forfeits the fast probe",
+			options: CallsSearchOptions{Talkgroups: pairs(1, 110), Q: "fire"},
+		},
+		{
+			name:    "a scoped client forfeits the fast probe",
+			options: CallsSearchOptions{Talkgroups: pairs(1, 110)},
+			access:  &Access{Systems: []any{map[string]any{"id": 1, "talkgroups": []any{110}}}},
+		},
+		{
+			name:    "the legacy scalar system filter forfeits it",
+			options: CallsSearchOptions{System: uint(1), Talkgroups: pairs(1, 110)},
+		},
+		{
+			name:    "no pair filter at all means no pair set",
+			options: CallsSearchOptions{Systems: []uint{1, 2}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client.Access = tc.access
+
+			plan := buildCallsSearchPlan(&tc.options, client, db, nil)
+
+			if tc.want == nil {
+				if plan.probePairs != nil {
+					t.Fatalf("probePairs = %v, want nil", plan.probePairs)
+				}
+				return
+			}
+
+			if len(plan.probePairs) != len(tc.want) {
+				t.Fatalf("probePairs = %v, want %v", plan.probePairs, tc.want)
+			}
+
+			for i, pair := range tc.want {
+				if plan.probePairs[i] != pair {
+					t.Fatalf("probePairs = %v, want %v", plan.probePairs, tc.want)
+				}
+			}
+		})
+	}
+
+	client.Access = nil
+}
+
+// The two probe forms must answer identically: the bounds a filtered search
+// reports are the min and max dateTime of the matching calls, whichever way
+// they were found.
+func TestSearchProbePairsMatchThePlainProbe(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	base := time.Date(2024, 3, 5, 12, 0, 0, 0, time.UTC)
+
+	insertSearchTestCall(t, db, base, 1, 110)                  // earliest match
+	insertSearchTestCall(t, db, base.Add(-time.Hour), 1, 999)  // earlier, but not a match
+	insertSearchTestCall(t, db, base.Add(2*time.Hour), 2, 210) // latest match
+	insertSearchTestCall(t, db, base.Add(3*time.Hour), 3, 300) // later, but not a match
+	insertSearchTestCall(t, db, base.Add(time.Hour), 1, 110)   // in between
+
+	calls := NewCalls()
+	client := searchTestClient(db)
+
+	options := CallsSearchOptions{Talkgroups: []CallsSearchTalkgroup{
+		{System: 1, Talkgroup: 110},
+		{System: 2, Talkgroup: 210},
+	}}
+
+	plan := buildCallsSearchPlan(&options, client, db, nil)
+	if plan.probePairs == nil {
+		t.Fatal("this filter set should take the fast probe")
+	}
+
+	results, err := calls.Search(&options, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !results.DateStart.Equal(base) {
+		t.Errorf("dateStart = %v, want %v", results.DateStart, base)
+	}
+
+	if want := base.Add(2 * time.Hour); !results.DateStop.Equal(want) {
+		t.Errorf("dateStop = %v, want %v", results.DateStop, want)
+	}
+}
