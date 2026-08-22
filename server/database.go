@@ -549,7 +549,7 @@ var slowQueryThrottle = NewLogThrottle(3, time.Minute)
 // itself written through Exec, so routing this back through the logger would
 // have a slow log insert report itself, forever. This lands in the same output
 // an operator is already reading.
-func traceSlowQuery(query string, started time.Time) {
+func (db *Database) traceSlowQuery(query string, started time.Time) {
 	elapsed := time.Since(started)
 	if elapsed < slowQueryThreshold {
 		return
@@ -574,7 +574,23 @@ func traceSlowQuery(query string, started time.Time) {
 		flat = flat[:300] + "…"
 	}
 
-	log.Printf("slow query: %s — %s", elapsed.Round(time.Millisecond), flat)
+	// The timer wraps the whole call, and that includes waiting for a free
+	// pooled connection. So this line on its own cannot say whether the
+	// database was slow or simply out of reach behind a full pool — a
+	// statement that ran in milliseconds looks identical to one that took ten
+	// seconds, once it has queued for nine. The pool's own counters separate
+	// them: every connection in use, with the wait total climbing, is
+	// starvation and the statement is innocent.
+	pool := ""
+
+	if db != nil && db.Sql != nil {
+		stats := db.Sql.Stats()
+		pool = fmt.Sprintf(" — pool %d/%d in use, %d idle, %d waits totalling %s",
+			stats.InUse, stats.MaxOpenConnections, stats.Idle,
+			stats.WaitCount, stats.WaitDuration.Round(time.Millisecond))
+	}
+
+	log.Printf("slow query: %s%s — %s", elapsed.Round(time.Millisecond), pool, flat)
 }
 
 // Exec bounds every write with statementTimeout. The deadline covers waiting
@@ -586,7 +602,7 @@ func (db *Database) Exec(query string, args ...any) (sql.Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), statementTimeout)
 	defer cancel()
 
-	defer traceSlowQuery(query, time.Now())
+	defer db.traceSlowQuery(query, time.Now())
 
 	return db.runner().ExecContext(ctx, db.formatQuery(query), args...)
 }
@@ -599,7 +615,7 @@ func (db *Database) Exec(query string, args ...any) (sql.Result, error) {
 // server-side timeouts configured on the DSN in NewDatabase are what stop a
 // runaway read.
 func (db *Database) Query(query string, args ...any) (*sql.Rows, error) {
-	defer traceSlowQuery(query, time.Now())
+	defer db.traceSlowQuery(query, time.Now())
 
 	return db.runner().Query(db.formatQuery(query), args...)
 }
@@ -615,7 +631,7 @@ func (db *Database) Query(query string, args ...any) (*sql.Rows, error) {
 // client-side and, without a context, unbounded — so an exhausted pool parks
 // the caller indefinitely with the database sitting perfectly idle.
 func (db *Database) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	defer traceSlowQuery(query, time.Now())
+	defer db.traceSlowQuery(query, time.Now())
 
 	return db.runner().QueryContext(ctx, db.formatQuery(query), args...)
 }
@@ -628,13 +644,13 @@ func (db *Database) QueryContext(ctx context.Context, query string, args ...any)
 // the server spends executing, and says nothing about waiting for a free
 // connection. That wait is client-side and, without a context, unbounded.
 func (db *Database) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	defer traceSlowQuery(query, time.Now())
+	defer db.traceSlowQuery(query, time.Now())
 
 	return db.runner().QueryRowContext(ctx, db.formatQuery(query), args...)
 }
 
 func (db *Database) QueryRow(query string, args ...any) *sql.Row {
-	defer traceSlowQuery(query, time.Now())
+	defer db.traceSlowQuery(query, time.Now())
 
 	return db.runner().QueryRow(db.formatQuery(query), args...)
 }

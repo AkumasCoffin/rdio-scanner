@@ -36,7 +36,7 @@ func TestSlowQueryReportsTheStatement(t *testing.T) {
 
 	slowQueryThrottle = NewLogThrottle(3, time.Minute)
 
-	traceSlowQuery("select id from `rdioScannerCalls` where system = 4", time.Now().Add(-3*time.Second))
+	(*Database)(nil).traceSlowQuery("select id from `rdioScannerCalls` where system = 4", time.Now().Add(-3*time.Second))
 
 	out := captured.String()
 
@@ -59,7 +59,7 @@ func TestFastQueryIsNotReported(t *testing.T) {
 
 	slowQueryThrottle = NewLogThrottle(3, time.Minute)
 
-	traceSlowQuery("select 1", time.Now())
+	(*Database)(nil).traceSlowQuery("select 1", time.Now())
 
 	if out := captured.String(); out != "" {
 		t.Errorf("a fast statement was reported: %q", out)
@@ -77,9 +77,35 @@ func TestTheLogTableIsExemptFromSlowQueryReports(t *testing.T) {
 
 	slowQueryThrottle = NewLogThrottle(3, time.Minute)
 
-	traceSlowQuery("insert into `rdioScannerLogs` (`dateTime`) values (?)", time.Now().Add(-3*time.Second))
+	(*Database)(nil).traceSlowQuery("insert into `rdioScannerLogs` (`dateTime`) values (?)", time.Now().Add(-3*time.Second))
 
 	if out := captured.String(); out != "" {
 		t.Errorf("the log table's own insert was reported, which recurses: %q", out)
+	}
+}
+
+// The pool's state is the half of the picture the duration alone cannot give.
+// A statement that queued nine seconds for a connection and then ran in one
+// looks exactly like a statement that took ten, and the two call for opposite
+// responses — so the line has to carry both.
+func TestSlowQueryReportsThePoolState(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	var captured bytes.Buffer
+
+	log.SetOutput(&captured)
+	defer log.SetOutput(os.Stderr)
+
+	slowQueryThrottle = NewLogThrottle(3, time.Minute)
+
+	db.traceSlowQuery("select id from `rdioScannerCalls` where system = 4", time.Now().Add(-3*time.Second))
+
+	out := captured.String()
+
+	for _, want := range []string{"in use", "idle", "waits totalling"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report does not carry the pool's %q: %q", want, out)
+		}
 	}
 }
