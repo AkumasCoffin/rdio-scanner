@@ -76,8 +76,9 @@
             <div class="row">
                 <p>
                     <span class="mat-body">Secondary talkgroup</span><br>
-                    <span class="mat-caption">The everyday home: where the surviving call is filed when the primary
-                        did not carry it (or no primary is set).</span>
+                    <span class="mat-caption">Preferred home when it really receives a copy. A transmission that
+                        reaches neither the primary nor the secondary stays on the first talkgroup that received
+                        it.</span>
                 </p>
                 <mat-form-field floatLabel="never">
                     <mat-select formControlName="talkgroupId" placeholder="Secondary"
@@ -98,8 +99,8 @@
                 <p>
                     <span class="mat-body">Primary talkgroup (optional)</span><br>
                     <span class="mat-caption">A more important talkgroup the patch only sometimes covers, such as a
-                        dispatch channel. The call files here instead — but only when a copy was really received on
-                        it, so this talkgroup never shows traffic it did not carry.</span>
+                        dispatch channel. Outranks the secondary — but only when a copy was really received on it,
+                        so neither home ever shows traffic it did not carry.</span>
                 </p>
                 <mat-form-field floatLabel="never">
                     <mat-select formControlName="primaryTalkgroupId" placeholder="None"

@@ -142,15 +142,20 @@ func (patch *Patch) normalize() {
 	patch.Talkgroups = members
 }
 
-// homes lists where this patch's surviving call may be filed: the secondary
-// always, the primary when configured. Duplicate lookups check both, because
-// a call promoted onto the primary must still be found by later copies.
-func (patch *Patch) homes() []uint {
-	if patch.PrimaryTalkgroupId != 0 && patch.PrimaryTalkgroupId != patch.TalkgroupId {
-		return []uint{patch.TalkgroupId, patch.PrimaryTalkgroupId}
+// homeRank orders the places a patch's surviving call may be filed: the
+// primary above the secondary above any other member. A call only ever moves
+// up this ladder, and only onto a talkgroup that really received a copy — so
+// the ranks decide promotion, never placement by decree.
+func (patch *Patch) homeRank(talkgroupId uint) int {
+	if patch.PrimaryTalkgroupId != 0 && talkgroupId == patch.PrimaryTalkgroupId {
+		return 2
 	}
 
-	return []uint{patch.TalkgroupId}
+	if talkgroupId == patch.TalkgroupId {
+		return 1
+	}
+
+	return 0
 }
 
 // usable says whether this patch can collapse anything. A patch of one

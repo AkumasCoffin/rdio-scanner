@@ -297,38 +297,24 @@ func (controller *Controller) PluginExposedConfig() map[string]any {
 	return exposed
 }
 
-// applyPatch refiles a call onto its patch's home talkgroup and records the
-// talkgroup it actually arrived on, returning the home.
+// applyPatch records that this call belongs to a declared patch: the
+// talkgroup it arrived on joins its received list. The call stays exactly
+// where it arrived — no talkgroup is ever claimed by configuration alone.
+// The configured primary and secondary matter later, as promotion targets:
+// when a copy really arrives on one of them, the stored call moves up
+// (see homeRank). A transmission heard only on ordinary members simply
+// stays on the first one that received it.
 //
-// The home is the patch's secondary — unless this copy arrived on the
-// configured primary, which files under itself: a transmission that really
-// reached the primary belongs there, and one that did not must never be
-// filed there. The received list carries every talkgroup a copy arrived on,
-// the home included; displays skip the call's own talkgroup, so a call heard
-// only on its home still reads as unpatched.
-//
-// It refuses when the home is not a talkgroup of the call's system: filing
-// calls under something no client can select would take the traffic off every
-// listener's feed, which is worse than not collapsing it.
-func applyPatch(patch *Patch, call *Call, system *System) (*Talkgroup, bool) {
-	if patch == nil || call == nil || system == nil {
-		return nil, false
-	}
-
-	home := patch.TalkgroupId
-	if patch.PrimaryTalkgroupId != 0 && call.Talkgroup == patch.PrimaryTalkgroupId {
-		home = patch.PrimaryTalkgroupId
-	}
-
-	talkgroup, ok := system.Talkgroups.GetTalkgroup(home)
-	if !ok {
-		return nil, false
+// Displays skip the call's own talkgroup when naming its patches, so a call
+// received on a single member still reads as unpatched.
+func applyPatch(patch *Patch, call *Call) bool {
+	if patch == nil || call == nil {
+		return false
 	}
 
 	call.Patches = mergePatches(call.Patches, []uint{call.Talkgroup})
-	call.Talkgroup = home
 
-	return talkgroup, true
+	return true
 }
 
 // normalizeReportedPatches canonicalizes a call's patch list: whatever shape
@@ -651,33 +637,10 @@ func (controller *Controller) IngestCall(call *Call) {
 	// duplicate can still say which talkgroup carried it.
 	arrivedOn := call.Talkgroup
 
+	// The call keeps its own talkgroup and naming — a patch never refiles by
+	// decree, so there is nothing to rename here. See applyPatch.
 	if patch, ok := controller.Patches.GetPatch(call.System, call.Talkgroup); ok {
-		primary, applied := applyPatch(patch, call, system)
-
-		if !applied {
-			// The patch names a talkgroup this system does not have. Collapsing
-			// onto it would file calls under something no client can select, so
-			// the call goes on untouched and the misconfiguration is said out
-			// loud rather than silently swallowing traffic.
-			logCall(call, LogLevelWarn, fmt.Sprintf("patch %q primary talkgroup %v not in system, patch skipped", patch.Label, patch.TalkgroupId))
-
-		} else {
-			patched = true
-
-			// The call now belongs to the primary, so it takes the primary's
-			// naming with it.
-			talkgroup = primary
-			call.talkgroupLabel = primary.Label
-			call.talkgroupName = primary.Name
-
-			if group, ok = controller.Groups.GetGroup(primary.GroupId); ok {
-				call.talkgroupGroup = group.Label
-			}
-
-			if tag, ok = controller.Tags.GetTag(primary.TagId); ok {
-				call.talkgroupTag = tag.Label
-			}
-		}
+		patched = applyPatch(patch, call)
 	}
 
 	// Patch collapsing is not duplicate detection — one is "this conversation
@@ -688,7 +651,7 @@ func (controller *Controller) IngestCall(call *Call) {
 	if patched {
 		patch, _ := controller.Patches.GetPatch(call.System, arrivedOn)
 
-		if id, storedOn, found := controller.Calls.GetPatchDuplicate(call, patch.homes(), controller.Database); found {
+		if id, storedOn, found := controller.Calls.GetPatchDuplicate(call, patch.Talkgroups, controller.Database); found {
 			if !controller.PluginDispatch.KeepDuplicate(call) {
 				// The copy is dropped, but the talkgroup it arrived on is not:
 				// it joins the stored call, which is the whole record of which
@@ -697,15 +660,15 @@ func (controller *Controller) IngestCall(call *Call) {
 					logError(err)
 				}
 
-				// A copy really arrived on the configured primary, and the
-				// stored call sits on the secondary: the call moves. This is
-				// the only way a call ever lands on the primary — a genuine
+				// A copy really arrived on a more important home than the one
+				// the call sits on: the call moves up. This is the only way a
+				// call ever lands on the primary or secondary — a genuine
 				// receipt, never the patch's say-so.
-				if patch.PrimaryTalkgroupId != 0 && arrivedOn == patch.PrimaryTalkgroupId && storedOn != patch.PrimaryTalkgroupId {
-					if err := controller.Calls.PromoteCall(id, patch.PrimaryTalkgroupId, controller.Database); err != nil {
+				if patch.homeRank(arrivedOn) > patch.homeRank(storedOn) {
+					if err := controller.Calls.PromoteCall(id, arrivedOn, controller.Database); err != nil {
 						logError(err)
 					} else {
-						logCall(call, LogLevelInfo, fmt.Sprintf("patched call promoted to primary talkgroup %v", patch.PrimaryTalkgroupId))
+						logCall(call, LogLevelInfo, fmt.Sprintf("patched call promoted to talkgroup %v", arrivedOn))
 					}
 				}
 
