@@ -3,8 +3,9 @@
         transmission arrives once per talkgroup with the same timestamp; only one call is kept, filed under the
         highest-ranked talkgroup that actually received a copy, and marked with every talkgroup it was received on
         — so it plays once, shows PATCH on the display, reaches anyone listening to any of its talkgroups, and goes
-        downstream like any other patched call. Copies are matched by their exact timestamp, independent of the
-        duplicate detection settings.</p>
+        downstream like any other patched call. Copies are matched on their timestamp, independent of the duplicate
+        detection settings — exactly by default, or within each patch's own delay where its recorders do not stamp
+        them identically.</p>
     <button type="button" mat-button color="accent" (click)="add()">New patch</button>
 </div>
 <p *ngIf="!patches.length" class="mat-small text-center">No defined patches</p>
@@ -95,6 +96,22 @@
                         </button>
                     </div>
                 </div>
+            </div>
+            <div class="row">
+                <p>
+                    <span class="mat-body">Delay between copies (seconds)</span><br>
+                    <span class="mat-caption">How far apart this patch's recorders may stamp the copies of one
+                        transmission. Leave at 0 when one recorder covers every talkgroup. Raise it when separate
+                        recorders do and their clocks differ, or the copies are stored as separate calls and neither
+                        is flagged — but only just above the gap you see, since a wider window also reads two
+                        different transmissions as one.</span>
+                </p>
+                <mat-form-field floatLabel="never">
+                    <input type="number" min="0" max="30" matInput formControlName="delay" placeholder="0">
+                    <mat-error *ngIf="patch.get('delay')?.hasError('min') || patch.get('delay')?.hasError('max')">
+                        Between 0 and 30 seconds
+                    </mat-error>
+                </mat-form-field>
             </div>
             <div class="row">
                 <span></span>

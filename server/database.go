@@ -824,6 +824,9 @@ func (db *Database) migrate() error {
 		err = db.migration20260822150000(verbose)
 	}
 	if err == nil {
+		err = db.migration20260823120000(verbose)
+	}
+	if err == nil {
 		err = db.migrationTranscriptsToPlugin(verbose)
 	}
 
@@ -1761,6 +1764,29 @@ func (db *Database) migration20260822150000(verbose bool) error {
 	}
 
 	return db.migrateWithSchema("20260822150000-patches-primary-talkgroup", queries, verbose)
+}
+
+// migration20260823120000 adds the delay column to rdioScannerPatches: how far
+// apart the copies of one patched transmission may be stamped and still count
+// as the same transmission.
+//
+// Defaults to zero, which is the exact-timestamp match patches have always
+// used, so no existing patch changes behaviour on upgrade.
+func (db *Database) migration20260823120000(verbose bool) error {
+	var queries []string
+
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		queries = []string{
+			`alter table "rdioScannerPatches" add column "delay" integer not null default 0`,
+		}
+	default:
+		queries = []string{
+			"alter table `rdioScannerPatches` add column `delay` integer not null default 0",
+		}
+	}
+
+	return db.migrateWithSchema("20260823120000-patches-delay", queries, verbose)
 }
 
 // migration20260519110000 creates the rdioScannerDelayed table used by the

@@ -51,6 +51,23 @@ type Patch struct {
 	// actually received a copy, and climbs when a copy arrives on a higher
 	// one. No talkgroup is ever claimed without a real receipt.
 	Talkgroups []uint `json:"talkgroups"`
+
+	// Delay is how far apart, in seconds, the copies of one transmission may
+	// be stamped and still be recognised as copies.
+	//
+	// Zero — the default, and what patches did before this existed — means
+	// the timestamps must match exactly. That holds when one recorder fans a
+	// patched transmission out to every member talkgroup, because the copies
+	// are the same recording. It does not hold when the members are covered
+	// by separate recorders, which start their own clocks: a second between
+	// copies is enough for an exact match to see two unrelated calls, store
+	// both, and flag neither.
+	//
+	// Widening this is a trade. Every window is also a window in which two
+	// genuinely different transmissions on two member talkgroups get read as
+	// one, and the later one is discarded. Keep it just above the spread the
+	// recorders actually produce.
+	Delay uint `json:"delay"`
 }
 
 func (patch *Patch) FromMap(m map[string]any) *Patch {
@@ -82,6 +99,10 @@ func (patch *Patch) FromMap(m map[string]any) *Patch {
 
 	if v, ok := jsonUint(m["primaryTalkgroupId"]); ok {
 		patch.PrimaryTalkgroupId = v
+	}
+
+	if v, ok := jsonUint(m["delay"]); ok {
+		patch.Delay = v
 	}
 
 	patch.Talkgroups = []uint{}
@@ -225,14 +246,14 @@ func (patches *Patches) Read(db *Database) error {
 		return fmt.Errorf("patches.read: %v", err)
 	}
 
-	if rows, err = db.Query("select `_id`, `disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups` from `rdioScannerPatches`"); err != nil {
+	if rows, err = db.Query("select `_id`, `disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups`, `delay` from `rdioScannerPatches`"); err != nil {
 		return formatError(err)
 	}
 
 	for rows.Next() {
 		patch := &Patch{}
 
-		if err = rows.Scan(&id, &patch.Disabled, &patch.Label, &order, &patch.SystemId, &patch.TalkgroupId, &patch.PrimaryTalkgroupId, &talkgroups); err != nil {
+		if err = rows.Scan(&id, &patch.Disabled, &patch.Label, &order, &patch.SystemId, &patch.TalkgroupId, &patch.PrimaryTalkgroupId, &talkgroups, &patch.Delay); err != nil {
 			break
 		}
 
@@ -339,19 +360,19 @@ func (patches *Patches) Write(db *Database) error {
 			idVal, hasId := patch.Id.(uint)
 
 			if db.Config.DbType == DbTypePostgres && (!hasId || idVal == 0) {
-				_, err = db.Exec("insert into `rdioScannerPatches` (`disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups`) values (?, ?, ?, ?, ?, ?, ?)",
-					patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, patch.PrimaryTalkgroupId, talkgroups)
+				_, err = db.Exec("insert into `rdioScannerPatches` (`disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups`, `delay`) values (?, ?, ?, ?, ?, ?, ?, ?)",
+					patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, patch.PrimaryTalkgroupId, talkgroups, patch.Delay)
 			} else {
-				_, err = db.Exec("insert into `rdioScannerPatches` (`_id`, `disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups`) values (?, ?, ?, ?, ?, ?, ?, ?)",
-					patch.Id, patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, patch.PrimaryTalkgroupId, talkgroups)
+				_, err = db.Exec("insert into `rdioScannerPatches` (`_id`, `disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups`, `delay`) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					patch.Id, patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, patch.PrimaryTalkgroupId, talkgroups, patch.Delay)
 			}
 
 			if err != nil {
 				break
 			}
 
-		} else if _, err = db.Exec("update `rdioScannerPatches` set `disabled` = ?, `label` = ?, `order` = ?, `systemId` = ?, `talkgroupId` = ?, `primaryTalkgroupId` = ?, `talkgroups` = ? where `_id` = ?",
-			patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, patch.PrimaryTalkgroupId, talkgroups, patch.Id); err != nil {
+		} else if _, err = db.Exec("update `rdioScannerPatches` set `disabled` = ?, `label` = ?, `order` = ?, `systemId` = ?, `talkgroupId` = ?, `primaryTalkgroupId` = ?, `talkgroups` = ?, `delay` = ? where `_id` = ?",
+			patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, patch.PrimaryTalkgroupId, talkgroups, patch.Delay, patch.Id); err != nil {
 			break
 		}
 	}

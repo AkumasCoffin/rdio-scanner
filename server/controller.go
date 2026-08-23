@@ -677,7 +677,7 @@ func (controller *Controller) IngestCall(call *Call) {
 	if patched {
 		patch, _ := controller.Patches.GetPatch(call.System, arrivedOn)
 
-		if id, storedOn, found := controller.Calls.GetPatchDuplicate(call, patch.Talkgroups, controller.Database); found {
+		if id, storedOn, found := controller.Calls.GetPatchDuplicate(call, patch.Talkgroups, patch.Delay, controller.Database); found {
 			if !controller.PluginDispatch.KeepDuplicate(call) {
 				// The copy is dropped, but the talkgroup it arrived on is not:
 				// it joins the stored call, which is the whole record of which

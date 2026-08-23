@@ -260,6 +260,11 @@ export interface Patch {
      * files under the highest-listed talkgroup that actually received a copy.
      */
     talkgroups?: number[];
+    /**
+     * How far apart, in seconds, this patch's recorders may stamp the copies
+     * of one transmission. Zero means they must match exactly.
+     */
+    delay?: number;
 }
 
 export interface Downstream {
@@ -794,6 +799,7 @@ export class RdioScannerAdminService implements OnDestroy {
             order: [patch?.order],
             systemId: [patch?.systemId, Validators.required],
             talkgroups: [patch?.talkgroups || [], this.validatePatchTalkgroups()],
+            delay: [patch?.delay ?? 0, [Validators.min(0), Validators.max(30)]],
         });
     }
 

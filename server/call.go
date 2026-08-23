@@ -252,17 +252,25 @@ func (calls *Calls) GetDuplicateId(call *Call, msTimeFrame uint, db *Database) (
 // GetPatchDuplicate finds the stored call a patched copy duplicates, and the
 // talkgroup it is currently filed under.
 //
-// Exact timestamp, not the duplicate-detection window: the copies of a patched
-// transmission are the same recording fanned out by the recorder, so they
-// carry the same dateTime, and matching wider would swallow a genuinely
-// separate transmission moments later as if it were a copy. The lookup covers
-// every home the patch may have filed under — the secondary always, and the
-// primary once a promotion has moved the call there.
+// Matched on the timestamp, not through the duplicate-detection window, and
+// never wider than the patch was told to allow. With delay zero the timestamps
+// must be equal, which is right when one recorder fans a transmission out to
+// every member talkgroup: the copies are the same recording. Separate
+// recorders on separate members keep their own clocks and can stamp the same
+// transmission a second or two apart, which an equality test reads as two
+// unrelated calls — hence the patch's delay, and hence it being per patch,
+// since it is a property of that patch's recorders. The lookup covers every
+// home the patch may have filed under: the first receiving talkgroup, and any
+// higher-ranked one a promotion has since moved the call to.
 //
-// The timestamp is a bound parameter for the same reason the cursor's is: a
+// Where the window admits several candidates, the nearest in time wins. Any
+// other rule would let a stale neighbour claim a copy that plainly belongs to
+// the call beside it.
+//
+// The timestamps are bound parameters for the same reason the cursor's are: a
 // literal built from DateTimeFormat does not match the text the driver wrote,
 // and an equality test forgives nothing.
-func (calls *Calls) GetPatchDuplicate(call *Call, homes []uint, db *Database) (uint, uint, bool) {
+func (calls *Calls) GetPatchDuplicate(call *Call, homes []uint, delay uint, db *Database) (uint, uint, bool) {
 	var (
 		id        sql.NullFloat64
 		talkgroup uint
@@ -272,23 +280,100 @@ func (calls *Calls) GetPatchDuplicate(call *Call, homes []uint, db *Database) (u
 		return 0, 0, false
 	}
 
-	marks := make([]string, len(homes))
-	args := []any{call.DateTime.UTC(), call.System}
+	at := call.DateTime.UTC()
 
-	for i, home := range homes {
+	marks := make([]string, len(homes))
+
+	for i := range homes {
 		marks[i] = "?"
+	}
+
+	if delay == 0 {
+		// What patches did before the delay existed, and still the common
+		// case: one equality test, one row.
+		args := []any{at, call.System}
+
+		for _, home := range homes {
+			args = append(args, home)
+		}
+
+		err := db.QueryRow(
+			fmt.Sprintf("select `id`, `talkgroup` from `rdioScannerCalls` where `dateTime` = ? and `system` = ? and `talkgroup` in (%s) order by `id` limit 1", strings.Join(marks, ", ")),
+			args...,
+		).Scan(&id, &talkgroup)
+		if err != nil || !id.Valid || id.Float64 <= 0 {
+			return 0, 0, false
+		}
+
+		return uint(id.Float64), talkgroup, true
+	}
+
+	window := time.Duration(delay) * time.Second
+	args := []any{at.Add(-window), at.Add(window), call.System}
+
+	for _, home := range homes {
 		args = append(args, home)
 	}
 
-	err := db.QueryRow(
-		fmt.Sprintf("select `id`, `talkgroup` from `rdioScannerCalls` where `dateTime` = ? and `system` = ? and `talkgroup` in (%s) order by `id` limit 1", strings.Join(marks, ", ")),
+	// Distance from the copy's own timestamp is what decides this, and no
+	// portable SQL expresses it across all three backends — so the window's
+	// rows are read and compared here. The window bounds the count: a handful
+	// at the delays this is meant for.
+	rows, err := db.Query(
+		fmt.Sprintf("select `id`, `talkgroup`, `dateTime` from `rdioScannerCalls` where (`dateTime` between ? and ?) and `system` = ? and `talkgroup` in (%s) order by `dateTime`, `id`", strings.Join(marks, ", ")),
 		args...,
-	).Scan(&id, &talkgroup)
-	if err != nil || !id.Valid || id.Float64 <= 0 {
+	)
+	if err != nil {
 		return 0, 0, false
 	}
 
-	return uint(id.Float64), talkgroup, true
+	defer rows.Close()
+
+	var (
+		bestId        uint
+		bestTalkgroup uint
+		bestGap       time.Duration
+		found         bool
+	)
+
+	for rows.Next() {
+		var (
+			rowId        sql.NullFloat64
+			rowTalkgroup uint
+			rowDateTime  any
+		)
+
+		if err = rows.Scan(&rowId, &rowTalkgroup, &rowDateTime); err != nil {
+			return 0, 0, false
+		}
+
+		if !rowId.Valid || rowId.Float64 <= 0 {
+			continue
+		}
+
+		stored, perr := db.ParseDateTime(rowDateTime)
+		if perr != nil {
+			continue
+		}
+
+		gap := stored.UTC().Sub(at)
+		if gap < 0 {
+			gap = -gap
+		}
+
+		if !found || gap < bestGap {
+			bestId = uint(rowId.Float64)
+			bestTalkgroup = rowTalkgroup
+			bestGap = gap
+			found = true
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return 0, 0, false
+	}
+
+	return bestId, bestTalkgroup, found
 }
 
 // PromoteCall refiles a stored call onto another talkgroup.

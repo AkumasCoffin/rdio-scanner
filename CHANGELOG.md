@@ -117,6 +117,14 @@ Nothing changes in the Android app.
   detection settings, because patched copies of one transmission carry the same
   time.
 
+  Copies are recognised by their timestamp. Where one recorder fans a
+  transmission out to every member talkgroup the copies are the same recording
+  and carry the same time, which is the default and needs nothing configured.
+  Where separate recorders cover the members they keep their own clocks and can
+  stamp the same transmission a second or two apart — so each patch has a
+  **delay** saying how far apart its recorders run. Left at zero the timestamps
+  must match exactly, as before.
+
   The talkgroups are listed in **display order**, and that order is the ranking:
   the surviving call files under the highest-listed talkgroup that actually
   received a copy, and moves up if a copy later arrives on a higher one. A

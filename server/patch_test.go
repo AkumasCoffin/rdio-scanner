@@ -295,7 +295,7 @@ func TestPatchedCopiesCollapseOnTheExactTimestamp(t *testing.T) {
 		t.Fatal("applyPatch refused the first copy")
 	}
 
-	if _, _, found := calls.GetPatchDuplicate(first, patch.Talkgroups, db); found {
+	if _, _, found := calls.GetPatchDuplicate(first, patch.Talkgroups, 0, db); found {
 		t.Fatal("the first copy of a patched call matched a call that is not there")
 	}
 
@@ -312,7 +312,7 @@ func TestPatchedCopiesCollapseOnTheExactTimestamp(t *testing.T) {
 		t.Fatal("applyPatch refused the second copy")
 	}
 
-	if found, _, ok := calls.GetPatchDuplicate(second, patch.Talkgroups, db); !ok || found != id {
+	if found, _, ok := calls.GetPatchDuplicate(second, patch.Talkgroups, 0, db); !ok || found != id {
 		t.Errorf("the patched copy resolved to (%v, %v), want the stored call %v", found, ok, id)
 	}
 
@@ -323,7 +323,7 @@ func TestPatchedCopiesCollapseOnTheExactTimestamp(t *testing.T) {
 		t.Fatal("applyPatch refused the later call")
 	}
 
-	if _, _, found := calls.GetPatchDuplicate(later, patch.Talkgroups, db); found {
+	if _, _, found := calls.GetPatchDuplicate(later, patch.Talkgroups, 0, db); found {
 		t.Error("a transmission 120ms later was collapsed into the earlier one")
 	}
 }
@@ -355,7 +355,7 @@ func TestPatchedSiblingsJoinTheStoredCall(t *testing.T) {
 
 	applyPatch(patch, second)
 
-	found, _, ok := calls.GetPatchDuplicate(second, patch.Talkgroups, db)
+	found, _, ok := calls.GetPatchDuplicate(second, patch.Talkgroups, 0, db)
 	if !ok {
 		t.Fatal("the second copy was not recognised as a duplicate")
 	}
@@ -438,7 +438,7 @@ func TestPatchPromotionLadder(t *testing.T) {
 		arrivedOn := copyCall.Talkgroup
 		applyPatch(patch, copyCall)
 
-		found, storedOn, ok := calls.GetPatchDuplicate(copyCall, patch.Talkgroups, db)
+		found, storedOn, ok := calls.GetPatchDuplicate(copyCall, patch.Talkgroups, 0, db)
 		if !ok || found != id {
 			t.Fatalf("copy on %v resolved to (%v, %v), want %v", arrivedOn, found, ok, id)
 		}
@@ -647,5 +647,137 @@ func TestPatchUpdateReachesAListenerWhoDoesNotHoldTheNewTalkgroup(t *testing.T) 
 
 	default:
 		t.Fatal("the listener holding the call got no correction")
+	}
+}
+
+// Separate recorders covering separate members of a patch keep their own
+// clocks, so the copies of one transmission can be stamped a second or two
+// apart. An exact match reads those as two unrelated calls and stores both;
+// the patch's delay is what says how far apart its recorders run.
+func TestPatchDelayCollapsesCopiesStampedApart(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	calls := NewCalls()
+	patch := &Patch{SystemId: 1, TalkgroupId: 100, Talkgroups: []uint{100, 200, 300}, Delay: 2}
+	patch.normalize()
+
+	at := time.Date(2026, 8, 23, 13, 15, 0, 0, time.UTC)
+
+	first := &Call{System: 1, Talkgroup: 200, DateTime: at, Audio: []byte{1}, AudioName: "a.wav"}
+	applyPatch(patch, first)
+
+	id, err := calls.WriteCall(first, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// One second late, as the user's recorders stamp them.
+	second := &Call{System: 1, Talkgroup: 300, DateTime: at.Add(time.Second)}
+	applyPatch(patch, second)
+
+	// Zero is the old behaviour and must stay that way: nothing matches.
+	if _, _, found := calls.GetPatchDuplicate(second, patch.Talkgroups, 0, db); found {
+		t.Error("a one-second gap matched with no delay configured — exact means exact")
+	}
+
+	found, storedOn, ok := calls.GetPatchDuplicate(second, patch.Talkgroups, patch.Delay, db)
+	if !ok {
+		t.Fatal("the copy did not match inside the patch's delay")
+	}
+
+	if found != id {
+		t.Errorf("matched call %v, want %v", found, id)
+	}
+
+	if storedOn != 200 {
+		t.Errorf("stored call reported as filed under %v, want 200", storedOn)
+	}
+
+	// The window is a window, not a licence: past it, a transmission is its
+	// own transmission again.
+	beyond := &Call{System: 1, Talkgroup: 300, DateTime: at.Add(3 * time.Second)}
+
+	if _, _, found := calls.GetPatchDuplicate(beyond, patch.Talkgroups, patch.Delay, db); found {
+		t.Error("a call three seconds out matched a two-second delay")
+	}
+
+	// Earlier counts too — whichever copy the recorders happen to deliver
+	// first is the one that becomes the stored call.
+	earlier := &Call{System: 1, Talkgroup: 300, DateTime: at.Add(-time.Second)}
+
+	if _, _, found := calls.GetPatchDuplicate(earlier, patch.Talkgroups, patch.Delay, db); !found {
+		t.Error("a copy stamped a second early did not match")
+	}
+}
+
+// With several calls inside the window, the copy belongs to the nearest one.
+// Taking the earliest instead would let a stale neighbour claim a copy that
+// plainly goes with the call beside it.
+func TestPatchDelayPicksTheNearestCall(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	calls := NewCalls()
+	patch := &Patch{SystemId: 1, TalkgroupId: 100, Talkgroups: []uint{100, 200, 300}, Delay: 5}
+	patch.normalize()
+
+	at := time.Date(2026, 8, 23, 13, 20, 0, 0, time.UTC)
+
+	early := &Call{System: 1, Talkgroup: 200, DateTime: at, Audio: []byte{1}, AudioName: "a.wav"}
+	applyPatch(patch, early)
+
+	if _, err := calls.WriteCall(early, db); err != nil {
+		t.Fatal(err)
+	}
+
+	late := &Call{System: 1, Talkgroup: 200, DateTime: at.Add(4 * time.Second), Audio: []byte{2}, AudioName: "b.wav"}
+	applyPatch(patch, late)
+
+	lateId, err := calls.WriteCall(late, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A second behind the later call, four seconds behind the earlier one.
+	copyCall := &Call{System: 1, Talkgroup: 300, DateTime: at.Add(5 * time.Second)}
+
+	found, _, ok := calls.GetPatchDuplicate(copyCall, patch.Talkgroups, patch.Delay, db)
+	if !ok {
+		t.Fatal("no match inside the window")
+	}
+
+	if found != lateId {
+		t.Errorf("matched call %v, want %v — the nearer of the two", found, lateId)
+	}
+}
+
+// The delay has to survive the round trip, or it would read as zero on the
+// next boot and patches would quietly go back to exact matching.
+func TestPatchDelayRoundTrips(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	patches := NewPatches()
+	patches.List = []*Patch{
+		{Id: uint(1), SystemId: 1, Label: "City", Talkgroups: []uint{100, 200}, Delay: 3},
+	}
+
+	if err := patches.Write(db); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	read := NewPatches()
+
+	if err := read.Read(db); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	if len(read.List) != 1 {
+		t.Fatalf("read back %v patches, want 1", len(read.List))
+	}
+
+	if read.List[0].Delay != 3 {
+		t.Errorf("delay read back as %v, want 3", read.List[0].Delay)
 	}
 }
