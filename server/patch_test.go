@@ -781,3 +781,67 @@ func TestPatchDelayRoundTrips(t *testing.T) {
 		t.Errorf("delay read back as %v, want 3", read.List[0].Delay)
 	}
 }
+
+// A patch collapses one transmission arriving on its *other* talkgroups. It
+// must not collapse a talkgroup's own back-to-back traffic: a member receives
+// a given transmission once, so a second call on the same talkgroup is a
+// second transmission. Exact matching hid this — two calls on one talkgroup
+// sharing a timestamp to the second really is one recording twice — but a
+// delay turns it into a window in which normal traffic disappears into the
+// call before it.
+func TestPatchDelayDoesNotSwallowTheSameTalkgroupsNextCall(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	calls := NewCalls()
+	patch := &Patch{SystemId: 1, TalkgroupId: 100, Talkgroups: []uint{100, 200, 300}, Delay: 2}
+	patch.normalize()
+
+	at := time.Date(2026, 8, 23, 21, 8, 12, 0, time.UTC)
+
+	first := &Call{System: 1, Talkgroup: 100, DateTime: at, Audio: []byte{1}, AudioName: "a.wav"}
+	applyPatch(patch, first)
+
+	if _, err := calls.WriteCall(first, db); err != nil {
+		t.Fatal(err)
+	}
+
+	// One second later, same talkgroup: a different transmission.
+	next := &Call{System: 1, Talkgroup: 100, DateTime: at.Add(time.Second)}
+	applyPatch(patch, next)
+
+	if _, _, found := calls.GetPatchDuplicate(next, patch.Talkgroups, patch.Delay, db); found {
+		t.Error("the talkgroup's own next call was taken for a copy of the one before it")
+	}
+
+	// A copy on another member inside the window is still a copy.
+	sibling := &Call{System: 1, Talkgroup: 300, DateTime: at.Add(time.Second)}
+	applyPatch(patch, sibling)
+
+	if _, _, found := calls.GetPatchDuplicate(sibling, patch.Talkgroups, patch.Delay, db); !found {
+		t.Error("a copy on another talkgroup inside the window was not recognised")
+	}
+}
+
+// A patch of two talkgroups where the call arrived on one of them leaves a
+// single place to look. A patch that somehow covers only the arrival talkgroup
+// leaves none, and must not match everything.
+func TestPatchDuplicateWithNoOtherTalkgroupFindsNothing(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	calls := NewCalls()
+	at := time.Date(2026, 8, 23, 21, 30, 0, 0, time.UTC)
+
+	stored := &Call{System: 1, Talkgroup: 100, DateTime: at, Audio: []byte{1}, AudioName: "a.wav"}
+
+	if _, err := calls.WriteCall(stored, db); err != nil {
+		t.Fatal(err)
+	}
+
+	probe := &Call{System: 1, Talkgroup: 100, DateTime: at}
+
+	if _, _, found := calls.GetPatchDuplicate(probe, []uint{100}, 2, db); found {
+		t.Error("a patch naming only the arrival talkgroup matched something")
+	}
+}

@@ -282,6 +282,29 @@ func (calls *Calls) GetPatchDuplicate(call *Call, homes []uint, delay uint, db *
 
 	at := call.DateTime.UTC()
 
+	// The talkgroup this copy came in on is not one of the places its own
+	// original could be sitting: a patched transmission reaches each member
+	// once, so a second call on the same talkgroup is a second transmission,
+	// or an ordinary duplicate, and either way not this one's other half.
+	//
+	// Leaving it in was harmless while the match was exact — two calls on one
+	// talkgroup sharing a timestamp to the second really is one recording
+	// twice — but a delay turns it into a window in which a talkgroup's normal
+	// back-to-back traffic disappears into the call before it.
+	others := make([]uint, 0, len(homes))
+
+	for _, home := range homes {
+		if home != call.Talkgroup {
+			others = append(others, home)
+		}
+	}
+
+	if len(others) == 0 {
+		return 0, 0, false
+	}
+
+	homes = others
+
 	marks := make([]string, len(homes))
 
 	for i := range homes {

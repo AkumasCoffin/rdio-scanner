@@ -710,12 +710,17 @@ func (controller *Controller) IngestCall(call *Call) {
 	// Patch collapsing is not duplicate detection — one is "this conversation
 	// reached me several ways", the other "this recording reached me twice" —
 	// so it neither uses the duplicate window nor obeys the switch that turns
-	// duplicate detection off. The copies of a patched transmission carry the
-	// same timestamp, so that is the whole match.
+	// duplicate detection off. It answers only for the patch's other
+	// talkgroups; what a talkgroup does on its own is still the duplicate
+	// check's business, and is asked below.
+	collapsed := false
+
 	if patched {
 		patch, _ := controller.Patches.GetPatch(call.System, arrivedOn)
 
 		if id, storedOn, found := controller.Calls.GetPatchDuplicate(call, patch.Talkgroups, patch.Delay, controller.Database); found {
+			collapsed = true
+
 			if !controller.PluginDispatch.KeepDuplicate(call) {
 				// The copy is dropped, but the talkgroup it arrived on is not:
 				// it joins the stored call, which is the whole record of which
@@ -755,8 +760,14 @@ func (controller *Controller) IngestCall(call *Call) {
 
 			logCall(call, LogLevelInfo, "duplicate kept by plugin")
 		}
+	}
 
-	} else if !controller.Options.DisableDuplicateDetection {
+	// Runs for a patched talkgroup as well as an ordinary one. A patch says
+	// what to do with the same transmission arriving on its other members; it
+	// says nothing about one talkgroup delivering the same recording twice,
+	// and skipping this for patched calls left those talkgroups with no
+	// duplicate protection at all.
+	if !collapsed && !controller.Options.DisableDuplicateDetection {
 		if controller.Calls.CheckDuplicate(call, controller.Options.DuplicateDetectionTimeFrame, controller.Database) {
 			// Core has decided to reject. A plugin may overrule that, which is
 			// what makes a smarter duplicate rule possible without replacing the
