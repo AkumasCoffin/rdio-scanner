@@ -81,6 +81,49 @@ Nothing changes in the Android app.
   See the [plugin documentation](https://github.com/AkumasCoffin/rdio-scanner-plugins)
   for how to write one.
 
+### Search Calls
+
+- **Changed: the filters live down the side, not across the top.** On a desktop
+  they stay visible while you read results, so a search can be narrowed without
+  losing your place. Talkgroups are grouped by their system, and the systems and
+  talkgroups you pick show as chips you can drop one at a time.
+
+- **New: search a date range, several systems and several talkgroups at once.**
+  Previously it was one day, one system, one talkgroup. There are presets for
+  today, the last 24 hours, this week and this month, and the range you have
+  chosen is written out rather than left for you to infer from two empty-looking
+  fields.
+
+- **Changed: results are drawn as one growing list** — no page numbers to click
+  through, and the newest calls stay where they are as more load in.
+
+- **New: calls on the same talkgroup within thirty seconds of each other are
+  kept together.** One exchange reads as one exchange rather than being cut in
+  half by unrelated traffic. Nothing is labelled or headed and nothing is
+  hidden: a call moves at most eight places from where the clock would put it,
+  and calls on the same talkgroup are always in order relative to each other.
+
+### Patches
+
+- **New: tell Rdio Scanner which talkgroups carry the same conversation.** A
+  patch is a set of talkgroups on one system, defined in **Config → Patches**.
+  When a transmission arrives once per talkgroup — same audio, same timestamp —
+  only one call is kept. It plays once, reaches anyone listening to any of the
+  patch's talkgroups, shows PATCH on the display and in search with the
+  talkgroups it was actually received on, and goes downstream like any other
+  patched call.
+
+  Copies are matched on their exact timestamp, independent of the duplicate
+  detection settings, because patched copies of one transmission carry the same
+  time.
+
+  The talkgroups are listed in **display order**, and that order is the ranking:
+  the surviving call files under the highest-listed talkgroup that actually
+  received a copy, and moves up if a copy later arrives on a higher one. A
+  talkgroup never shows traffic it did not carry — so a patch that usually runs
+  on two channels but sometimes reaches a dispatch channel files under dispatch
+  exactly when dispatch heard it, and not otherwise.
+
 ### Admin panel
 
 - **Changed: the admin panel is a full-width app rather than a column down the
@@ -120,6 +163,31 @@ Nothing changes in the Android app.
   bundled font does not carry, and a missing icon renders as its own name —
   336px of invisible text, pushing the page. The dashboard's tables now scroll
   within themselves rather than shoving the page along with them.
+
+- **New: edit or delete talkgroups and units in bulk.** Ctrl-click (cmd on a
+  Mac) picks several, shift-click takes a range, and Select all takes whatever
+  the search matched. Group, tag, LED colours, delay and alert tone can then be
+  set across the lot at once, and the whole selection deleted together. A field
+  the selection does not already agree on shows empty until you set it, rather
+  than claiming one row's value stands for all of them.
+
+- **New: a CSV import asks whether to keep or replace what it matches.**
+  Importing always overwrote an id it recognised — right for a round trip
+  through a spreadsheet, wrong for a broad list dropped on top of talkgroups
+  tuned by hand. The choice is now yours, offered with the counts before
+  anything changes. **Keep matching** imports only the ids that are new;
+  **Replace matching** is the old behaviour.
+
+- **Changed: the import preview shows every row, not the first hundred,** and
+  says what each one would do — New, Replaces, or No system. The counts along
+  the top double as a filter, so in a file of thousands you can see exactly what
+  would be overwritten, or jump straight to the rows naming a system you do not
+  have.
+
+- **Fixed:** talkgroups can be reordered by dragging again, and Sort by ID
+  works again. Building the per-user view of the systems list reordered the
+  live configuration behind it, so the admin panel was editing a list that had
+  already been rearranged underneath it.
 
 ### LED colours
 
@@ -168,6 +236,26 @@ Nothing changes in the Android app.
   database connection. That wait was unbounded, and because it runs on the
   plugin's single event loop, one lookup could hold everything else that plugin
   does — measured at over two minutes on a saturated database.
+
+- **Fixed: the statistics dashboard no longer stalls everything else.** Its
+  rebuild fired a dozen full-table queries at once, taking most of the
+  connection pool with them, so calls being recorded and pages being loaded
+  queued behind it — a ten-second insert and a failed admin request, on a
+  database that was otherwise fine. The rebuild now runs one query at a time in
+  the background and slows its own schedule if it is expensive, so it can no
+  longer crowd out a request.
+
+- **Changed: calls are indexed for the new search.** A filtered search reads a
+  range straight out of the index instead of walking the calls table, and on
+  PostgreSQL the unfiltered total is estimated rather than counted, which is
+  where a large database used to spend seconds. The migration builds the index
+  once at startup.
+
+- **Changed: a slow query is now logged with the statement that was slow** and
+  with what the connection pool was doing at the time — how many connections
+  were in use and how long anything had been waiting for one. A slow-query line
+  on its own could not tell a slow statement apart from a healthy statement
+  stuck behind something else.
 
 ---
 
