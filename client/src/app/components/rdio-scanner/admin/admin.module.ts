@@ -47,6 +47,7 @@ import { RdioScannerAdminTodosComponent } from './todos/todos.component';
 import { RdioScannerAdminToolsComponent } from './tools/tools.component';
 import { RdioScannerAdminExportComponent } from './tools/export/export.component';
 import { RdioScannerAdminImportComponent } from './tools/import/import.component';
+import { RdioScannerAdminImportMergeDialogComponent } from './tools/import/merge-dialog.component';
 import { RdioScannerAdminPasswordComponent } from './tools/password/password.component';
 import { RdioScannerAdminUpdatesComponent } from './tools/updates/updates.component';
 
@@ -62,6 +63,7 @@ import { RdioScannerAdminUpdatesComponent } from './tools/updates/updates.compon
         RdioScannerAdminGroupsComponent,
         RdioScannerAdminExportComponent,
         RdioScannerAdminImportComponent,
+        RdioScannerAdminImportMergeDialogComponent,
         RdioScannerAdminLoginComponent,
         RdioScannerAdminLogsComponent,
         RdioScannerAdminOptionsComponent,

@@ -13,22 +13,123 @@
   min-width: 280px;
 }
 
-.mat-table {
+/*
+ * The review list. Plain rows in a CDK virtual viewport rather than a
+ * mat-table: the table renders every row it is given, which is why the
+ * preview used to stop at 100 and could not answer "what would this
+ * replace?" for a real CSV.
+ */
+.preview {
+  overflow-x: auto;
+}
+
+.preview-inner {
   min-width: 720px;
 }
 
-.mat-cell > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.preview-viewport {
+  // Height comes from the component so a short CSV does not float in empty
+  // space; this is the ceiling that turns the list into a scroller.
+  max-height: 480px;
 }
 
-.mat-column-action {
-  max-width: 40px;
+.preview-row {
+  align-items: center;
+  box-sizing: border-box;
+  display: flex;
+  // Must match ROW_HEIGHT in the component: the viewport positions rows from
+  // that number rather than from what it measures, so a mismatch drifts.
+  height: 40px;
+
+  > .cell {
+    overflow: hidden;
+    padding-right: 0.75rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
-.scroll {
-  overflow-x: auto;
+.preview-head {
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+  text-transform: uppercase;
+}
+
+.preview-viewport .preview-row:nth-child(even) {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cell-status {
+  flex: 0 0 6rem;
+}
+
+.cell-system {
+  flex: 0 0 9rem;
+}
+
+.cell-id {
+  flex: 0 0 5rem;
+}
+
+.cell-label {
+  flex: 0 0 10rem;
+}
+
+.cell-name {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+
+.cell-group,
+.cell-tag {
+  flex: 0 0 8rem;
+}
+
+.cell-action {
+  flex: 0 0 40px;
+  padding-right: 0 !important;
+}
+
+// Units have no name/group/tag, so the label takes the room those would.
+.units {
+  .cell-label {
+    flex: 1 1 10rem;
+    min-width: 0;
+  }
+}
+
+/*
+ * The per-row verdict. Colour carries it at a glance, the word carries it
+ * for anyone who cannot use the colour.
+ */
+.chip {
+  border-radius: 10px;
+  display: inline-block;
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  line-height: 1.5;
+  padding: 0 0.5rem;
+  text-transform: uppercase;
+}
+
+.chip-new {
+  background: rgba(76, 175, 80, 0.2);
+  color: #a5d6a7;
+}
+
+.chip-existing {
+  background: rgba(255, 152, 0, 0.2);
+  color: #ffcc80;
+}
+
+.chip-unrouted {
+  background: rgba(244, 67, 54, 0.2);
+  color: #ef9a9a;
+}
+
+.mat-button-toggle-group {
+  max-width: 100%;
 }
 
 .text-center {

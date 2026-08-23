@@ -92,108 +92,82 @@
 
     <section>
         <p class="mat-body">step 4: review rows to import</p>
-        <div class="scroll" *ngIf="dataType === 'talkgroups'">
-            <mat-table #tgTable [dataSource]="talkgroupPreview" [trackBy]="trackByIndex">
-                <ng-container matColumnDef="system">
-                    <mat-header-cell *matHeaderCellDef>
-                        <span>System</span>
-                    </mat-header-cell>
-                    <mat-cell *matCellDef="let row">
-                        <span>{{ row.system }}</span>
-                    </mat-cell>
-                </ng-container>
-                <ng-container matColumnDef="id">
-                    <mat-header-cell *matHeaderCellDef>
-                        <span>Id</span>
-                    </mat-header-cell>
-                    <mat-cell *matCellDef="let row">
-                        <span>{{ row.id }}</span>
-                    </mat-cell>
-                </ng-container>
-                <ng-container matColumnDef="label">
-                    <mat-header-cell *matHeaderCellDef>
-                        <span>Label</span>
-                    </mat-header-cell>
-                    <mat-cell *matCellDef="let row">
-                        <span>{{ row.label }}</span>
-                    </mat-cell>
-                </ng-container>
-                <ng-container matColumnDef="name">
-                    <mat-header-cell *matHeaderCellDef>
-                        <span>Name</span>
-                    </mat-header-cell>
-                    <mat-cell *matCellDef="let row">
-                        <span>{{ row.name }}</span>
-                    </mat-cell>
-                </ng-container>
-                <ng-container matColumnDef="group">
-                    <mat-header-cell *matHeaderCellDef>
-                        <span>Group</span>
-                    </mat-header-cell>
-                    <mat-cell *matCellDef="let row">
-                        <span>{{ row.group }}</span>
-                    </mat-cell>
-                </ng-container>
-                <ng-container matColumnDef="tag">
-                    <mat-header-cell *matHeaderCellDef>
-                        <span>Tag</span>
-                    </mat-header-cell>
-                    <mat-cell *matCellDef="let row">
-                        <span>{{ row.tag }}</span>
-                    </mat-cell>
-                </ng-container>
-                <ng-container matColumnDef="action">
-                    <mat-header-cell *matHeaderCellDef></mat-header-cell>
-                    <mat-cell *matCellDef="let row; index as i">
-                        <button mat-icon-button (click)="removeTalkgroupRow(i); tgTable.renderRows()">
-                            <mat-icon>clear</mat-icon>
-                        </button>
-                    </mat-cell>
-                </ng-container>
-                <mat-header-row *matHeaderRowDef="talkgroupColumns"></mat-header-row>
-                <mat-row *matRowDef="let row; columns: talkgroupColumns"></mat-row>
-            </mat-table>
+
+        <!--
+            Every parsed row is listed, not a sample of them: the list is
+            virtualised, so a CSV with thousands of talkgroups renders as
+            cheaply as one with ten. Each row says what importing would do
+            to it, and the filter narrows the list to just those.
+        -->
+        <p class="text-center" *ngIf="rowCount">
+            <mat-button-toggle-group [value]="statusFilter" (change)="setStatusFilter($event.value)">
+                <mat-button-toggle value="all">All {{ rowCount }}</mat-button-toggle>
+                <mat-button-toggle value="new">New {{ counts.new }}</mat-button-toggle>
+                <mat-button-toggle value="existing">Replaces {{ counts.existing }}</mat-button-toggle>
+                <mat-button-toggle value="unrouted" *ngIf="counts.unrouted">
+                    No system {{ counts.unrouted }}
+                </mat-button-toggle>
+            </mat-button-toggle-group>
+        </p>
+
+        <div class="preview" *ngIf="rowCount">
+            <div class="preview-inner" [class.units]="dataType === 'units'">
+                <div class="preview-row preview-head">
+                    <span class="cell cell-status">Action</span>
+                    <span class="cell cell-system" *ngIf="showSystemColumn">System</span>
+                    <span class="cell cell-id">Id</span>
+                    <span class="cell cell-label">Label</span>
+                    <ng-container *ngIf="dataType === 'talkgroups'">
+                        <span class="cell cell-name">Name</span>
+                        <span class="cell cell-group">Group</span>
+                        <span class="cell cell-tag">Tag</span>
+                    </ng-container>
+                    <span class="cell cell-action"></span>
+                </div>
+
+                <cdk-virtual-scroll-viewport *ngIf="dataType === 'talkgroups'" itemSize="40" minBufferPx="400"
+                    maxBufferPx="800" class="preview-viewport" [style.height.px]="viewportHeight">
+                    <div class="preview-row" *cdkVirtualFor="let entry of talkgroupEntries; trackBy: trackByEntry">
+                        <span class="cell cell-status">
+                            <span class="chip" [ngClass]="'chip-' + entry.status">{{ statusLabel(entry.status) }}</span>
+                        </span>
+                        <span class="cell cell-system" *ngIf="showSystemColumn">{{ entry.row.system }}</span>
+                        <span class="cell cell-id">{{ entry.row.id }}</span>
+                        <span class="cell cell-label">{{ entry.row.label }}</span>
+                        <span class="cell cell-name">{{ entry.row.name }}</span>
+                        <span class="cell cell-group">{{ entry.row.group }}</span>
+                        <span class="cell cell-tag">{{ entry.row.tag }}</span>
+                        <span class="cell cell-action">
+                            <button mat-icon-button aria-label="Remove row" (click)="removeTalkgroupRow(entry.index)">
+                                <mat-icon>clear</mat-icon>
+                            </button>
+                        </span>
+                    </div>
+                </cdk-virtual-scroll-viewport>
+
+                <cdk-virtual-scroll-viewport *ngIf="dataType === 'units'" itemSize="40" minBufferPx="400"
+                    maxBufferPx="800" class="preview-viewport" [style.height.px]="viewportHeight">
+                    <div class="preview-row" *cdkVirtualFor="let entry of unitEntries; trackBy: trackByEntry">
+                        <span class="cell cell-status">
+                            <span class="chip" [ngClass]="'chip-' + entry.status">{{ statusLabel(entry.status) }}</span>
+                        </span>
+                        <span class="cell cell-system" *ngIf="showSystemColumn">{{ entry.row.system }}</span>
+                        <span class="cell cell-id">{{ entry.row.id }}</span>
+                        <span class="cell cell-label">{{ entry.row.label }}</span>
+                        <span class="cell cell-action">
+                            <button mat-icon-button aria-label="Remove row" (click)="removeUnitRow(entry.index)">
+                                <mat-icon>clear</mat-icon>
+                            </button>
+                        </span>
+                    </div>
+                </cdk-virtual-scroll-viewport>
+            </div>
         </div>
-        <div class="scroll" *ngIf="dataType === 'units'">
-            <mat-table #unitTable [dataSource]="unitPreview" [trackBy]="trackByIndex">
-                <ng-container matColumnDef="system">
-                    <mat-header-cell *matHeaderCellDef>
-                        <span>System</span>
-                    </mat-header-cell>
-                    <mat-cell *matCellDef="let row">
-                        <span>{{ row.system }}</span>
-                    </mat-cell>
-                </ng-container>
-                <ng-container matColumnDef="id">
-                    <mat-header-cell *matHeaderCellDef>
-                        <span>Id</span>
-                    </mat-header-cell>
-                    <mat-cell *matCellDef="let row">
-                        <span>{{ row.id }}</span>
-                    </mat-cell>
-                </ng-container>
-                <ng-container matColumnDef="label">
-                    <mat-header-cell *matHeaderCellDef>
-                        <span>Label</span>
-                    </mat-header-cell>
-                    <mat-cell *matCellDef="let row">
-                        <span>{{ row.label }}</span>
-                    </mat-cell>
-                </ng-container>
-                <ng-container matColumnDef="action">
-                    <mat-header-cell *matHeaderCellDef></mat-header-cell>
-                    <mat-cell *matCellDef="let row; index as i">
-                        <button mat-icon-button (click)="removeUnitRow(i); unitTable.renderRows()">
-                            <mat-icon>clear</mat-icon>
-                        </button>
-                    </mat-cell>
-                </ng-container>
-                <mat-header-row *matHeaderRowDef="unitColumns"></mat-header-row>
-                <mat-row *matRowDef="let row; columns: unitColumns"></mat-row>
-            </mat-table>
-        </div>
-        <p *ngIf="rowCount > previewLimit" class="mat-caption text-center">
-            Showing the first {{ previewLimit }} of {{ rowCount }} rows; all {{ rowCount }} will be imported.
+
+        <p *ngIf="rowCount && !shownCount" class="mat-caption text-center">No rows match this filter.</p>
+        <p *ngIf="rowCount && counts.existing" class="mat-caption text-center">
+            {{ counts.existing }} of the {{ rowCount }} rows land on ids that already exist. You choose whether to keep
+            or replace them when you import.
         </p>
         <p *ngIf="!rowCount" class="mat-body text-center">No CSV data yet</p>
     </section>

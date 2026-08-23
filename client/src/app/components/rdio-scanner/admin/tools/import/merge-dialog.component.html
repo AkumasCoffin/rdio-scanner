@@ -1,0 +1,34 @@
+<h2 mat-dialog-title>{{ data.existing }} {{ data.noun }} already exist</h2>
+
+<mat-dialog-content>
+    <p class="lead">
+        The CSV has {{ data.existing }} {{ data.noun }} whose ids are already configured, and
+        {{ data.new }} that are new. The new ones are added either way.
+    </p>
+
+    <div class="choice">
+        <mat-icon>lock</mat-icon>
+        <div>
+            <strong>Keep matching</strong>
+            <span>Leave the {{ data.existing }} existing {{ data.noun }} exactly as they are and import only the
+                {{ data.new }} new ones.</span>
+        </div>
+    </div>
+
+    <div class="choice">
+        <mat-icon>sync_alt</mat-icon>
+        <div>
+            <strong>Replace matching</strong>
+            <span>Update the {{ data.existing }} existing {{ data.noun }} from the CSV. Blank cells keep their current
+                value, so a sparse file cannot wipe what it does not mention.</span>
+        </div>
+    </div>
+
+    <p class="mat-caption">Nothing is written until you save the configuration.</p>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+    <button mat-button (click)="cancel()">Cancel</button>
+    <button mat-stroked-button class="keep" (click)="close('keep')">Keep matching</button>
+    <button mat-flat-button color="primary" (click)="close('replace')">Replace matching</button>
+</mat-dialog-actions>

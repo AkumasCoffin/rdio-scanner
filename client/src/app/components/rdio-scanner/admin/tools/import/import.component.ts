@@ -18,26 +18,38 @@
  */
 
 import { Component, EventEmitter, OnInit, Output } from '@angular/core';
+import { MatDialog } from '@angular/material/dialog';
 import { MatSnackBar } from '@angular/material/snack-bar';
+import { firstValueFrom } from 'rxjs';
 import { Config, RdioScannerAdminService, System } from '../../admin.service';
 import { decodeCsvBuffer, parseCsv } from '../csv';
 import {
-    ImportTarget, SystemTarget, TalkgroupRow, UnitRow,
-    importTalkgroups, importUnits,
+    ImportMode, ImportPreview, ImportTarget, RowStatus, SystemTarget, TalkgroupRow, UnitRow, UnitsImportTarget,
+    importTalkgroups, importUnits, previewTalkgroups, previewUnits,
 } from '../import-merge';
+import { RdioScannerAdminImportMergeDialogComponent } from './merge-dialog.component';
 
 type ImportDataType = 'talkgroups' | 'units' | 'config';
 type ImportStyle = 'rdio' | 'trunkRecorder' | 'radioReference';
 
-// Rendering thousands of preview rows froze the tab (same class of issue
-// as the c47cf21 admin-list freeze); the import itself still processes
-// every parsed row.
-const PREVIEW_LIMIT = 100;
+/** What the review list shows for one parsed row. */
+export interface PreviewEntry<T> {
+    row: T;
+    status: RowStatus;
+    /** Position in the full row list, so removing a row hits the right one. */
+    index: number;
+}
 
-const TALKGROUP_COLUMNS = ['id', 'label', 'name', 'group', 'tag', 'action'];
-const TALKGROUP_COLUMNS_WITH_SYSTEM = ['system', ...TALKGROUP_COLUMNS];
-const UNIT_COLUMNS = ['id', 'label', 'action'];
-const UNIT_COLUMNS_WITH_SYSTEM = ['system', ...UNIT_COLUMNS];
+/** Which rows the review list shows. */
+export type StatusFilter = 'all' | RowStatus;
+
+const EMPTY_PREVIEW: ImportPreview = { statuses: [], new: 0, existing: 0, unrouted: 0 };
+
+// Row height in the virtualised review list, and the height it grows to
+// before scrolling instead. Must match .preview-row in the stylesheet: the
+// viewport positions rows from this number, not from what it measures.
+const ROW_HEIGHT = 40;
+const MAX_VIEWPORT_HEIGHT = 480;
 
 @Component({
     selector: 'rdio-scanner-admin-import',
@@ -68,11 +80,20 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     talkgroupRows: TalkgroupRow[] = [];
 
-    talkgroupPreview: TalkgroupRow[] = [];
-
     unitRows: UnitRow[] = [];
 
-    unitPreview: UnitRow[] = [];
+    // What the review list renders: every row that passes the status filter,
+    // paired with what importing would do to it. The list is virtualised, so
+    // this is the whole CSV rather than a first-hundred sample — a preview
+    // that stops at 100 rows cannot answer "what would this replace?" for a
+    // file with thousands.
+    talkgroupEntries: PreviewEntry<TalkgroupRow>[] = [];
+
+    unitEntries: PreviewEntry<UnitRow>[] = [];
+
+    counts: ImportPreview = EMPTY_PREVIEW;
+
+    statusFilter: StatusFilter = 'all';
 
     // Distinct non-empty system labels in the parsed rows — drives the
     // multi-system warning without re-scanning rows every change detection.
@@ -88,12 +109,13 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     unknownSystems: string[] = [];
 
-    previewLimit = PREVIEW_LIMIT;
-
-    trackByIndex = (index: number): number => index;
+    // Keyed on the row's real position, so scrolling a virtualised list does
+    // not rebuild rows that only moved viewport slot.
+    trackByEntry = (_: number, entry: PreviewEntry<TalkgroupRow | UnitRow>): number => entry.index;
 
     constructor(
         private adminService: RdioScannerAdminService,
+        private matDialog: MatDialog,
         private matSnackBar: MatSnackBar,
     ) { }
 
@@ -113,20 +135,38 @@ export class RdioScannerAdminImportComponent implements OnInit {
         this.reconcileTarget();
     }
 
-    get talkgroupColumns(): string[] {
-        return this.style === 'rdio' ? TALKGROUP_COLUMNS_WITH_SYSTEM : TALKGROUP_COLUMNS;
-    }
-
-    get unitColumns(): string[] {
-        return this.csvHasSystemColumn ? UNIT_COLUMNS_WITH_SYSTEM : UNIT_COLUMNS;
-    }
-
     get rowCount(): number {
         return this.dataType === 'units' ? this.unitRows.length : this.talkgroupRows.length;
     }
 
     get csvHasSystemColumn(): boolean {
         return this.hasHeader && 'system' in this.headerMap;
+    }
+
+    /** True when the review list has a System column to show. */
+    get showSystemColumn(): boolean {
+        return this.dataType === 'talkgroups' ? this.style === 'rdio' : this.csvHasSystemColumn;
+    }
+
+    /** How many rows the current status filter is showing. */
+    get shownCount(): number {
+        return this.dataType === 'units' ? this.unitEntries.length : this.talkgroupEntries.length;
+    }
+
+    /**
+     * The review list grows with its content up to a limit, then scrolls.
+     * A viewport fixed at full height leaves a short CSV floating in empty
+     * space; one sized purely to content puts the import button below the
+     * fold for a long one.
+     */
+    get viewportHeight(): number {
+        return Math.min(MAX_VIEWPORT_HEIGHT, Math.max(ROW_HEIGHT, this.shownCount * ROW_HEIGHT));
+    }
+
+    statusLabel(status: RowStatus): string {
+        if (status === 'existing') return 'Replaces';
+
+        return status === 'unrouted' ? 'No system' : 'New';
     }
 
     // The routed target needs the CSV to say which system each row belongs
@@ -173,11 +213,13 @@ export class RdioScannerAdminImportComponent implements OnInit {
     reset(): void {
         this.rawRows = [];
         this.talkgroupRows = [];
-        this.talkgroupPreview = [];
+        this.talkgroupEntries = [];
         this.unitRows = [];
-        this.unitPreview = [];
+        this.unitEntries = [];
         this.unknownSystems = [];
         this.distinctSystems = 0;
+        this.counts = EMPTY_PREVIEW;
+        this.statusFilter = 'all';
     }
 
     // reconcileTarget re-points the selected target at the freshly fetched
@@ -348,31 +390,91 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     private setTalkgroupRows(rows: TalkgroupRow[]): void {
         this.talkgroupRows = rows;
-        this.talkgroupPreview = rows.slice(0, PREVIEW_LIMIT);
         this.distinctSystems = new Set(rows.map((r) => r.system).filter((s) => s)).size;
     }
 
     private setUnitRows(rows: UnitRow[]): void {
         this.unitRows = rows;
-        this.unitPreview = rows.slice(0, PREVIEW_LIMIT);
         this.distinctSystems = new Set(rows.map((r) => r.system).filter((s) => s)).size;
     }
 
+    // Also the single place the preview is rebuilt: it is called after every
+    // parse and on every target change, which is exactly when what a row
+    // would do can change.
     updateUnknownSystems(): void {
-        if (this.target.kind !== 'routed') {
+        if (this.target.kind === 'routed') {
+            const known = new Set((this.baseConfig.systems ?? []).map((s) => s.label));
+            const rows: { system: string }[] = this.dataType === 'units' ? this.unitRows : this.talkgroupRows;
+            this.unknownSystems = [...new Set(
+                rows.filter((r) => !known.has(r.system)).map((r) => r.system || '(empty)'),
+            )];
+        } else {
             this.unknownSystems = [];
-            return;
         }
-        const known = new Set((this.baseConfig.systems ?? []).map((s) => s.label));
-        const rows: { system: string }[] = this.dataType === 'units' ? this.unitRows : this.talkgroupRows;
-        this.unknownSystems = [...new Set(
-            rows.filter((r) => !known.has(r.system)).map((r) => r.system || '(empty)'),
-        )];
+
+        this.refreshPreview();
+    }
+
+    setStatusFilter(filter: StatusFilter): void {
+        this.statusFilter = filter;
+        this.refreshPreview();
+    }
+
+    private refreshPreview(): void {
+        if (this.dataType === 'units') {
+            this.counts = previewUnits(this.baseConfig, this.unitRows, this.unitsTarget());
+            this.dropEmptyFilter();
+            this.unitEntries = this.buildEntries(this.unitRows, this.counts.statuses);
+            this.talkgroupEntries = [];
+        } else if (this.dataType === 'talkgroups') {
+            this.counts = previewTalkgroups(this.baseConfig, this.talkgroupRows, this.target);
+            this.dropEmptyFilter();
+            this.talkgroupEntries = this.buildEntries(this.talkgroupRows, this.counts.statuses);
+            this.unitEntries = [];
+        } else {
+            this.counts = EMPTY_PREVIEW;
+        }
+    }
+
+    /**
+     * Changing the target can empty the filtered category — most obviously
+     * the unrouted one, whose chip only exists while it has rows. Leaving the
+     * filter on it shows an empty list next to a set of chips that no longer
+     * offers the one it is stuck on, so the filter falls back to showing
+     * everything.
+     */
+    private dropEmptyFilter(): void {
+        const remaining = this.statusFilter === 'new' ? this.counts.new
+            : this.statusFilter === 'existing' ? this.counts.existing
+                : this.statusFilter === 'unrouted' ? this.counts.unrouted : 1;
+
+        if (!remaining) {
+            this.statusFilter = 'all';
+        }
+    }
+
+    private buildEntries<T>(rows: T[], statuses: RowStatus[]): PreviewEntry<T>[] {
+        const entries: PreviewEntry<T>[] = [];
+
+        rows.forEach((row, index) => {
+            const status = statuses[index] ?? 'new';
+
+            if (this.statusFilter === 'all' || status === this.statusFilter) {
+                entries.push({ row, status, index });
+            }
+        });
+
+        return entries;
+    }
+
+    /** The units target the current selection resolves to. */
+    private unitsTarget(): UnitsImportTarget {
+        return this.target.kind === 'routed'
+            ? { kind: 'routed' }
+            : { kind: 'system', systemId: this.target.kind === 'system' ? this.target.system.id : undefined };
     }
 
     removeTalkgroupRow(index: number): void {
-        // Preview is the first PREVIEW_LIMIT rows, so a preview index is
-        // the same index in the full list.
         this.talkgroupRows.splice(index, 1);
         this.setTalkgroupRows(this.talkgroupRows);
         this.updateUnknownSystems();
@@ -385,15 +487,19 @@ export class RdioScannerAdminImportComponent implements OnInit {
     }
 
     async import(): Promise<void> {
+        const mode = await this.askMode();
+
+        if (!mode) {
+            return;
+        }
+
         // Work on a fresh config: the emit downstream rebuilds the whole
         // form from it, and a stale snapshot would revert other sections.
         const config = await this.adminService.getConfig();
 
         const error = this.dataType === 'talkgroups'
-            ? importTalkgroups(config, this.talkgroupRows, this.target)
-            : importUnits(config, this.unitRows, this.target.kind === 'routed'
-                ? { kind: 'routed' }
-                : { kind: 'system', systemId: this.target.kind === 'system' ? this.target.system.id : undefined });
+            ? importTalkgroups(config, this.talkgroupRows, this.target, mode)
+            : importUnits(config, this.unitRows, this.unitsTarget(), mode);
 
         if (error) {
             this.matSnackBar.open(error, '', { duration: 5000 });
@@ -403,6 +509,32 @@ export class RdioScannerAdminImportComponent implements OnInit {
         this.reset();
 
         this.config.emit(config);
+    }
+
+    /**
+     * Asks what to do about rows that land on ids the target already has.
+     *
+     * Returns undefined when the user backs out. Nothing to overwrite means
+     * nothing to ask, so a clean import goes straight through.
+     */
+    private async askMode(): Promise<ImportMode | undefined> {
+        if (!this.counts.existing) {
+            return 'replace';
+        }
+
+        const answer = await firstValueFrom(
+            this.matDialog.open(RdioScannerAdminImportMergeDialogComponent, {
+                data: {
+                    noun: this.dataType === 'units' ? 'units' : 'talkgroups',
+                    existing: this.counts.existing,
+                    new: this.counts.new,
+                },
+                width: '34rem',
+                maxWidth: '95vw',
+            }).afterClosed(),
+        );
+
+        return answer ? (answer.mode as ImportMode) : undefined;
     }
 
     // The whole-config JSON import, moved verbatim from the retired

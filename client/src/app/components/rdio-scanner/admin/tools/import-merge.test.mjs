@@ -29,7 +29,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { importTalkgroups, importUnits } from './import-merge.ts';
+import {
+    importTalkgroups, importUnits, previewTalkgroups, previewUnits,
+} from './import-merge.ts';
 
 const row = (over = {}) => ({
     system: '', id: 101, label: 'TG 101', name: '', group: '', tag: '',
@@ -178,4 +180,135 @@ test('routed target sends each unit row to its own system', () => {
     // Same unit id in two systems stays two units, each renamed in place.
     assert.equal(config.systems[0].units[0].label, 'Metro 7 Renamed');
     assert.equal(config.systems[1].units[0].label, 'Rural 7 Renamed');
+});
+
+/*
+ * Keep vs replace, and the preview that promises which one a row will get.
+ *
+ * The preview is the only thing telling the user what an import is about to
+ * overwrite, so its verdict has to be the same one the import acts on — the
+ * tests below check both halves against the same config rather than
+ * checking the preview against itself.
+ */
+
+test('keep mode leaves matching talkgroups untouched and still adds new ones', () => {
+    const config = baseConfig();
+    const err = importTalkgroups(config, [
+        row({ id: 101, label: 'New A', name: 'New A Name', group: 'EMS' }),
+        row({ id: 103, label: 'TG 103' }),
+    ], { kind: 'system', system: { id: 1 } }, 'keep');
+
+    assert.equal(err, null);
+    const tgs = config.systems[0].talkgroups;
+    assert.equal(tgs.length, 3);
+    assert.equal(tgs[0].label, 'Old A');
+    assert.equal(tgs[0].name, 'Old A Name');
+    assert.equal(tgs[2].label, 'TG 103');
+    // The skipped row's group must not be created either — a keep-mode
+    // import that grows the group list has changed something it promised
+    // not to. ('Unknown' is there for the new row's empty group cell, which
+    // is the insert path doing its usual job.)
+    assert.equal(config.groups.some((g) => g.label === 'EMS'), false);
+    assert.deepEqual(config.groups.map((g) => g.label), ['Fire', 'Unknown']);
+});
+
+test('replace mode is the default, so the round trip is unchanged', () => {
+    const config = baseConfig();
+    importTalkgroups(config, [row({ id: 101, label: 'New A' })], { kind: 'system', system: { id: 1 } });
+
+    assert.equal(config.systems[0].talkgroups[0].label, 'New A');
+});
+
+test('keep mode leaves matching units untouched', () => {
+    const config = baseConfig();
+    importUnits(config, [
+        { system: '', id: 7, label: 'Renamed' },
+        { system: '', id: 8, label: 'Unit 8' },
+    ], { kind: 'system', systemId: 1 }, 'keep');
+
+    const units = config.systems[0].units;
+    assert.equal(units.length, 2);
+    assert.equal(units[0].label, 'Unit 7');
+    assert.equal(units[1].label, 'Unit 8');
+});
+
+test('the preview marks each row new or existing, and counts them', () => {
+    const config = baseConfig();
+    const preview = previewTalkgroups(config, [
+        row({ id: 101 }), row({ id: 103 }), row({ id: 102 }),
+    ], { kind: 'system', system: { id: 1 } });
+
+    assert.deepEqual(preview.statuses, ['existing', 'new', 'existing']);
+    assert.equal(preview.existing, 2);
+    assert.equal(preview.new, 1);
+    assert.equal(preview.unrouted, 0);
+});
+
+test('every row is new when the target system does not exist yet', () => {
+    const config = baseConfig();
+
+    assert.deepEqual(
+        previewTalkgroups(config, [row({ id: 101 })], { kind: 'newSystem' }).statuses,
+        ['new'],
+    );
+    // A target id that has since gone reads the same way rather than
+    // claiming rows would be replaced in a system that is not there.
+    assert.deepEqual(
+        previewTalkgroups(config, [row({ id: 101 })], { kind: 'system', system: { id: 99 } }).statuses,
+        ['new'],
+    );
+});
+
+test('a routed row naming an unconfigured system is reported as unrouted', () => {
+    const config = baseConfig();
+    const preview = previewTalkgroups(config, [
+        row({ system: 'Metro', id: 101 }),
+        row({ system: 'Metro', id: 103 }),
+        row({ system: 'Nowhere', id: 104 }),
+    ], { kind: 'routed' });
+
+    assert.deepEqual(preview.statuses, ['existing', 'new', 'unrouted']);
+    assert.equal(preview.unrouted, 1);
+});
+
+test('the preview agrees with what the import actually does', () => {
+    const rows = [row({ id: 101, label: 'New A' }), row({ id: 103, label: 'TG 103' })];
+    const target = { kind: 'system', system: { id: 1 } };
+
+    const preview = previewTalkgroups(baseConfig(), rows, target);
+
+    const kept = baseConfig();
+    importTalkgroups(kept, rows, target, 'keep');
+    const replaced = baseConfig();
+    importTalkgroups(replaced, rows, target, 'replace');
+
+    rows.forEach((r, i) => {
+        const before = baseConfig().systems[0].talkgroups.find((tg) => tg.id === r.id);
+        const afterKeep = kept.systems[0].talkgroups.find((tg) => tg.id === r.id);
+        const afterReplace = replaced.systems[0].talkgroups.find((tg) => tg.id === r.id);
+
+        if (preview.statuses[i] === 'existing') {
+            // Promised a replacement: keep mode preserves it, replace mode
+            // changes it.
+            assert.equal(afterKeep.label, before.label);
+            assert.equal(afterReplace.label, r.label);
+        } else {
+            // Promised a new row: it did not exist, and both modes add it.
+            assert.equal(before, undefined);
+            assert.equal(afterKeep.label, r.label);
+            assert.equal(afterReplace.label, r.label);
+        }
+    });
+});
+
+test('the unit preview resolves the same targets as the unit import', () => {
+    const config = baseConfig();
+    const rows = [{ system: 'Metro', id: 7, label: 'Renamed' }, { system: 'Metro', id: 8, label: 'Unit 8' }];
+
+    assert.deepEqual(previewUnits(config, rows, { kind: 'system', systemId: 1 }).statuses, ['existing', 'new']);
+    assert.deepEqual(previewUnits(config, rows, { kind: 'routed' }).statuses, ['existing', 'new']);
+    assert.deepEqual(
+        previewUnits(config, [{ system: 'Nowhere', id: 7, label: 'x' }], { kind: 'routed' }).statuses,
+        ['unrouted'],
+    );
 });

@@ -1,0 +1,71 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2019-2022 Chrystian Huot <chrystian.huot@saubeo.solutions>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * ****************************************************************************
+ */
+
+.lead {
+    margin: 0 0 1rem;
+    opacity: 0.85;
+}
+
+// One option per row, so the two outcomes can be compared at a glance rather
+// than read out of a paragraph. Same shape as the uninstall dialog.
+.choice {
+    align-items: flex-start;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+    display: flex;
+    gap: 0.75rem;
+    padding: 0.75rem;
+
+    + .choice {
+        margin-top: 0.5rem;
+    }
+
+    mat-icon {
+        flex: none;
+        opacity: 0.7;
+    }
+
+    div {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+    }
+
+    strong {
+        font-size: 0.95rem;
+    }
+
+    span {
+        font-size: 0.85rem;
+        line-height: 1.35;
+        opacity: 0.8;
+    }
+}
+
+.mat-caption {
+    display: block;
+    margin: 1rem 0 0;
+    opacity: 0.7;
+}
+
+mat-dialog-actions {
+    gap: 0.5rem;
+
+    // Neither answer is destructive, so both have to look pressable. A stroked
+    // button on this background renders as a faint outline with a dim label,
+    // which reads as disabled and pushes people to the filled button beside it
+    // for the wrong reason. !important because the theme sets the label colour
+    // on the button element itself.
+    button.keep.mat-stroked-button {
+        border-color: rgba(255, 255, 255, 0.5) !important;
+        color: #fff !important;
+    }
+}

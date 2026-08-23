@@ -68,6 +68,113 @@ export type ImportTarget = { kind: 'newSystem' } | { kind: 'routed' } | SystemTa
 
 export type UnitsImportTarget = { kind: 'system'; systemId: number | undefined } | { kind: 'routed' };
 
+/**
+ * What to do with a CSV row whose id already exists in the target.
+ *
+ * 'replace' updates the existing entry from the CSV — the round trip an
+ * export, edit and re-import expects. 'keep' leaves it exactly as configured
+ * and imports only the ids that are new, which is what a broad list (a whole
+ * RadioReference dump, say) wants when the entries already set up by hand are
+ * the good ones.
+ */
+export type ImportMode = 'keep' | 'replace';
+
+/** What importing would do to one row. */
+export type RowStatus = 'new' | 'existing' | 'unrouted';
+
+/** Row counts by status, for the confirmation dialog. */
+export interface ImportPreview {
+    statuses: RowStatus[];
+    new: number;
+    existing: number;
+    unrouted: number;
+}
+
+/**
+ * Works out what importing would do, without doing it.
+ *
+ * Resolves targets exactly as the import does, so what the review table
+ * promises and what the import performs cannot drift apart.
+ */
+export function previewTalkgroups(config: Config, rows: TalkgroupRow[], target: ImportTarget): ImportPreview {
+    const ids = targetIds(
+        config,
+        target.kind === 'routed',
+        target.kind === 'system' ? target.system.id : undefined,
+        (system) => system.talkgroups ?? [],
+    );
+
+    return summarize(rows.map((row) => rowStatus(ids, target.kind === 'routed' ? row.system : undefined, row.id)));
+}
+
+export function previewUnits(config: Config, rows: UnitRow[], target: UnitsImportTarget): ImportPreview {
+    const ids = targetIds(
+        config,
+        target.kind === 'routed',
+        target.kind === 'system' ? target.systemId : undefined,
+        (system) => system.units ?? [],
+    );
+
+    return summarize(rows.map((row) => rowStatus(ids, target.kind === 'routed' ? row.system : undefined, row.id)));
+}
+
+/**
+ * The ids already present in whatever the rows are aimed at: one set under the
+ * empty key for a single target, or one per system label when the rows route
+ * themselves. A target that does not exist yet — a new system, or a system id
+ * that has since gone — contributes an empty set, so every row reads as new.
+ */
+function targetIds(
+    config: Config,
+    routed: boolean,
+    systemId: number | undefined,
+    entries: (system: System) => { id?: number | null }[],
+): Map<string, Set<number>> {
+    const systems = config.systems ?? [];
+
+    const collect = (system: System | undefined): Set<number> => {
+        const ids = new Set<number>();
+
+        for (const entry of system ? entries(system) : []) {
+            if (typeof entry.id === 'number') ids.add(entry.id);
+        }
+
+        return ids;
+    };
+
+    if (!routed) {
+        return new Map([['', collect(systems.find((system) => system.id === systemId))]]);
+    }
+
+    const byLabel = new Map<string, Set<number>>();
+
+    for (const system of systems) {
+        if (system.label !== undefined) byLabel.set(system.label, collect(system));
+    }
+
+    return byLabel;
+}
+
+function rowStatus(ids: Map<string, Set<number>>, systemLabel: string | undefined, id: number): RowStatus {
+    const known = ids.get(systemLabel ?? '');
+
+    // A routed row naming a system that is not configured goes nowhere. The
+    // import already drops those silently; saying so per row is what makes
+    // them findable in a list of thousands.
+    if (!known) return 'unrouted';
+
+    return known.has(id) ? 'existing' : 'new';
+}
+
+function summarize(statuses: RowStatus[]): ImportPreview {
+    return {
+        statuses,
+        new: statuses.filter((status) => status === 'new').length,
+        existing: statuses.filter((status) => status === 'existing').length,
+        unrouted: statuses.filter((status) => status === 'unrouted').length,
+    };
+}
+
 // labelIdResolver returns a label -> _id resolver over a groups/tags list,
 // creating missing entries with the next free id. The server neither
 // validates nor auto-creates groups/tags on config save, and dangling ids
@@ -113,7 +220,12 @@ function groupRowsBySystem<T extends { system: string }>(rows: T[]): Map<string,
 
 // importTalkgroups applies rows to config for the given target. Returns an
 // error message, or null on success.
-export function importTalkgroups(config: Config, rows: TalkgroupRow[], target: ImportTarget): string | null {
+export function importTalkgroups(
+    config: Config,
+    rows: TalkgroupRow[],
+    target: ImportTarget,
+    mode: ImportMode = 'replace',
+): string | null {
     config.systems = config.systems ?? [];
     config.groups = config.groups ?? [];
     config.tags = config.tags ?? [];
@@ -131,6 +243,11 @@ export function importTalkgroups(config: Config, rows: TalkgroupRow[], target: I
         }
 
         for (const row of systemRows) {
+            // Resolving a label creates the group or tag when it is missing,
+            // so skip that for a row keep mode is about to ignore — otherwise
+            // importing in keep mode would still grow the group list.
+            if (mode === 'keep' && byId.has(row.id)) continue;
+
             const rowGroupId = groupId(row.group);
             const rowTagId = tagId(row.tag);
             const existing = byId.get(row.id);
@@ -200,7 +317,12 @@ export function importTalkgroups(config: Config, rows: TalkgroupRow[], target: I
 // importUnits merges rows into their target: update labels of existing unit
 // ids, append unknown ones with order continuing from the current maximum.
 // Returns an error message, or null on success.
-export function importUnits(config: Config, rows: UnitRow[], target: UnitsImportTarget): string | null {
+export function importUnits(
+    config: Config,
+    rows: UnitRow[],
+    target: UnitsImportTarget,
+    mode: ImportMode = 'replace',
+): string | null {
     config.systems = config.systems ?? [];
 
     const mergeInto = (system: System, systemRows: UnitRow[]) => {
@@ -215,6 +337,8 @@ export function importUnits(config: Config, rows: UnitRow[], target: UnitsImport
         for (const row of systemRows) {
             const existing = byId.get(row.id);
             if (existing) {
+                if (mode === 'keep') continue;
+
                 if (row.label) existing.label = row.label;
             } else {
                 const unit: Unit = { id: row.id, label: row.label, order: ++nextOrder };
