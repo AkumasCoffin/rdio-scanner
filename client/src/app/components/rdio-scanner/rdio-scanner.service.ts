@@ -94,6 +94,7 @@ enum WebsocketCommand {
     LivefeedMap = 'LFM',
     Max = 'MAX',
     Overlay = 'OVL',
+    Patch = 'PAT',
     Pin = 'PIN',
     Transcript = 'TRX',
     Version = 'VER',
@@ -2150,6 +2151,63 @@ export class RdioScannerService implements OnDestroy {
         return touched;
     }
 
+    /**
+     * applyPatchUpdate corrects a call the server has already sent us.
+     *
+     * A patched transmission arrives at the server once per talkgroup, and the
+     * first copy is passed straight on — at which point the others are still
+     * in flight, so the call names only the talkgroup it came in on and reads
+     * as unpatched. When its siblings land, the server says so, and this puts
+     * the answer on whatever is holding that call: the pre-queue, the call
+     * playing right now, the rest of the queue, and the search results if they
+     * happen to be open on it.
+     *
+     * The talkgroup travels with it because a patched call can move: it files
+     * under the highest-ranked talkgroup that actually received a copy, which
+     * is not known until the copies are in either.
+     */
+    private applyPatchUpdate(id: number, patches: unknown, talkgroup: unknown): void {
+        const list = Array.isArray(patches) ? patches as number[] : [];
+        const home = typeof talkgroup === 'number' && talkgroup > 0 ? talkgroup : undefined;
+
+        const apply = (call: RdioScannerCall | undefined): boolean => {
+            if (!call || call.id !== id) {
+                return false;
+            }
+
+            call.patches = list;
+
+            // A promoted call is filed elsewhere, so its resolved labels have
+            // to move with it — leaving them alone would show the new
+            // talkgroup's traffic under the old one's name.
+            if (home !== undefined && call.talkgroup !== home) {
+                call.talkgroup = home;
+                this.transformCall(call);
+            }
+
+            return true;
+        };
+
+        for (const entry of this.pendingTranscriptCalls) {
+            apply(entry.call);
+        }
+
+        for (const queued of this.callQueue) {
+            apply(queued);
+        }
+
+        for (const result of this.playbackList?.results || []) {
+            apply(result);
+        }
+
+        // Re-emit only for the call on screen: the others are read when they
+        // get there, and an emit per correction would redraw the live feed for
+        // a call nobody is looking at yet.
+        if (apply(this.call)) {
+            this.event.emit({ call: this.call });
+        }
+    }
+
     // enqueuePending is the normal queue path that a held call takes once
     // its transcript has arrived (or its timeout elapsed).
     private enqueuePending(call: RdioScannerCall, priority: boolean): void {
@@ -2889,6 +2947,16 @@ export class RdioScannerService implements OnDestroy {
                     this.event.emit({ auth: true, expired: true });
 
                     break;
+
+                case WebsocketCommand.Patch: {
+                    const update = message[1];
+
+                    if (update && typeof update.id === 'number') {
+                        this.applyPatchUpdate(update.id, update.patches, update.talkgroup);
+                    }
+
+                    break;
+                }
 
                 case WebsocketCommand.ListCall: {
                     const chunk: RdioScannerPlaybackList | undefined = message[1];

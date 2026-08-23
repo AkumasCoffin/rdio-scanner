@@ -544,3 +544,108 @@ func TestPatchHomesNeverClaimedWithoutReceipt(t *testing.T) {
 		t.Errorf("call filed under %v, want 300 — neither home received it", stored.Talkgroup)
 	}
 }
+
+// The live feed sends a patched call the moment its first copy lands, which is
+// before the copies on the other talkgroups exist. Whatever is holding that
+// call between then and the siblings arriving is holding a value that says the
+// transmission was heard on one talkgroup when the record says several — the
+// reason a patch showed in search but never on the LCD.
+func TestRefreshPatchStatePicksUpWhatTheSiblingsAdded(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	calls := NewCalls()
+	patch := &Patch{SystemId: 1, TalkgroupId: 100, Talkgroups: []uint{100, 200, 300}}
+	patch.normalize()
+
+	at := time.Date(2026, 8, 23, 12, 32, 3, 0, time.UTC)
+
+	first := &Call{System: 1, Talkgroup: 300, DateTime: at, Audio: []byte{1}, AudioName: "a.wav"}
+	applyPatch(patch, first)
+
+	id, err := calls.WriteCall(first, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first.Id = id
+
+	// This is the value the live feed was handed: its own talkgroup and
+	// nothing else, which every display reads as unpatched.
+	if got := mergePatches(first.Patches, nil); len(got) != 1 || got[0] != 300 {
+		t.Fatalf("the emitted call named %v, want just the talkgroup it arrived on", got)
+	}
+
+	// The siblings land: one joins, one joins and outranks the home.
+	if err := calls.AddPatch(id, 200, db); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := calls.AddPatch(id, 100, db); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := calls.PromoteCall(id, 100, db); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := calls.RefreshPatchState(first, db); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	if got, want := mergePatches(first.Patches, nil), []uint{300, 200, 100}; !reflect.DeepEqual(got, want) {
+		t.Errorf("refreshed call names %v, want %v — every talkgroup that carried it", got, want)
+	}
+
+	if first.Talkgroup != 100 {
+		t.Errorf("refreshed call filed under %v, want 100 — it was promoted", first.Talkgroup)
+	}
+}
+
+// The correction has to reach the listener who was sent the call, and that is
+// not the same set as the listeners who would be sent it now: a patched call
+// is promoted onto the highest-ranked talkgroup that received a copy, which
+// may be one the recipient does not hold.
+func TestPatchUpdateReachesAListenerWhoDoesNotHoldTheNewTalkgroup(t *testing.T) {
+	clients := NewClients()
+
+	listener := &Client{Access: &Access{}, Livefeed: NewLivefeed(), Send: make(chan *Message, 8)}
+	listener.Livefeed.Matrix[1] = map[uint]bool{300: true}
+	clients.Add(listener)
+
+	// Promoted to 100, which this listener does not hold.
+	clients.EmitPatchUpdate(&Call{Id: uint(7), System: 1, Talkgroup: 100, Patches: []uint{300, 100}}, false)
+
+	select {
+	case message := <-listener.Send:
+		if message.Command != MessageCommandPatch {
+			t.Fatalf("listener got command %v, want %v", message.Command, MessageCommandPatch)
+		}
+
+		payload, ok := message.Payload.(map[string]any)
+		if !ok {
+			t.Fatalf("payload is %T, want a map", message.Payload)
+		}
+
+		if payload["id"] != uint(7) {
+			t.Errorf("payload names call %v, want 7", payload["id"])
+		}
+
+		if got, want := payload["patches"], []uint{300, 100}; !reflect.DeepEqual(got, want) {
+			t.Errorf("payload carries %v, want %v", got, want)
+		}
+
+		if payload["talkgroup"] != uint(100) {
+			t.Errorf("payload files the call under %v, want 100", payload["talkgroup"])
+		}
+
+		// A correction is not a call: sending audio would make listeners play
+		// the transmission a second time.
+		if _, carries := payload["audio"]; carries {
+			t.Error("the correction carries audio")
+		}
+
+	default:
+		t.Fatal("the listener holding the call got no correction")
+	}
+}

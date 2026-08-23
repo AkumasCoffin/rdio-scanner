@@ -66,6 +66,10 @@ type Call struct {
 	// upload, all on the single goroutine every other upload waits behind.
 	// Created on first use, so an install with no plugins never allocates one.
 	pluginBudget *pluginBudget
+	// patchUpdate marks this value as a correction to a call already sent to
+	// listeners rather than a call to play. It rides the same queue as a real
+	// emit, so a correction can never overtake the call it corrects.
+	patchUpdate bool
 }
 
 func NewCall() *Call {
@@ -346,6 +350,46 @@ func (calls *Calls) AddPatch(id uint, talkgroup uint, db *Database) error {
 
 	if _, err = db.Exec("update `rdioScannerCalls` set `patches` = ? where `id` = ?", string(b), id); err != nil {
 		return formatError(err)
+	}
+
+	return nil
+}
+
+// RefreshPatchState re-reads a stored call's talkgroup and received-talkgroup
+// list into the in-memory copy.
+//
+// A patched transmission arrives once per talkgroup, so what a call was
+// received on is not known when the first copy lands — only once its siblings
+// have been collapsed into it. Anything holding a call between those two
+// moments is holding a value whose patch list is already out of date, and
+// sending it says the call was received on one talkgroup when the record says
+// three.
+func (calls *Calls) RefreshPatchState(call *Call, db *Database) error {
+	id, ok := callIdAsUint(call.Id)
+	if !ok {
+		return nil
+	}
+
+	var (
+		patches   sql.NullString
+		talkgroup uint
+	)
+
+	if err := db.QueryRow(
+		"select `talkgroup`, `patches` from `rdioScannerCalls` where `id` = ?", id,
+	).Scan(&talkgroup, &patches); err != nil {
+		return fmt.Errorf("calls.refreshpatchstate: %v", err)
+	}
+
+	call.Talkgroup = talkgroup
+	call.Patches = []uint{}
+
+	if patches.Valid && len(patches.String) > 0 {
+		decoded := []uint{}
+
+		if err := json.Unmarshal([]byte(patches.String), &decoded); err == nil {
+			call.Patches = decoded
+		}
 	}
 
 	return nil

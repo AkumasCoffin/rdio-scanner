@@ -224,6 +224,32 @@ func (controller *Controller) EmitCallToClients(call *Call) {
 	}
 }
 
+// EmitPatchUpdateToClients corrects a call already sent to listeners, once its
+// siblings have joined it.
+//
+// Goes through the same queue as the call itself, so the correction cannot
+// overtake what it corrects — a listener that has not been sent the call yet
+// has nothing to apply it to and would drop it.
+func (controller *Controller) EmitPatchUpdateToClients(id uint) {
+	call, err := controller.Calls.GetCallMeta(id, controller.Database)
+	if err != nil {
+		controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("controller.emitpatchupdate: %v", err))
+		return
+	}
+
+	call.Id = id
+	call.patchUpdate = true
+
+	select {
+	case controller.clientEmitQueue <- call:
+	default:
+		// Losing this costs a display the patch flag until the call is opened
+		// in search, where it is read from the record. The call itself is
+		// stored and correct either way.
+		controller.reportQueueFull("listener", call)
+	}
+}
+
 // QueueIngest hands a call to the ingest goroutine, or says it could not.
 //
 // Every caller has something better to do than wait. The upload handler can
@@ -656,8 +682,11 @@ func (controller *Controller) IngestCall(call *Call) {
 				// The copy is dropped, but the talkgroup it arrived on is not:
 				// it joins the stored call, which is the whole record of which
 				// channels carried this transmission.
+				joined := true
+
 				if err := controller.Calls.AddPatch(id, arrivedOn, controller.Database); err != nil {
 					logError(err)
+					joined = false
 				}
 
 				// A copy really arrived on a more important home than the one
@@ -670,6 +699,15 @@ func (controller *Controller) IngestCall(call *Call) {
 					} else {
 						logCall(call, LogLevelInfo, fmt.Sprintf("patched call promoted to talkgroup %v", arrivedOn))
 					}
+				}
+
+				// Listeners were sent this call before its siblings existed,
+				// so what they are showing is a moment out of date: it now
+				// names a talkgroup it did not name then, and may have moved
+				// to another one. Without this the patch only ever appears in
+				// search, where the record is read fresh.
+				if joined {
+					controller.EmitPatchUpdateToClients(id)
 				}
 
 				logCall(call, LogLevelInfo, fmt.Sprintf("patched call already received, adding talkgroup %v", arrivedOn))
@@ -1170,6 +1208,14 @@ func (controller *Controller) Start() error {
 	// into the channel buffer with no consumer.
 	go func() {
 		for call := range controller.clientEmitQueue {
+			// A correction to a call already sent, not a call to play: no
+			// audio, no plugin fields, no emit filtering — just the record as
+			// it now stands, put on the displays already showing it.
+			if call.patchUpdate {
+				controller.Clients.EmitPatchUpdate(call, controller.Accesses.IsRestricted())
+				continue
+			}
+
 			// Fill in plugin-contributed fields on the way out, so a value a
 			// plugin has already computed reaches the live feed — and Android,
 			// which reads those fields inline off the call payload.

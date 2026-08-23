@@ -35,7 +35,11 @@ const (
 	// works while the overlay is a page the server knows about. Once it is a
 	// plugin at a path of its own choosing, the server has no business guessing.
 	MessageCommandOverlay = "OVL"
-	MessageCommandPin     = "PIN"
+	// MessageCommandPatch corrects a call already sent to listeners: the
+	// talkgroups it turned out to have been received on, and where it is now
+	// filed. Carries no audio and asks for nothing to be played.
+	MessageCommandPatch = "PAT"
+	MessageCommandPin   = "PIN"
 	MessageCommandPushId         = "PID"
 	MessageCommandServer         = "SRV"
 	MessageCommandVersion        = "VER"

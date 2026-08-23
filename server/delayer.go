@@ -93,6 +93,14 @@ func (delayer *Delayer) Delay(call *Call) {
 		delete(delayer.timers, callId)
 		delayer.mutex.Unlock()
 
+		// The held copy is the call as it was when it landed. A patched
+		// transmission's siblings arrive after that and are folded into the
+		// stored record, so send what the record says now rather than what
+		// was true when the hold started.
+		if err := delayer.controller.Calls.RefreshPatchState(call, delayer.controller.Database); err != nil {
+			logError(err)
+		}
+
 		delayer.controller.EmitCallToClients(call)
 	})
 

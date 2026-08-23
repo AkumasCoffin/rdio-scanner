@@ -489,6 +489,47 @@ func (clients *Clients) EmitCall(call *Call, restricted bool) (recipients int) {
 	return recipients
 }
 
+// EmitPatchUpdate tells listeners that a call they have already been sent was
+// received on more talkgroups than it named at the time, and where it now
+// sits.
+//
+// The live feed cannot get this right first time. The copies of a patched
+// transmission arrive one per talkgroup, and the first is sent the moment it
+// lands, while the others are still in flight — so the call goes out at once
+// and is corrected here, rather than every listener paying a delay on every
+// patched call for the chance that a sibling follows.
+//
+// Carries no audio and asks for nothing to be played. A listener with no such
+// call ignores it, which is what makes it safe to send to everyone the access
+// rules allow.
+func (clients *Clients) EmitPatchUpdate(call *Call, restricted bool) {
+	payload := map[string]any{
+		"id":        call.Id,
+		"patches":   call.Patches,
+		"talkgroup": call.Talkgroup,
+	}
+
+	clients.mutex.RLock()
+
+	candidates := make([]*Client, 0, len(clients.Map))
+
+	for c := range clients.Map {
+		// Deliberately not filtered by the livefeed selection the way EmitCall
+		// is: a patched call can be promoted onto a talkgroup its recipient
+		// does not hold, and the listener who was sent it is still the
+		// listener who needs the correction.
+		if !restricted || c.Access.HasAccess(call) {
+			candidates = append(candidates, c)
+		}
+	}
+
+	clients.mutex.RUnlock()
+
+	for _, c := range candidates {
+		c.enqueue(&Message{Command: MessageCommandPatch, Payload: payload})
+	}
+}
+
 func (clients *Clients) EmitConfig(groups *Groups, options *Options, systems *Systems, tags *Tags, restricted bool) {
 	// Snapshot under the lock, send outside it. SendConfig enters the
 	// client.config point, so holding the read lock across this loop would keep
