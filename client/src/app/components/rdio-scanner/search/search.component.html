@@ -240,6 +240,15 @@
             <span>Group by burst</span>
         </button>
 
+        <button type="button" class="lb-toggle" [class.on]="liveUpdate" [disabled]="!liveUpdatable"
+            (click)="toggleLiveUpdate()"
+            [title]="liveUpdatable
+                ? 'Add calls to the top of this list as they are received. Paused while you are scrolled down, so nothing moves under you.'
+                : 'Only available on a newest-first list whose date range reaches the present'">
+            <mat-icon>sensors</mat-icon>
+            <span>Live</span>
+        </button>
+
         <span class="lb-spacer"></span>
 
         <ng-container *ngIf="getSelectedCount() as picked">

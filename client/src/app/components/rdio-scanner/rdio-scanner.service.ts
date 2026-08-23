@@ -360,9 +360,18 @@ export class RdioScannerService implements OnDestroy {
     private playbackRefreshing = false;
 
     // Cursor paging state. The LCL response carries no echo of which request
-    // produced it, so whether a chunk extends the loaded list or replaces it
-    // has to be remembered at send time.
-    private searchAppending = false;
+    // produced it, so what a chunk means — replace the loaded list, extend it,
+    // or add newly arrived calls to the front of it — has to be remembered at
+    // send time.
+    //
+    // A queue rather than one flag because the three kinds can overlap: the
+    // live poll fires on a timer, and the user can page or search while one is
+    // in flight. Responses come back on a single connection in the order they
+    // were asked for, so first-in-first-out pairs them up. A dropped response
+    // would shift that pairing by one, so a fresh search — which replaces the
+    // list outright, and is what anyone does when a list looks wrong — empties
+    // the queue rather than adding to it.
+    private searchModes: ('replace' | 'append' | 'prepend')[] = [];
     // Last filter set, cursor stripped. Both load-more and playback need the
     // filters again; neither wants the page marker that produced the chunk
     // currently on screen.
@@ -2318,15 +2327,42 @@ export class RdioScannerService implements OnDestroy {
         // A cursor request continues the loaded list; anything else starts a
         // new one. Recorded before the send because the response has no way to
         // tell us apart.
-        this.searchAppending = !!options.after;
-
-        if (!this.searchAppending) {
+        if (options.after) {
+            this.searchModes.push('append');
+        } else {
+            this.searchModes = ['replace'];
             this.searchExhausted = false;
         }
 
         const { after: _cursor, ...base } = options;
         this.searchOptions = base;
 
+        this.sendtoWebsocket(WebsocketCommand.ListCall, options);
+    }
+
+    /**
+     * Asks for the newest calls matching a search that is already on screen,
+     * so a list left open keeps up with what is being received.
+     *
+     * The same request the search itself makes, which is the point: the rows
+     * that appear live are the rows the search would return, rather than a
+     * second idea of what matches maintained on the client. Only the ids not
+     * already loaded are kept, and they go to the front.
+     *
+     * Skipped while any other request is in flight. The list it would add to
+     * is about to be replaced or extended by that one, and a poll is never
+     * worth queueing — the next tick asks again a few seconds later.
+     */
+    searchCallsLive(options: RdioScannerSearchOptions): void {
+        if (this.searchModes.length || !this.playbackList) {
+            return;
+        }
+
+        this.searchModes.push('prepend');
+
+        // Deliberately does not touch searchOptions: load-more and playback
+        // derive their next request from it, and this one carries a limit of
+        // its own that they must not inherit.
         this.sendtoWebsocket(WebsocketCommand.ListCall, options);
     }
 
@@ -2964,7 +3000,60 @@ export class RdioScannerService implements OnDestroy {
                     if (chunk) {
                         chunk.results = (chunk.results || []).map((call) => this.transformCall(call));
 
-                        if (this.searchAppending && this.playbackList) {
+                        // Pairs this response with the request that asked for
+                        // it. An empty queue means the pairing was lost — a
+                        // dropped response, a reconnect — and a chunk of
+                        // unknown provenance is safest read as a fresh list,
+                        // which is what the request that follows will produce
+                        // anyway.
+                        const mode = this.searchModes.shift() ?? 'replace';
+
+                        if (mode === 'prepend' && this.playbackList) {
+                            // Newly arrived calls join the front of what is
+                            // loaded. Nothing else moves: not the cursor, not
+                            // the end-of-results flag, not the filters — this
+                            // is the same search, answered again a few seconds
+                            // later, and everything below is still where the
+                            // reader left it.
+                            const loaded = new Set(this.playbackList.results.map((call) => call.id));
+                            const arrived = chunk.results.filter((call) => !loaded.has(call.id));
+
+                            if (!arrived.length) {
+                                break;
+                            }
+
+                            // An overlap with what is loaded proves the two
+                            // meet. Without one, more calls arrived than a
+                            // poll asks for and the rows between them were
+                            // never fetched — so joining these on would leave
+                            // a hole in the middle of the list and no way to
+                            // tell. The newest calls are what the reader is
+                            // here for, so they become the list, exactly as a
+                            // fresh search would leave it.
+                            if (arrived.length < chunk.results.length) {
+                                this.playbackList = {
+                                    ...this.playbackList,
+                                    results: arrived.concat(this.playbackList.results),
+                                };
+
+                            } else {
+                                this.playbackList = {
+                                    ...this.playbackList,
+                                    results: chunk.results,
+                                };
+
+                                this.searchExhausted = false;
+                            }
+
+                            this.event.emit({
+                                playbackList: this.playbackList,
+                                searchExhausted: this.searchExhausted,
+                            });
+
+                            break;
+                        }
+
+                        if (mode === 'append' && this.playbackList) {
                             // A cursor page extends what is already loaded. Ids
                             // already present are dropped rather than appended
                             // because a retried cursor — reconnect, a second
@@ -3024,8 +3113,6 @@ export class RdioScannerService implements OnDestroy {
                             const limit = Number(this.searchOptions?.limit ?? chunk.options?.limit ?? 0);
                             this.searchExhausted = limit > 0 && chunk.results.length < limit;
                         }
-
-                        this.searchAppending = false;
 
                         this.event.emit({ playbackList: this.playbackList, searchExhausted: this.searchExhausted });
 

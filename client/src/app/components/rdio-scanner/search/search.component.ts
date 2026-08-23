@@ -60,6 +60,27 @@ const AUTO_LOAD_WITHIN = 15;
  */
 const DEEP_LINK_MAX_CHUNKS = 20;
 
+/**
+ * How often an open list asks for calls received since it loaded, and how many
+ * it asks for.
+ *
+ * Five seconds is under the length of most transmissions, so a call tends to
+ * appear about as it finishes. The count only has to cover a burst between two
+ * ticks; anything beyond it is picked up by the tick after, in order, because
+ * each request asks for the newest and keeps what it has not already got.
+ */
+const LIVE_POLL_MS = 5000;
+const LIVE_CHUNK_SIZE = 50;
+
+/**
+ * How far from the top the list may be scrolled and still take new calls.
+ *
+ * Rows are added at the front, which pushes everything below them down. That
+ * is invisible at the top of the list and intolerable in the middle of it, so
+ * a reader who has scrolled away is left alone until they come back.
+ */
+const LIVE_TOP_PX = 8;
+
 /** One selectable talkgroup, flattened out of the per-system config. */
 export interface RdioScannerSearchTalkgroupOption {
     key: string;
@@ -239,6 +260,17 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
      * default anybody should have made for them.
      */
     groupByBurst = false;
+
+    /**
+     * Whether an open list keeps up with what is being received.
+     *
+     * Off by default: a list that rearranges itself while it is being read is
+     * the wrong default for a search, which is usually a look at what already
+     * happened.
+     */
+    liveUpdate = false;
+
+    private livePoll: ReturnType<typeof setInterval> | undefined;
     isDownloading = false;
 
     // Transcript expansion / retranscribe state
@@ -295,6 +327,10 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     }
 
     ngAfterViewInit(): void {
+        if (this.liveUpdate) {
+            this.startLivePoll();
+        }
+
         const element = this.viewport?.elementRef.nativeElement;
 
         if (!element || typeof ResizeObserver === 'undefined') {
@@ -313,6 +349,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     }
 
     ngOnDestroy(): void {
+        this.stopLivePoll();
         this.eventSubscription.unsubscribe();
         this.viewportResize?.disconnect();
         if (this.qDebounce) clearTimeout(this.qDebounce);
@@ -1116,6 +1153,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
                 groups: value.groups,
                 tags: value.tags,
                 groupByBurst: this.groupByBurst,
+                liveUpdate: this.liveUpdate,
             }));
         } catch (_) {
             // Private-mode / quota. Losing the last filters is not worth a throw.
@@ -1150,6 +1188,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
             });
 
             this.groupByBurst = saved.groupByBurst === true;
+            this.liveUpdate = saved.liveUpdate === true;
 
             this.rebuildChips();
         } catch (_) {
@@ -1568,6 +1607,76 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     toggleGrouping(): void {
         this.groupByBurst = !this.groupByBurst;
         this.persistFilters();
+    }
+
+    toggleLiveUpdate(): void {
+        this.liveUpdate = !this.liveUpdate;
+        this.persistFilters();
+
+        if (this.liveUpdate) {
+            this.startLivePoll();
+        } else {
+            this.stopLivePoll();
+        }
+    }
+
+    /**
+     * True when new calls could actually reach this list.
+     *
+     * Oldest-first puts arrivals at the far end of a list nobody is looking
+     * at, and a range that already closed cannot gain anything. Saying so is
+     * better than a toggle that appears to work and never shows a call.
+     */
+    get liveUpdatable(): boolean {
+        if (this.form.value.sort !== -1) {
+            return false;
+        }
+
+        const stop = this.dateWindow().stop;
+
+        return !stop || new Date(stop).getTime() >= Date.now();
+    }
+
+    private startLivePoll(): void {
+        this.stopLivePoll();
+
+        this.livePoll = setInterval(() => this.pollLive(), LIVE_POLL_MS);
+    }
+
+    private stopLivePoll(): void {
+        if (this.livePoll) {
+            clearInterval(this.livePoll);
+            this.livePoll = undefined;
+        }
+    }
+
+    /**
+     * Asks for anything received since the list loaded.
+     *
+     * Held back while a search or a page is in flight — the service drops a
+     * poll in that case anyway — and while the tab is hidden, so a forgotten
+     * background tab is not asking the database a question every five seconds
+     * for the rest of the day.
+     */
+    private pollLive(): void {
+        if (!this.liveUpdate || !this.liveUpdatable || this.resultsPending) {
+            return;
+        }
+
+        if (typeof document !== 'undefined' && document.hidden) {
+            return;
+        }
+
+        // Only while the reader is at the top, where arrivals belong and where
+        // adding them moves nothing they are looking at.
+        if (this.viewport && this.viewport.measureScrollOffset() > LIVE_TOP_PX) {
+            return;
+        }
+
+        this.rdioScannerService.searchCallsLive({
+            ...this.buildOptions(),
+            limit: LIVE_CHUNK_SIZE,
+        });
     }
 
     trackRow(index: number, row: SearchRow): string {
