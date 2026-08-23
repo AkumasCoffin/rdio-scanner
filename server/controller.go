@@ -250,6 +250,39 @@ func (controller *Controller) EmitPatchUpdateToClients(id uint) {
 	}
 }
 
+// patchDownstreamGrace is how long a patched call waits for its siblings on
+// top of its patch's own delay.
+//
+// The delay says how far apart the recorders may stamp one transmission; this
+// covers the rest — the copies are separate uploads, so they also arrive apart
+// and are ingested one after another. Small on purpose: a downstream waiting a
+// couple of seconds for a correct call is fine, a downstream waiting on every
+// patched call for a sibling that is not coming is not.
+const patchDownstreamGrace = 2 * time.Second
+
+// forwardPatchedDownstream forwards a patched call once its siblings have had
+// their chance to join it.
+//
+// Works on a copy taken here, on the ingest goroutine, because the original
+// goes on to the Delayer and the listener emit and must not be rewritten from
+// under them. Only the timer touches the copy.
+//
+// A restart inside the window drops the forward. Downstream sends have no
+// retry queue to begin with — a failed send is logged and gone — so this is
+// the same exposure a moment earlier, and the call itself is stored either
+// way.
+func (controller *Controller) forwardPatchedDownstream(call *Call, delay uint) {
+	forwarded := *call
+
+	time.AfterFunc(time.Duration(delay)*time.Second+patchDownstreamGrace, func() {
+		if err := controller.Calls.RefreshPatchState(&forwarded, controller.Database); err != nil {
+			controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("controller.forwardpatcheddownstream: %v", err))
+		}
+
+		controller.EmitCallToDownstreams(&forwarded)
+	})
+}
+
 // QueueIngest hands a call to the ingest goroutine, or says it could not.
 //
 // Every caller has something better to do than wait. The upload handler can
@@ -659,6 +692,10 @@ func (controller *Controller) IngestCall(call *Call) {
 	// LCD, and carries it downstream, exactly as a recorder-reported patch does.
 	patched := false
 
+	// How far apart this patch's recorders may stamp one transmission, kept
+	// for the downstream forward below, which has to outwait it.
+	patchDelay := uint(0)
+
 	// Kept from before the refile below, so a copy that turns out to be a
 	// duplicate can still say which talkgroup carried it.
 	arrivedOn := call.Talkgroup
@@ -667,6 +704,7 @@ func (controller *Controller) IngestCall(call *Call) {
 	// decree, so there is nothing to rename here. See applyPatch.
 	if patch, ok := controller.Patches.GetPatch(call.System, call.Talkgroup); ok {
 		patched = applyPatch(patch, call)
+		patchDelay = patch.Delay
 	}
 
 	// Patch collapsing is not duplicate detection — one is "this conversation
@@ -794,7 +832,19 @@ func (controller *Controller) IngestCall(call *Call) {
 		// downstreams receive calls at near-real-time, which matters for
 		// plugin protocols that push a follow-up (a transcript, say) and would
 		// otherwise race their own call upload.
-		controller.EmitCallToDownstreams(call)
+		//
+		// A patched call is the exception, and waits for its siblings. There
+		// is only one chance to tell a downstream about a call — it is an
+		// upload, not a record the upstream can revise — so forwarding at
+		// once sends a call that names a single talkgroup and sits on
+		// whichever one happened to arrive first. The downstream then shows
+		// the transmission unpatched, on the wrong talkgroup, with no way to
+		// learn better.
+		if patched {
+			controller.forwardPatchedDownstream(call, patchDelay)
+		} else {
+			controller.EmitCallToDownstreams(call)
+		}
 
 		// Now that the call has an id, plugins can key their own tables to it.
 		// This is the hook most plugins actually want, and it is where anything
