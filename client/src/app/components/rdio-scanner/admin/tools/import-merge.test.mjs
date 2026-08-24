@@ -30,7 +30,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-    importTalkgroups, importUnits, previewTalkgroups, previewUnits,
+    formatTalkgroupList, importPatches, importTalkgroups, importUnits, parseFlag, parseTalkgroupList,
+    previewPatches, previewTalkgroups, previewUnits,
 } from './import-merge.ts';
 
 const row = (over = {}) => ({
@@ -311,4 +312,147 @@ test('the unit preview resolves the same targets as the unit import', () => {
         previewUnits(config, [{ system: 'Nowhere', id: 7, label: 'x' }], { kind: 'routed' }).statuses,
         ['unrouted'],
     );
+});
+
+/*
+ * Patches.
+ *
+ * A patch is a name, a system and an ordered set of that system's talkgroups.
+ * The order is the ranking, so it has to survive the round trip; the members
+ * have to belong to the system, or the patch is configured and inert.
+ */
+
+const patchConfig = () => ({
+    systems: [
+        {
+            id: 1,
+            label: 'Metro',
+            talkgroups: [{ id: 100 }, { id: 200 }, { id: 300 }],
+        },
+        {
+            id: 2,
+            label: 'County',
+            talkgroups: [{ id: 900 }],
+        },
+    ],
+    patches: [
+        { _id: 1, label: 'Citywide', systemId: 1, talkgroups: [100, 200], delay: 0, disabled: false, order: 1 },
+    ],
+});
+
+const patchRow = (over = {}) => ({
+    system: 'Metro', label: 'Citywide', talkgroups: [100, 200, 300], delay: '2', disabled: 'no', ...over,
+});
+
+test('a member list survives however it was separated, keeping order', () => {
+    assert.deepEqual(parseTalkgroupList('100 200 300'), [100, 200, 300]);
+    assert.deepEqual(parseTalkgroupList('300,100;200'), [300, 100, 200]);
+    assert.deepEqual(parseTalkgroupList(' 100 | 200 '), [100, 200]);
+    // A talkgroup is in a patch once, and rubbish is not a talkgroup.
+    assert.deepEqual(parseTalkgroupList('100 100 abc 0 200'), [100, 200]);
+    assert.deepEqual(parseTalkgroupList(''), []);
+    assert.equal(formatTalkgroupList([100, 200]), '100 200');
+});
+
+test('a yes/no cell that says nothing changes nothing', () => {
+    assert.equal(parseFlag('yes'), true);
+    assert.equal(parseFlag('TRUE'), true);
+    assert.equal(parseFlag('no'), false);
+    assert.equal(parseFlag('0'), false);
+    assert.equal(parseFlag(''), undefined);
+    assert.equal(parseFlag('maybe'), undefined);
+});
+
+test('an existing patch is matched by name within its system, not by id', () => {
+    const config = patchConfig();
+    const err = importPatches(config, [patchRow({ label: 'citywide' })], { kind: 'routed' });
+
+    assert.equal(err, null);
+    assert.equal(config.patches.length, 1);
+    assert.deepEqual(config.patches[0].talkgroups, [100, 200, 300]);
+    assert.equal(config.patches[0].delay, 2);
+    // The id it already had is untouched — it is this install's, not the CSV's.
+    assert.equal(config.patches[0]._id, 1);
+});
+
+test('the member order is the ranking, so it is taken from the CSV as written', () => {
+    const config = patchConfig();
+    importPatches(config, [patchRow({ talkgroups: [300, 100, 200] })], { kind: 'routed' });
+
+    assert.deepEqual(config.patches[0].talkgroups, [300, 100, 200]);
+});
+
+test('a new patch is appended after the current maximum order', () => {
+    const config = patchConfig();
+    importPatches(config, [patchRow({ label: 'Tac Ops', talkgroups: [200, 300] })], { kind: 'routed' });
+
+    assert.equal(config.patches.length, 2);
+    assert.equal(config.patches[1].label, 'Tac Ops');
+    assert.equal(config.patches[1].systemId, 1);
+    assert.equal(config.patches[1].order, 2);
+});
+
+test('members the system does not carry are dropped, and a patch left short is skipped', () => {
+    const config = patchConfig();
+
+    // 999 is not a Metro talkgroup: the patch keeps the two that are.
+    importPatches(config, [patchRow({ label: 'Mixed', talkgroups: [100, 999, 300] })], { kind: 'routed' });
+    assert.deepEqual(config.patches.find((p) => p.label === 'Mixed').talkgroups, [100, 300]);
+
+    // Only one real member left, which is not a patch — nothing is added.
+    importPatches(config, [patchRow({ label: 'Broken', talkgroups: [100, 998, 999] })], { kind: 'routed' });
+    assert.equal(config.patches.some((p) => p.label === 'Broken'), false);
+});
+
+test('keep mode leaves an existing patch alone and still adds the new ones', () => {
+    const config = patchConfig();
+    importPatches(config, [
+        patchRow({ talkgroups: [300, 200, 100], delay: '9' }),
+        patchRow({ label: 'Tac Ops', talkgroups: [200, 300] }),
+    ], { kind: 'routed' }, 'keep');
+
+    const citywide = config.patches.find((p) => p.label === 'Citywide');
+    assert.deepEqual(citywide.talkgroups, [100, 200]);
+    assert.equal(citywide.delay, 0);
+    assert.equal(config.patches.some((p) => p.label === 'Tac Ops'), true);
+});
+
+test('a single-system target ignores the CSV system column', () => {
+    const config = patchConfig();
+    importPatches(config, [patchRow({ system: 'County', label: 'Forced', talkgroups: [100, 200] })],
+        { kind: 'system', systemId: 1 });
+
+    assert.equal(config.patches.find((p) => p.label === 'Forced').systemId, 1);
+});
+
+test('the patch preview names what can and cannot be imported', () => {
+    const config = patchConfig();
+    const preview = previewPatches(config, [
+        patchRow(),
+        patchRow({ label: 'Tac Ops', talkgroups: [200, 300] }),
+        patchRow({ system: 'Nowhere', label: 'Elsewhere' }),
+        patchRow({ label: 'Broken', talkgroups: [998, 999] }),
+        // County has one talkgroup, so no patch of it can be built.
+        patchRow({ system: 'County', label: 'Solo', talkgroups: [900] }),
+    ], { kind: 'routed' });
+
+    assert.deepEqual(preview.statuses, ['existing', 'new', 'unrouted', 'unrouted', 'unrouted']);
+    assert.equal(preview.existing, 1);
+    assert.equal(preview.new, 1);
+    assert.equal(preview.unrouted, 3);
+});
+
+test('the patch preview agrees with what the import does', () => {
+    const rows = [patchRow(), patchRow({ label: 'Tac Ops', talkgroups: [200, 300] }), patchRow({ label: 'Broken', talkgroups: [999] })];
+    const preview = previewPatches(patchConfig(), rows, { kind: 'routed' });
+
+    const after = patchConfig();
+    importPatches(after, rows, { kind: 'routed' });
+
+    rows.forEach((row, i) => {
+        const present = after.patches.some((p) => p.label.toLowerCase() === row.label.toLowerCase());
+
+        assert.equal(present, preview.statuses[i] !== 'unrouted',
+            `${row.label}: preview said ${preview.statuses[i]}`);
+    });
 });

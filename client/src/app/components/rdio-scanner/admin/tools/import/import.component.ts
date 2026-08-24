@@ -24,12 +24,13 @@ import { firstValueFrom } from 'rxjs';
 import { Config, RdioScannerAdminService, System } from '../../admin.service';
 import { decodeCsvBuffer, parseCsv } from '../csv';
 import {
-    ImportMode, ImportPreview, ImportTarget, RowStatus, SystemTarget, TalkgroupRow, UnitRow, UnitsImportTarget,
-    importTalkgroups, importUnits, previewTalkgroups, previewUnits,
+    ImportMode, ImportPreview, ImportTarget, PatchRow, RowStatus, SystemTarget, TalkgroupRow, UnitRow,
+    UnitsImportTarget, importPatches, importTalkgroups, importUnits, parseTalkgroupList, previewPatches,
+    previewTalkgroups, previewUnits,
 } from '../import-merge';
 import { RdioScannerAdminImportMergeDialogComponent } from './merge-dialog.component';
 
-type ImportDataType = 'talkgroups' | 'units' | 'config';
+type ImportDataType = 'talkgroups' | 'units' | 'patches' | 'config';
 type ImportStyle = 'rdio' | 'trunkRecorder' | 'radioReference';
 
 /** What the review list shows for one parsed row. */
@@ -82,6 +83,8 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     unitRows: UnitRow[] = [];
 
+    patchRows: PatchRow[] = [];
+
     // What the review list renders: every row that passes the status filter,
     // paired with what importing would do to it. The list is virtualised, so
     // this is the whole CSV rather than a first-hundred sample — a preview
@@ -90,6 +93,8 @@ export class RdioScannerAdminImportComponent implements OnInit {
     talkgroupEntries: PreviewEntry<TalkgroupRow>[] = [];
 
     unitEntries: PreviewEntry<UnitRow>[] = [];
+
+    patchEntries: PreviewEntry<PatchRow>[] = [];
 
     counts: ImportPreview = EMPTY_PREVIEW;
 
@@ -111,7 +116,7 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     // Keyed on the row's real position, so scrolling a virtualised list does
     // not rebuild rows that only moved viewport slot.
-    trackByEntry = (_: number, entry: PreviewEntry<TalkgroupRow | UnitRow>): number => entry.index;
+    trackByEntry = (_: number, entry: PreviewEntry<unknown>): number => entry.index;
 
     constructor(
         private adminService: RdioScannerAdminService,
@@ -136,7 +141,10 @@ export class RdioScannerAdminImportComponent implements OnInit {
     }
 
     get rowCount(): number {
-        return this.dataType === 'units' ? this.unitRows.length : this.talkgroupRows.length;
+        if (this.dataType === 'units') return this.unitRows.length;
+        if (this.dataType === 'patches') return this.patchRows.length;
+
+        return this.talkgroupRows.length;
     }
 
     get csvHasSystemColumn(): boolean {
@@ -150,7 +158,10 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     /** How many rows the current status filter is showing. */
     get shownCount(): number {
-        return this.dataType === 'units' ? this.unitEntries.length : this.talkgroupEntries.length;
+        if (this.dataType === 'units') return this.unitEntries.length;
+        if (this.dataType === 'patches') return this.patchEntries.length;
+
+        return this.talkgroupEntries.length;
     }
 
     /**
@@ -166,7 +177,12 @@ export class RdioScannerAdminImportComponent implements OnInit {
     statusLabel(status: RowStatus): string {
         if (status === 'existing') return 'Replaces';
 
-        return status === 'unrouted' ? 'No system' : 'New';
+        if (status !== 'unrouted') return 'New';
+
+        // For a patch the same status covers a second reason: the system is
+        // there but does not carry enough of the talkgroups named. Both mean
+        // the row is left out, and the caption under the list says which.
+        return this.dataType === 'patches' ? 'Skipped' : 'No system';
     }
 
     // The routed target needs the CSV to say which system each row belongs
@@ -181,6 +197,11 @@ export class RdioScannerAdminImportComponent implements OnInit {
         return !this.csvHasSystemColumn;
     }
 
+    /** Rows a patch import will skip, and why, for the caption under the list. */
+    get unimportablePatches(): number {
+        return this.dataType === 'patches' ? this.counts.unrouted : 0;
+    }
+
     // A multi-system CSV pointed at a single target imports every row into
     // that one target — legal, but easy to do by accident with an
     // "All systems" export, so it gets a warning steering toward routed.
@@ -193,7 +214,7 @@ export class RdioScannerAdminImportComponent implements OnInit {
         if (!this.rowCount || this.routingError || this.unknownSystems.length > 0) {
             return false;
         }
-        if (this.dataType === 'units') {
+        if (this.needsExistingSystem) {
             return this.target.kind === 'system' || this.target.kind === 'routed';
         }
         return true;
@@ -205,9 +226,7 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     onDataTypeChange(): void {
         this.reset();
-        this.target = this.dataType === 'units'
-            ? (this.systemTargets[0] ?? this.routedTarget)
-            : this.newSystemTarget;
+        this.target = this.defaultTarget();
     }
 
     reset(): void {
@@ -216,6 +235,8 @@ export class RdioScannerAdminImportComponent implements OnInit {
         this.talkgroupEntries = [];
         this.unitRows = [];
         this.unitEntries = [];
+        this.patchRows = [];
+        this.patchEntries = [];
         this.unknownSystems = [];
         this.distinctSystems = 0;
         this.counts = EMPTY_PREVIEW;
@@ -231,14 +252,20 @@ export class RdioScannerAdminImportComponent implements OnInit {
         if (target.kind === 'system') {
             const match = this.systemTargets.find((t) => t.system.id === target.system.id);
             this.target = match ?? this.defaultTarget();
-        } else if (this.dataType === 'units' && target.kind === 'newSystem') {
+        } else if (this.needsExistingSystem && target.kind === 'newSystem') {
             this.target = this.defaultTarget();
         }
     }
 
+    // A new system has no talkgroups, so neither units nor patches can go
+    // into one — both of them name things a system already has.
+    private get needsExistingSystem(): boolean {
+        return this.dataType === 'units' || this.dataType === 'patches';
+    }
+
     private defaultTarget(): ImportTarget {
-        return this.dataType === 'units'
-            ? (this.systemTargets[0] ?? this.routedTarget)
+        return this.needsExistingSystem
+            ? (this.routedTarget ?? this.systemTargets[0])
             : this.newSystemTarget;
     }
 
@@ -275,7 +302,12 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
     private detectHeader(): void {
         const first = (this.rawRows[0] ?? []).map((c) => c.trim().toLowerCase());
-        this.hasHeader = first.includes('id') && first.includes('label');
+
+        // A patch row has no id of its own — it is named, and its members are
+        // a column — so the header that identifies one is different.
+        this.hasHeader = this.dataType === 'patches'
+            ? first.includes('label') && first.includes('talkgroups')
+            : first.includes('id') && first.includes('label');
         this.headerMap = {};
 
         if (this.hasHeader) {
@@ -293,7 +325,43 @@ export class RdioScannerAdminImportComponent implements OnInit {
             this.remapTalkgroups();
         } else if (this.dataType === 'units') {
             this.remapUnits();
+        } else if (this.dataType === 'patches') {
+            this.remapPatches();
         }
+        this.updateUnknownSystems();
+    }
+
+    /**
+     * Patches always carry a header — the members live in a named column and
+     * there is no positional convention from another tool to fall back on.
+     */
+    private remapPatches(): void {
+        if (!this.hasHeader) {
+            this.setPatchRows([]);
+            return;
+        }
+
+        const rows = this.rawRows.slice(1)
+            .map((r) => ({
+                system: this.headerCell(r, 'system'),
+                label: this.headerCell(r, 'label'),
+                talkgroups: parseTalkgroupList(this.headerCell(r, 'talkgroups')),
+                delay: this.headerCell(r, 'delay'),
+                disabled: this.headerCell(r, 'disabled'),
+            }))
+            .filter((r) => r.label !== '');
+
+        this.setPatchRows(rows);
+    }
+
+    private setPatchRows(rows: PatchRow[]): void {
+        this.patchRows = rows;
+        this.distinctSystems = new Set(rows.map((r) => r.system).filter((s) => s)).size;
+    }
+
+    removePatchRow(index: number): void {
+        this.patchRows.splice(index, 1);
+        this.setPatchRows(this.patchRows);
         this.updateUnknownSystems();
     }
 
@@ -404,7 +472,8 @@ export class RdioScannerAdminImportComponent implements OnInit {
     updateUnknownSystems(): void {
         if (this.target.kind === 'routed') {
             const known = new Set((this.baseConfig.systems ?? []).map((s) => s.label));
-            const rows: { system: string }[] = this.dataType === 'units' ? this.unitRows : this.talkgroupRows;
+            const rows: { system: string }[] = this.dataType === 'units' ? this.unitRows
+                : this.dataType === 'patches' ? this.patchRows : this.talkgroupRows;
             this.unknownSystems = [...new Set(
                 rows.filter((r) => !known.has(r.system)).map((r) => r.system || '(empty)'),
             )];
@@ -421,16 +490,25 @@ export class RdioScannerAdminImportComponent implements OnInit {
     }
 
     private refreshPreview(): void {
-        if (this.dataType === 'units') {
+        if (this.dataType === 'patches') {
+            this.counts = previewPatches(this.baseConfig, this.patchRows, this.unitsTarget());
+            this.dropEmptyFilter();
+            this.patchEntries = this.buildEntries(this.patchRows, this.counts.statuses);
+            this.talkgroupEntries = [];
+            this.unitEntries = [];
+
+        } else if (this.dataType === 'units') {
             this.counts = previewUnits(this.baseConfig, this.unitRows, this.unitsTarget());
             this.dropEmptyFilter();
             this.unitEntries = this.buildEntries(this.unitRows, this.counts.statuses);
             this.talkgroupEntries = [];
+            this.patchEntries = [];
         } else if (this.dataType === 'talkgroups') {
             this.counts = previewTalkgroups(this.baseConfig, this.talkgroupRows, this.target);
             this.dropEmptyFilter();
             this.talkgroupEntries = this.buildEntries(this.talkgroupRows, this.counts.statuses);
             this.unitEntries = [];
+            this.patchEntries = [];
         } else {
             this.counts = EMPTY_PREVIEW;
         }
@@ -499,7 +577,9 @@ export class RdioScannerAdminImportComponent implements OnInit {
 
         const error = this.dataType === 'talkgroups'
             ? importTalkgroups(config, this.talkgroupRows, this.target, mode)
-            : importUnits(config, this.unitRows, this.unitsTarget(), mode);
+            : this.dataType === 'patches'
+                ? importPatches(config, this.patchRows, this.unitsTarget(), mode)
+                : importUnits(config, this.unitRows, this.unitsTarget(), mode);
 
         if (error) {
             this.matSnackBar.open(error, '', { duration: 5000 });
@@ -525,7 +605,8 @@ export class RdioScannerAdminImportComponent implements OnInit {
         const answer = await firstValueFrom(
             this.matDialog.open(RdioScannerAdminImportMergeDialogComponent, {
                 data: {
-                    noun: this.dataType === 'units' ? 'units' : 'talkgroups',
+                    noun: this.dataType === 'units' ? 'units'
+                        : this.dataType === 'patches' ? 'patches' : 'talkgroups',
                     existing: this.counts.existing,
                     new: this.counts.new,
                 },

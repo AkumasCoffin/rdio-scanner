@@ -362,3 +362,195 @@ export function importUnits(
     }
     return null;
 }
+
+/*
+ * Patches.
+ *
+ * A patch belongs to a system and names an ordered set of that system's
+ * talkgroups, so a row carries the system by label — the same routing the
+ * talkgroup and unit exports use — and the members as a list in one cell.
+ */
+
+export interface PatchRow {
+    system: string;
+    label: string;
+    /** Member talkgroup ids, in ranked order, as written in the cell. */
+    talkgroups: number[];
+    delay: string;
+    disabled: string;
+}
+
+/**
+ * Reads a cell holding a patch's members.
+ *
+ * Written space-separated so the cell survives being retyped in a spreadsheet
+ * without quoting, but a list of numbers is a list of numbers however someone
+ * separates them — commas, semicolons and pipes all read the same. Order is
+ * kept, because for a patch the order is the ranking; repeats are dropped,
+ * because a talkgroup is in a patch once.
+ */
+export function parseTalkgroupList(cell: string): number[] {
+    const seen = new Set<number>();
+    const ids: number[] = [];
+
+    for (const part of (cell || '').split(/[\s,;|]+/)) {
+        if (!/^[0-9]+$/.test(part)) continue;
+
+        const id = +part;
+
+        if (id > 0 && !seen.has(id)) {
+            seen.add(id);
+            ids.push(id);
+        }
+    }
+
+    return ids;
+}
+
+export function formatTalkgroupList(ids: number[] | undefined): string {
+    return (ids ?? []).join(' ');
+}
+
+/**
+ * Reads a yes/no cell.
+ *
+ * Undefined for anything unrecognised — including empty — so a sparse CSV
+ * leaves the setting alone rather than silently enabling a patch someone
+ * turned off.
+ */
+export function parseFlag(cell: string): boolean | undefined {
+    const value = (cell || '').trim().toLowerCase();
+
+    if (['yes', 'y', 'true', '1', 'on'].includes(value)) return true;
+    if (['no', 'n', 'false', '0', 'off'].includes(value)) return false;
+
+    return undefined;
+}
+
+/**
+ * A patch of one talkgroup is that talkgroup. The server refuses to collapse
+ * anything for one, so importing it would add a row that reads as configured
+ * and does nothing.
+ */
+const MIN_PATCH_MEMBERS = 2;
+
+/** Patches match by name within their system; ids are local to an install. */
+function patchKey(label: string): string {
+    return label.trim().toLowerCase();
+}
+
+/**
+ * previewPatches marks each row new or existing against the target, and names
+ * the rows that cannot be imported: a system that is not configured, or
+ * members that system does not have.
+ */
+export function previewPatches(config: Config, rows: PatchRow[], target: UnitsImportTarget): ImportPreview {
+    const systems = config.systems ?? [];
+
+    const find = (row: PatchRow): System | undefined => target.kind === 'routed'
+        ? systems.find((system) => system.label === row.system)
+        : systems.find((system) => system.id === target.systemId);
+
+    return summarize(rows.map((row) => {
+        const system = find(row);
+
+        // The same test the import applies, so the review list cannot promise
+        // a patch the import then skips.
+        if (!system || usableMembers(system, row.talkgroups).length < MIN_PATCH_MEMBERS) {
+            return 'unrouted';
+        }
+
+        const key = patchKey(row.label);
+
+        return (config.patches ?? []).some(
+            (patch) => patch.systemId === system.id && patchKey(patch.label ?? '') === key,
+        ) ? 'existing' : 'new';
+    }));
+}
+
+/**
+ * The members of a row that the target system actually has.
+ *
+ * A patch pointing at a talkgroup its system does not carry is not a patch
+ * that can work: the server would never match a call to it, and the admin
+ * panel's member list has no such option to show. Dropping those ids here is
+ * what keeps a CSV written against another install from producing patches
+ * that look configured and do nothing.
+ */
+function usableMembers(system: System, ids: number[]): number[] {
+    const known = new Set<number>();
+
+    for (const talkgroup of system.talkgroups ?? []) {
+        if (typeof talkgroup.id === 'number') known.add(talkgroup.id);
+    }
+
+    return ids.filter((id) => known.has(id));
+}
+
+/**
+ * importPatches applies rows to config. Returns an error message, or null.
+ *
+ * A patch needs at least two of its system's talkgroups to mean anything, so a
+ * row left with fewer after unknown ids are dropped is skipped rather than
+ * imported broken. previewPatches marks those rows so the count is visible
+ * before anything is written.
+ */
+export function importPatches(
+    config: Config,
+    rows: PatchRow[],
+    target: UnitsImportTarget,
+    mode: ImportMode = 'replace',
+): string | null {
+    config.systems = config.systems ?? [];
+    config.patches = config.patches ?? [];
+
+    let nextOrder = config.patches.length;
+
+    for (const patch of config.patches) {
+        if (typeof patch.order === 'number' && patch.order > nextOrder) nextOrder = patch.order;
+    }
+
+    if (target.kind === 'system' && !config.systems.some((system) => system.id === target.systemId)) {
+        return 'Target system no longer exists';
+    }
+
+    for (const row of rows) {
+        const system = target.kind === 'routed'
+            ? config.systems.find((s) => s.label === row.system)
+            : config.systems.find((s) => s.id === target.systemId);
+
+        if (!system) continue;
+
+        const talkgroups = usableMembers(system, row.talkgroups);
+
+        if (talkgroups.length < MIN_PATCH_MEMBERS) continue;
+
+        const key = patchKey(row.label);
+        const existing = config.patches.find(
+            (patch) => patch.systemId === system.id && patchKey(patch.label ?? '') === key,
+        );
+
+        const delay = /^[0-9]+$/.test((row.delay || '').trim()) ? +row.delay : undefined;
+        const disabled = parseFlag(row.disabled);
+
+        if (existing) {
+            if (mode === 'keep') continue;
+
+            existing.talkgroups = talkgroups;
+            if (delay !== undefined) existing.delay = delay;
+            if (disabled !== undefined) existing.disabled = disabled;
+
+        } else {
+            config.patches.push({
+                label: row.label,
+                systemId: system.id,
+                talkgroups,
+                delay: delay ?? 0,
+                disabled: disabled ?? false,
+                order: ++nextOrder,
+            });
+        }
+    }
+
+    return null;
+}

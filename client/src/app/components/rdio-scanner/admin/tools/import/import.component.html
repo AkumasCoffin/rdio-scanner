@@ -4,6 +4,7 @@
         <mat-radio-group [(ngModel)]="dataType" (change)="onDataTypeChange()">
             <mat-radio-button value="talkgroups">Talkgroups</mat-radio-button>
             <mat-radio-button value="units">Units</mat-radio-button>
+            <mat-radio-button value="patches">Patches</mat-radio-button>
             <mat-radio-button value="config">Config (JSON)</mat-radio-button>
         </mat-radio-group>
     </p>
@@ -59,7 +60,7 @@
         </p>
     </section>
 
-    <section *ngIf="dataType === 'units'">
+    <section *ngIf="dataType === 'units' || dataType === 'patches'">
         <p class="mat-body">step 3: select target system</p>
         <p class="text-center" *ngIf="systemTargets.length; else noSystems">
             <mat-form-field>
@@ -105,7 +106,7 @@
                 <mat-button-toggle value="new">New {{ counts.new }}</mat-button-toggle>
                 <mat-button-toggle value="existing">Replaces {{ counts.existing }}</mat-button-toggle>
                 <mat-button-toggle value="unrouted" *ngIf="counts.unrouted">
-                    No system {{ counts.unrouted }}
+                    {{ statusLabel('unrouted') }} {{ counts.unrouted }}
                 </mat-button-toggle>
             </mat-button-toggle-group>
         </p>
@@ -115,12 +116,17 @@
                 <div class="preview-row preview-head">
                     <span class="cell cell-status">Action</span>
                     <span class="cell cell-system" *ngIf="showSystemColumn">System</span>
-                    <span class="cell cell-id">Id</span>
+                    <span class="cell cell-id" *ngIf="dataType !== 'patches'">Id</span>
                     <span class="cell cell-label">Label</span>
                     <ng-container *ngIf="dataType === 'talkgroups'">
                         <span class="cell cell-name">Name</span>
                         <span class="cell cell-group">Group</span>
                         <span class="cell cell-tag">Tag</span>
+                    </ng-container>
+                    <ng-container *ngIf="dataType === 'patches'">
+                        <span class="cell cell-name">Talkgroups</span>
+                        <span class="cell cell-group">Delay</span>
+                        <span class="cell cell-tag">Disabled</span>
                     </ng-container>
                     <span class="cell cell-action"></span>
                 </div>
@@ -139,6 +145,25 @@
                         <span class="cell cell-tag">{{ entry.row.tag }}</span>
                         <span class="cell cell-action">
                             <button mat-icon-button aria-label="Remove row" (click)="removeTalkgroupRow(entry.index)">
+                                <mat-icon>clear</mat-icon>
+                            </button>
+                        </span>
+                    </div>
+                </cdk-virtual-scroll-viewport>
+
+                <cdk-virtual-scroll-viewport *ngIf="dataType === 'patches'" itemSize="40" minBufferPx="400"
+                    maxBufferPx="800" class="preview-viewport" [style.height.px]="viewportHeight">
+                    <div class="preview-row" *cdkVirtualFor="let entry of patchEntries; trackBy: trackByEntry">
+                        <span class="cell cell-status">
+                            <span class="chip" [ngClass]="'chip-' + entry.status">{{ statusLabel(entry.status) }}</span>
+                        </span>
+                        <span class="cell cell-system" *ngIf="showSystemColumn">{{ entry.row.system }}</span>
+                        <span class="cell cell-label">{{ entry.row.label }}</span>
+                        <span class="cell cell-name">{{ entry.row.talkgroups.join(', ') }}</span>
+                        <span class="cell cell-group">{{ entry.row.delay }}</span>
+                        <span class="cell cell-tag">{{ entry.row.disabled }}</span>
+                        <span class="cell cell-action">
+                            <button mat-icon-button aria-label="Remove row" (click)="removePatchRow(entry.index)">
                                 <mat-icon>clear</mat-icon>
                             </button>
                         </span>
@@ -165,6 +190,10 @@
         </div>
 
         <p *ngIf="rowCount && !shownCount" class="mat-caption text-center">No rows match this filter.</p>
+        <p *ngIf="unimportablePatches" class="mat-caption mat-error text-center">
+            {{ unimportablePatches }} of the {{ rowCount }} patches cannot be imported: their system is not configured
+            here, or it does not carry at least two of the talkgroups they name. They are skipped.
+        </p>
         <p *ngIf="rowCount && counts.existing" class="mat-caption text-center">
             {{ counts.existing }} of the {{ rowCount }} rows land on ids that already exist. You choose whether to keep
             or replace them when you import.

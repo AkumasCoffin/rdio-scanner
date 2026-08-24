@@ -21,8 +21,9 @@ import { DOCUMENT } from '@angular/common';
 import { Component, Inject, OnInit } from '@angular/core';
 import { Config, RdioScannerAdminService, System } from '../../admin.service';
 import { downloadFile, slugify, toCsv } from '../csv';
+import { formatTalkgroupList } from '../import-merge';
 
-type ExportDataType = 'talkgroups' | 'units' | 'config';
+type ExportDataType = 'talkgroups' | 'units' | 'patches' | 'config';
 
 // Scopes are systems only — the CSV's group/tag columns carry that axis.
 // Scoping by group/tag was removed: it hid the systems list (issue #6
@@ -120,6 +121,33 @@ export class RdioScannerAdminExportComponent implements OnInit {
             }
             slug = this.scopeSlug();
             downloadFile(this.document, `rdio-scanner-talkgroups-${slug}.csv`, 'text/csv', toCsv(rows));
+
+        } else if (this.dataType === 'patches') {
+            // The members go in one cell, in ranked order, because that order
+            // is the patch — a row per member would lose it the moment anyone
+            // sorted the sheet.
+            rows.push(['system', 'label', 'talkgroups', 'delay', 'disabled']);
+
+            const scopedIds = new Set(scopedSystems.map((system) => system.id));
+            const systemLabels = new Map(systems.map((system) => [system.id, system.label ?? '']));
+
+            const patches = [...(config.patches ?? [])]
+                .filter((patch) => scopedIds.has(patch.systemId))
+                .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+            for (const patch of patches) {
+                rows.push([
+                    systemLabels.get(patch.systemId) ?? '',
+                    patch.label,
+                    formatTalkgroupList(patch.talkgroups),
+                    patch.delay ?? 0,
+                    patch.disabled ? 'yes' : 'no',
+                ]);
+            }
+
+            slug = this.scopeSlug();
+            downloadFile(this.document, `rdio-scanner-patches-${slug}.csv`, 'text/csv', toCsv(rows));
+
         } else {
             rows.push(['system', 'id', 'label']);
             for (const system of scopedSystems) {
