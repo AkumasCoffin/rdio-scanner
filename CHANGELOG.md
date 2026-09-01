@@ -2,84 +2,15 @@
 
 ## Unreleased
 
-### Transcription has moved into a plugin
+---
 
-**Read this before upgrading if you use transcription.**
+## Released
 
-Call transcription is no longer part of the server. It is now the Transcripts
-plugin, installed from the plugin repository. Everything it did, it still does —
-the same providers, the same multi-key rotation and rate limiting, the same
-transcript forwarding between servers — and the scanner looks exactly as it did
-before, because the plugin puts transcripts back where they have always been.
+## Version 6.14.1
 
-**What happens when you upgrade:**
-
-- Your transcripts, your settings and your API keys are **migrated
-  automatically** into the plugin's own tables. Nothing is thrown away.
-- The migration verifies it copied everything before touching the originals. If
-  the counts do not match it stops, leaves your data exactly as it was, and
-  retries on the next start.
-- If transcription was switched on, the server **installs and enables the
-  Transcripts plugin for you** on first boot and carries your settings across.
-- If the server cannot reach the internet at that moment, nothing is lost. Your
-  settings stay put, a message explains what happened, and it tries again next
-  time — or install the plugin yourself from **Plugins** in the admin panel.
-
-**What changes for you:**
-
-- Transcription settings move from **Config → Options** to **Plugins →
-  Transcripts**.
-- The per-system and per-talkgroup transcribe switches move to the plugin. They
-  default to on, so transcription keeps working as before.
-- Transcript forwarding between two servers now needs the plugin installed on
-  **both** ends.
-- The old `transcript` columns are left in place, unused. Dropping them rewrites
-  the calls table, which takes a long time on a large database, so it is not
-  done automatically — start the server with `-drop_legacy_columns` when you can
-  afford the downtime and want the space back. Below ten thousand calls it is
-  quick enough that it happens on its own.
-
-Nothing changes in the Android app.
-
-### Plugins
-
-- **New: plugin support.** Rdio Scanner can now be extended without being
-  rebuilt. Plugins are browsed and installed from the admin panel, live in a
-  `plugins` folder beside the server, and load at startup.
-
-  Plugins live in their own repository at
-  [AkumasCoffin/rdio-scanner-plugins](https://github.com/AkumasCoffin/rdio-scanner-plugins);
-  none ship with the server. The admin panel lists every branch of a
-  repository, not just the mainline, so in-progress plugins can be installed
-  deliberately — with a warning that says so. Users can add their own
-  repositories, which carry a warning of their own: a plugin runs with full
-  access to the server and to every browser viewing it.
-
-  Plugins can be **enabled and disabled**, not only installed and removed.
-  Uninstalling keeps a plugin's settings and data, so reinstalling restores
-  everything as it was; deleting them is a separate, explicit action.
-
-  Each plugin declares its configuration in its manifest and the admin panel
-  generates the form, so a plugin gets a proper settings UI without shipping
-  any. Each plugin also gets **its own database tables**, created on install
-  and namespaced to it — a plugin can read and write its own tables and
-  nothing else.
-
-  Backend plugin code is JavaScript, run in-process. That is what makes one
-  plugin work on every platform Rdio Scanner supports, from a Raspberry Pi to
-  a Windows server, with nothing to compile. Plugins can react to calls, run
-  scheduled work, make HTTP requests, serve their own HTTP endpoints, add
-  their own websocket messages, and contribute fields that the existing call
-  display and search pick up automatically.
-
-  Frontend plugin code is plain JavaScript loaded at runtime. A plugin can add
-  to existing screens or register a whole new view of its own with its own
-  navigation entry, and bundle its own libraries and stylesheets — enough to
-  build something like a live map fed by another service, without rebuilding
-  the webapp.
-
-  See the [plugin documentation](https://github.com/AkumasCoffin/rdio-scanner-plugins)
-  for how to write one.
+The Search Calls panel rebuilt around a standing filter rail, patches you
+declare yourself, bulk editing across talkgroups and units, and the database
+work behind a large install staying responsive.
 
 ### Search Calls
 
@@ -97,6 +28,12 @@ Nothing changes in the Android app.
 - **Changed: results are drawn as one growing list** — no page numbers to click
   through, and the newest calls stay where they are as more load in.
 
+- **New: a Live toggle keeps an open list up to date.** Calls received since
+  the search ran join the top of it. It holds off while you are scrolled away
+  from the top, so nothing shifts under what you are reading, and it is offered
+  only where arrivals could actually appear — a newest-first list whose date
+  range reaches the present.
+
 - **New: calls on the same talkgroup within thirty seconds of each other are
   kept together.** One exchange reads as one exchange rather than being cut in
   half by unrelated traffic. Nothing is labelled or headed and nothing is
@@ -113,11 +50,8 @@ Nothing changes in the Android app.
   talkgroups it was actually received on, and goes downstream like any other
   patched call.
 
-  Copies are matched on their exact timestamp, independent of the duplicate
-  detection settings, because patched copies of one transmission carry the same
-  time.
-
-  Copies are recognised by their timestamp. Where one recorder fans a
+  Copies are recognised by their timestamp, independent of the duplicate
+  detection settings. Where one recorder fans a
   transmission out to every member talkgroup the copies are the same recording
   and carry the same time, which is the default and needs nothing configured.
   Where separate recorders cover the members they keep their own clocks and can
@@ -131,6 +65,21 @@ Nothing changes in the Android app.
   talkgroup never shows traffic it did not carry — so a patch that usually runs
   on two channels but sometimes reaches a dispatch channel files under dispatch
   exactly when dispatch heard it, and not otherwise.
+
+  The live display cannot get this right first time — the first copy is sent on
+  the moment it lands, while the others are still in flight — so the call goes
+  out at once and the display is corrected when its siblings arrive, rather than
+  every listener paying a delay on every patched call for the chance that one
+  follows. Downstreams get the finished article instead: a forward is an upload,
+  not a record the upstream can revise later, so a patched call waits out its
+  delay before being sent on.
+
+- **New: patches export and import as CSV,** from **Tools**, alongside
+  talkgroups and units. One row per patch, with the members as a list in a
+  single cell because their order is the ranking. Patches match by name within
+  their system rather than by id, since ids are local to an install; members the
+  target system does not carry are dropped, and a patch left with fewer than two
+  is skipped rather than imported inert.
 
 ### Admin panel
 
@@ -267,7 +216,89 @@ Nothing changes in the Android app.
 
 ---
 
-## Released
+## Version 6.14.0
+
+
+### Transcription has moved into a plugin
+
+**Read this before upgrading if you use transcription.**
+
+Call transcription is no longer part of the server. It is now the Transcripts
+plugin, installed from the plugin repository. Everything it did, it still does —
+the same providers, the same multi-key rotation and rate limiting, the same
+transcript forwarding between servers — and the scanner looks exactly as it did
+before, because the plugin puts transcripts back where they have always been.
+
+**What happens when you upgrade:**
+
+- Your transcripts, your settings and your API keys are **migrated
+  automatically** into the plugin's own tables. Nothing is thrown away.
+- The migration verifies it copied everything before touching the originals. If
+  the counts do not match it stops, leaves your data exactly as it was, and
+  retries on the next start.
+- If transcription was switched on, the server **installs and enables the
+  Transcripts plugin for you** on first boot and carries your settings across.
+- If the server cannot reach the internet at that moment, nothing is lost. Your
+  settings stay put, a message explains what happened, and it tries again next
+  time — or install the plugin yourself from **Plugins** in the admin panel.
+
+**What changes for you:**
+
+- Transcription settings move from **Config → Options** to **Plugins →
+  Transcripts**.
+- The per-system and per-talkgroup transcribe switches move to the plugin. They
+  default to on, so transcription keeps working as before.
+- Transcript forwarding between two servers now needs the plugin installed on
+  **both** ends.
+- The old `transcript` columns are left in place, unused. Dropping them rewrites
+  the calls table, which takes a long time on a large database, so it is not
+  done automatically — start the server with `-drop_legacy_columns` when you can
+  afford the downtime and want the space back. Below ten thousand calls it is
+  quick enough that it happens on its own.
+
+Nothing changes in the Android app.
+
+### Plugins
+
+- **New: plugin support.** Rdio Scanner can now be extended without being
+  rebuilt. Plugins are browsed and installed from the admin panel, live in a
+  `plugins` folder beside the server, and load at startup.
+
+  Plugins live in their own repository at
+  [AkumasCoffin/rdio-scanner-plugins](https://github.com/AkumasCoffin/rdio-scanner-plugins);
+  none ship with the server. The admin panel lists every branch of a
+  repository, not just the mainline, so in-progress plugins can be installed
+  deliberately — with a warning that says so. Users can add their own
+  repositories, which carry a warning of their own: a plugin runs with full
+  access to the server and to every browser viewing it.
+
+  Plugins can be **enabled and disabled**, not only installed and removed.
+  Uninstalling keeps a plugin's settings and data, so reinstalling restores
+  everything as it was; deleting them is a separate, explicit action.
+
+  Each plugin declares its configuration in its manifest and the admin panel
+  generates the form, so a plugin gets a proper settings UI without shipping
+  any. Each plugin also gets **its own database tables**, created on install
+  and namespaced to it — a plugin can read and write its own tables and
+  nothing else.
+
+  Backend plugin code is JavaScript, run in-process. That is what makes one
+  plugin work on every platform Rdio Scanner supports, from a Raspberry Pi to
+  a Windows server, with nothing to compile. Plugins can react to calls, run
+  scheduled work, make HTTP requests, serve their own HTTP endpoints, add
+  their own websocket messages, and contribute fields that the existing call
+  display and search pick up automatically.
+
+  Frontend plugin code is plain JavaScript loaded at runtime. A plugin can add
+  to existing screens or register a whole new view of its own with its own
+  navigation entry, and bundle its own libraries and stylesheets — enough to
+  build something like a live map fed by another service, without rebuilding
+  the webapp.
+
+  See the [plugin documentation](https://github.com/AkumasCoffin/rdio-scanner-plugins)
+  for how to write one.
+
+---
 
 ## Version 6.13.5
 
