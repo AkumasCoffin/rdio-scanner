@@ -633,7 +633,14 @@ func (db *Database) traceSlowQuery(query string, started time.Time) {
 // indefinitely — which is how a single leaked *sql.Rows used to take the whole
 // process down.
 func (db *Database) Exec(query string, args ...any) (sql.Result, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), statementTimeout)
+	return db.ExecTimeout(statementTimeout, query, args...)
+}
+
+// ExecTimeout is Exec with a caller-chosen deadline, for a caller that cannot
+// afford to wait the full statementTimeout — a plugin writing from its own
+// event loop, where the wait is not one statement's but the whole plugin's.
+func (db *Database) ExecTimeout(timeout time.Duration, query string, args ...any) (sql.Result, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	defer db.traceSlowQuery(query, time.Now())

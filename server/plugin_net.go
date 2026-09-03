@@ -158,7 +158,7 @@ func (rt *PluginRuntime) bindNet(vm *goja.Runtime, rdio *goja.Object, throw func
 			}
 		}
 
-		return rt.promiseFrom(vm, func() (any, error) {
+		return rt.promiseFromNamed(vm, "net.send", func() (any, error) {
 			conn, err := net.DialTimeout(network, address, timeout)
 			if err != nil {
 				return nil, err

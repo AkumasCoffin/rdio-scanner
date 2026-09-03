@@ -251,6 +251,8 @@ func (rt *PluginRuntime) Start() error {
 			return
 		}
 
+		rt.timeRawTimers(vm)
+
 		stop := rt.armWatchdog(vm, "startup", pluginStartupTimeout)
 		defer stop()
 
@@ -579,8 +581,8 @@ func (rt *PluginRuntime) runOnLoop(label string, fn func(vm *goja.Runtime)) bool
 // and periodic work is the likeliest thing to be quietly doing something
 // expensive: it runs unprompted, so nobody is watching a request while it does.
 //
-// The raw setTimeout and setInterval that goja_nodejs binds into every runtime
-// stay outside this; reaching them means wrapping the bindings themselves.
+// The raw setTimeout and setInterval goja_nodejs binds are reached by
+// timeRawTimers, which wraps the bindings themselves.
 func (rt *PluginRuntime) timeLoopJob(label string) func() {
 	started := time.Now()
 
@@ -588,6 +590,69 @@ func (rt *PluginRuntime) timeLoopJob(label string) func() {
 		if elapsed := time.Since(started); elapsed >= pluginSlowJobThreshold {
 			rt.recordSlowJob(label, elapsed)
 		}
+	}
+}
+
+// timeRawTimers wraps setTimeout and setInterval so a plugin's own timers are
+// timed like every other loop job.
+//
+// These are goja_nodejs's own bindings, scheduled straight onto the loop
+// without passing through runOnLoop, so nothing timed them. That is a poor
+// thing to leave unmeasured: deferring work to a timer is the obvious way to
+// get it off the current job, which makes timers exactly where the slow work
+// of a plugin trying to behave ends up. The transcripts plugin ran its whole
+// transcription queue through setTimeout, including a blocking read of each
+// call's audio, and none of it could appear in the log however long it held.
+//
+// The wrapper only measures: the callback still runs when and as it would
+// have, and its return value — the timer handle clearTimeout needs — is passed
+// straight back.
+func (rt *PluginRuntime) timeRawTimers(vm *goja.Runtime) {
+	for _, name := range []string{"setTimeout", "setInterval"} {
+		original, ok := goja.AssertFunction(vm.Get(name))
+		if !ok {
+			continue
+		}
+
+		label := name
+		wrap := original
+
+		vm.Set(name, func(call goja.FunctionCall) goja.Value {
+			callback, ok := goja.AssertFunction(call.Argument(0))
+			if !ok {
+				// Not a function: hand it on unchanged and let the original
+				// binding raise whatever it would have raised.
+				result, err := wrap(goja.Undefined(), call.Arguments...)
+				if err != nil {
+					panic(vm.NewGoError(err))
+				}
+				return result
+			}
+
+			timed := vm.ToValue(func(inner goja.FunctionCall) goja.Value {
+				defer rt.timeLoopJob(label)()
+
+				result, err := callback(goja.Undefined(), inner.Arguments...)
+				if err != nil {
+					// Matches rdio.schedule: an error in periodic work is
+					// reported and the loop carries on, rather than taking
+					// the runtime down with it.
+					rt.logCallError(label, err)
+					return goja.Undefined()
+				}
+
+				return result
+			})
+
+			args := append([]goja.Value{timed}, call.Arguments[1:]...)
+
+			result, err := wrap(goja.Undefined(), args...)
+			if err != nil {
+				panic(vm.NewGoError(err))
+			}
+
+			return result
+		})
 	}
 }
 
@@ -610,7 +675,7 @@ func (rt *PluginRuntime) recordSlowJob(label string, elapsed time.Duration) {
 	}
 
 	rt.controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf(
-		"plugin %s held its event loop for %s in %s; everything else that plugin does was waiting. Slow work belongs off the loop — see the async variants of db, calls and http.",
+		"plugin %s held its event loop for %s in %s; everything else that plugin does was waiting. Slow work belongs off the loop — db.queryAsync, db.execAsync, calls.getAsync, calls.findIdAsync, calls.searchAsync, calls.updateAsync, http.request and audio.* all return promises.",
 		rt.manifest.Id, elapsed.Round(time.Millisecond), label,
 	))
 }

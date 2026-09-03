@@ -68,7 +68,7 @@ func (rt *PluginRuntime) bindAudio(vm *goja.Runtime, rdio *goja.Object, throw fu
 			throw("audio.probe: %v", err)
 		}
 
-		return rt.promiseFrom(vm, func() (any, error) {
+		return rt.promiseFromNamed(vm, "audio.probe", func() (any, error) {
 			if err := requireFfmpeg(); err != nil {
 				return nil, err
 			}
@@ -99,7 +99,7 @@ func (rt *PluginRuntime) bindAudio(vm *goja.Runtime, rdio *goja.Object, throw fu
 			}
 		}
 
-		return rt.promiseFrom(vm, func() (any, error) {
+		return rt.promiseFromNamed(vm, "audio.decode", func() (any, error) {
 			if err := requireFfmpeg(); err != nil {
 				return nil, err
 			}
@@ -140,7 +140,7 @@ func (rt *PluginRuntime) bindAudio(vm *goja.Runtime, rdio *goja.Object, throw fu
 			}
 		}
 
-		return rt.promiseFrom(vm, func() (any, error) {
+		return rt.promiseFromNamed(vm, "audio.encode", func() (any, error) {
 			if err := requireFfmpeg(); err != nil {
 				return nil, err
 			}
@@ -184,7 +184,7 @@ func (rt *PluginRuntime) bindAudio(vm *goja.Runtime, rdio *goja.Object, throw fu
 			}
 		}
 
-		return rt.promiseFrom(vm, func() (any, error) {
+		return rt.promiseFromNamed(vm, "audio.convert", func() (any, error) {
 			if err := requireFfmpeg(); err != nil {
 				return nil, err
 			}

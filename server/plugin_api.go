@@ -293,7 +293,7 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	db := vm.NewObject()
 
 	db.Set("query", func(query string, args goja.Value) goja.Value {
-		rows, err := rt.db.Query(query, exportPluginArgs(args))
+		rows, err := rt.db.QuerySync(query, exportPluginArgs(args))
 		if err != nil {
 			throw("db.query: %v", err)
 		}
@@ -301,7 +301,7 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	})
 
 	db.Set("exec", func(query string, args goja.Value) goja.Value {
-		affected, err := rt.db.Exec(query, exportPluginArgs(args))
+		affected, err := rt.db.ExecSync(query, exportPluginArgs(args))
 		if err != nil {
 			throw("db.exec: %v", err)
 		}
@@ -315,14 +315,14 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 	// settle a promise back on the loop.
 	db.Set("queryAsync", func(query string, args goja.Value) goja.Value {
 		exported := exportPluginArgs(args)
-		return rt.promiseFrom(vm, func() (any, error) {
+		return rt.promiseFromNamed(vm, "db.queryAsync", func() (any, error) {
 			return rt.db.Query(query, exported)
 		})
 	})
 
 	db.Set("execAsync", func(query string, args goja.Value) goja.Value {
 		exported := exportPluginArgs(args)
-		return rt.promiseFrom(vm, func() (any, error) {
+		return rt.promiseFromNamed(vm, "db.execAsync", func() (any, error) {
 			return rt.db.Exec(query, exported)
 		})
 	})
@@ -340,25 +340,9 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 		// metadata-only lookup fetched the audio and then dropped it — on the
 		// event loop, where the cost is paid by everything else the plugin is
 		// waiting to do.
-		withAudio := false
-		if options != nil && !goja.IsUndefined(options) && !goja.IsNull(options) {
-			if o, ok := options.Export().(map[string]any); ok {
-				if v, ok := o["audio"].(bool); ok {
-					withAudio = v
-				}
-			}
-		}
+		withAudio := callAudioRequested(options)
 
-		var (
-			call *Call
-			err  error
-		)
-
-		if withAudio {
-			call, err = rt.controller.Calls.GetCall(uint(id), rt.controller.Database)
-		} else {
-			call, err = rt.controller.Calls.GetCallMeta(uint(id), rt.controller.Database)
-		}
+		call, err := rt.loadCall(uint(id), withAudio)
 
 		if err != nil {
 			throw("calls.get: %v", err)
@@ -395,6 +379,70 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 		}
 
 		return goja.Undefined()
+	})
+
+	// Async variants. The synchronous ones above run on the plugin's event
+	// loop, and a call lookup is not a small keyed read — get pulls a 50-200 KB
+	// audio blob, and every one of them waits for a connection from a pool
+	// shared with core's ingest. A plugin doing that per call cannot help but
+	// stall itself; these run the work on a goroutine and settle a promise back
+	// on the loop.
+	//
+	// Arguments are exported here, on the loop, because a goja runtime is not
+	// goroutine-safe and the closure below runs on another one.
+	calls.Set("getAsync", func(id int64, options goja.Value) goja.Value {
+		withAudio := callAudioRequested(options)
+
+		return rt.promiseFromNamed(vm, "calls.getAsync", func() (any, error) {
+			call, err := rt.loadCall(uint(id), withAudio)
+			if err != nil {
+				return nil, fmt.Errorf("calls.getAsync: %v", err)
+			}
+			if call == nil {
+				return nil, nil
+			}
+
+			return pluginCallValue(call, withAudio), nil
+		})
+	})
+
+	calls.Set("findIdAsync", func(system int64, talkgroup int64, dateTime string) goja.Value {
+		return rt.promiseFromNamed(vm, "calls.findIdAsync", func() (any, error) {
+			id, err := rt.controller.PluginFindCallId(uint(system), uint(talkgroup), dateTime)
+			if err != nil {
+				return nil, fmt.Errorf("calls.findIdAsync: %v", err)
+			}
+
+			return id, nil
+		})
+	})
+
+	calls.Set("searchAsync", func(options goja.Value) goja.Value {
+		exported := exportSearchOptions(options)
+
+		return rt.promiseFromNamed(vm, "calls.searchAsync", func() (any, error) {
+			results, err := rt.searchCallsWith(exported)
+			if err != nil {
+				return nil, fmt.Errorf("calls.searchAsync: %v", err)
+			}
+
+			return results, nil
+		})
+	})
+
+	calls.Set("updateAsync", func(id int64, fields goja.Value) goja.Value {
+		m, ok := fields.Export().(map[string]any)
+		if !ok {
+			throw("calls.updateAsync requires an object")
+		}
+
+		return rt.promiseFromNamed(vm, "calls.updateAsync", func() (any, error) {
+			if err := rt.updateCall(uint(id), m); err != nil {
+				return nil, fmt.Errorf("calls.updateAsync: %v", err)
+			}
+
+			return nil, nil
+		})
 	})
 
 	calls.Set("extendField", func(spec goja.Value) goja.Value {
@@ -609,7 +657,7 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 			body = map[string]any{}
 		}
 
-		return rt.promiseFrom(vm, func() (any, error) {
+		return rt.promiseFromNamed(vm, "downstreams.forward", func() (any, error) {
 			return rt.controller.ForwardToDownstreams(
 				routePath, uint(system), uint(talkgroup), body, feature,
 			), nil
@@ -956,12 +1004,6 @@ func (rt *PluginRuntime) httpPromise(vm *goja.Runtime, spec goja.Value, isMultip
 		return vm.ToValue(promise)
 	}
 
-	request, err := rt.buildHttpRequest(options, isMultipart)
-	if err != nil {
-		reject(vm.NewGoError(err))
-		return vm.ToValue(promise)
-	}
-
 	// Whether the response is data or text. Text stays the default so nothing
 	// that already calls http changes.
 	binary, _ := options["binary"].(bool)
@@ -974,12 +1016,29 @@ func (rt *PluginRuntime) httpPromise(vm *goja.Runtime, spec goja.Value, isMultip
 		}
 	}
 
+	label := "http.request"
+	if isMultipart {
+		label = "http.multipart"
+	}
+
+	// Built on the loop, deliberately. For a multipart upload this assembles
+	// the whole body, and the bytes it reads may be the plugin's live
+	// ArrayBuffer rather than a copy — goja hands back the underlying slice —
+	// so building on a goroutine would race any JS writing through a view of
+	// it. What that costs is one copy of the payload, which is not where a
+	// slow plugin's time goes.
+	request, err := rt.buildHttpRequest(options, isMultipart)
+	if err != nil {
+		reject(vm.NewGoError(err))
+		return vm.ToValue(promise)
+	}
+
 	go func() {
 		client := &http.Client{Timeout: timeout}
 
 		response, err := client.Do(request)
 		if err != nil {
-			rt.settle(func(vm *goja.Runtime) { reject(vm.NewGoError(err)) })
+			rt.settleNamed(label, func(vm *goja.Runtime) { reject(vm.NewGoError(err)) })
 			return
 		}
 		defer response.Body.Close()
@@ -988,7 +1047,7 @@ func (rt *PluginRuntime) httpPromise(vm *goja.Runtime, spec goja.Value, isMultip
 		// told apart from one that was cut short.
 		body, err := io.ReadAll(io.LimitReader(response.Body, pluginHttpMaxResponse+1))
 		if err != nil {
-			rt.settle(func(vm *goja.Runtime) { reject(vm.NewGoError(err)) })
+			rt.settleNamed(label, func(vm *goja.Runtime) { reject(vm.NewGoError(err)) })
 			return
 		}
 
@@ -1013,7 +1072,7 @@ func (rt *PluginRuntime) httpPromise(vm *goja.Runtime, spec goja.Value, isMultip
 			"truncated": truncated,
 		}
 
-		rt.settle(func(vm *goja.Runtime) {
+		rt.settleNamed(label, func(vm *goja.Runtime) {
 			// A JavaScript string is UTF-8, so returning arbitrary bytes
 			// through one replaces every invalid sequence — around half of all
 			// byte values do not survive. Fetching audio, an image or a
@@ -1035,18 +1094,34 @@ func (rt *PluginRuntime) httpPromise(vm *goja.Runtime, spec goja.Value, isMultip
 
 // settle runs a promise resolution on the event loop. Resolving from the
 // goroutine that did the I/O would touch the runtime from two threads.
+//
+// The label names the async call being resumed, because the job covers the
+// plugin's own continuation as well as the resolution: goja drains its
+// microtask queue before returning, so everything from the `await` to the next
+// one is charged here. A bare "promise" told you the time went somewhere in a
+// continuation and left you to guess which.
 func (rt *PluginRuntime) settle(fn func(vm *goja.Runtime)) {
-	rt.runOnLoop("promise", fn)
+	rt.settleNamed("promise", fn)
+}
+
+func (rt *PluginRuntime) settleNamed(name string, fn func(vm *goja.Runtime)) {
+	rt.runOnLoop(name, fn)
 }
 
 // promiseFrom runs work on a goroutine and settles a promise with its result.
 // The generic shape behind every async host call.
 func (rt *PluginRuntime) promiseFrom(vm *goja.Runtime, work func() (any, error)) goja.Value {
+	return rt.promiseFromNamed(vm, "promise", work)
+}
+
+// promiseFromNamed is promiseFrom with the resumption job named after the call
+// that produced it, so a slow continuation is attributable.
+func (rt *PluginRuntime) promiseFromNamed(vm *goja.Runtime, name string, work func() (any, error)) goja.Value {
 	promise, resolve, reject := vm.NewPromise()
 
 	go func() {
 		value, err := work()
-		rt.settle(func(vm *goja.Runtime) {
+		rt.settleNamed(name, func(vm *goja.Runtime) {
 			if err != nil {
 				reject(vm.NewGoError(err))
 				return
@@ -1058,18 +1133,60 @@ func (rt *PluginRuntime) promiseFrom(vm *goja.Runtime, work func() (any, error))
 	return vm.ToValue(promise)
 }
 
+// callAudioRequested reads the {audio: true} option. Touches the runtime, so
+// it belongs on the loop.
+func callAudioRequested(options goja.Value) bool {
+	if options == nil || goja.IsUndefined(options) || goja.IsNull(options) {
+		return false
+	}
+
+	if o, ok := options.Export().(map[string]any); ok {
+		if v, ok := o["audio"].(bool); ok {
+			return v
+		}
+	}
+
+	return false
+}
+
+// loadCall fetches a call with or without its audio. Plain Go, so it is safe
+// on a goroutine.
+func (rt *PluginRuntime) loadCall(id uint, withAudio bool) (*Call, error) {
+	if withAudio {
+		return rt.controller.Calls.GetCall(id, rt.controller.Database)
+	}
+
+	return rt.controller.Calls.GetCallMeta(id, rt.controller.Database)
+}
+
 // searchCalls runs a call search on the plugin's behalf. Unscoped: a plugin
 // runs server-side with calls-read already granted, so there is no per-listener
 // access code to apply here.
 func (rt *PluginRuntime) searchCalls(options goja.Value) (*CallsSearchResults, error) {
+	return rt.searchCallsWith(exportSearchOptions(options))
+}
+
+// exportSearchOptions lifts a search spec out of the runtime. Must run on the
+// loop; everything after it is plain Go and may not be.
+func exportSearchOptions(options goja.Value) map[string]any {
+	if options == nil || goja.IsUndefined(options) || goja.IsNull(options) {
+		return nil
+	}
+
+	if m, ok := options.Export().(map[string]any); ok {
+		return m
+	}
+
+	return nil
+}
+
+func (rt *PluginRuntime) searchCallsWith(m map[string]any) (*CallsSearchResults, error) {
 	searchOptions := &CallsSearchOptions{
 		searchPatchedTalkgroups: rt.controller.Options.SearchPatchedTalkgroups,
 	}
 
-	if options != nil && !goja.IsUndefined(options) && !goja.IsNull(options) {
-		if m, ok := options.Export().(map[string]any); ok {
-			searchOptions.fromMap(m)
-		}
+	if m != nil {
+		searchOptions.fromMap(m)
 	}
 
 	// Calls.Search reads scoping maps off the client. A client with no access

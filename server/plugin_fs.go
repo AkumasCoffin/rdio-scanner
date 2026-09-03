@@ -284,7 +284,7 @@ func (rt *PluginRuntime) bindExec(vm *goja.Runtime, rdio *goja.Object, throw fun
 			}
 		}
 
-		return rt.promiseFrom(vm, func() (any, error) {
+		return rt.promiseFromNamed(vm, "exec", func() (any, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 

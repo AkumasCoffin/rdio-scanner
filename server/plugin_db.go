@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // pluginConfigTableName is the per-plugin settings table every plugin gets,
@@ -202,13 +203,39 @@ func leadingKeyword(query string) string {
 	return strings.ToLower(m[1])
 }
 
+// pluginSyncDbTimeout bounds a database call made synchronously from a
+// plugin's event loop.
+//
+// Separate from statementTimeout, and far shorter, because the two are
+// answering different questions. statementTimeout asks how long a statement
+// may legitimately take; this asks how long one plugin may stop answering
+// everything else it does. Five minutes is a reasonable answer to the first
+// and an absurd one to the second — a loop that should be held for
+// milliseconds was allowed to be held for three hundred seconds, and in
+// production it was, repeatedly.
+//
+// The async variants keep the full statementTimeout: they are not on the loop,
+// so a slow statement there costs only itself.
+const pluginSyncDbTimeout = 10 * time.Second
+
 // Query runs a statement that returns rows.
 //
 // A write sent here would run but return nothing, which looks like a query that
 // found no rows rather than a mistake — so it is rejected with an explanation
 // instead. That is a guard against confusion, not against capability: the same
 // statement works through Exec.
+// Query runs off the loop, with the full statement timeout.
 func (pluginDb *PluginDb) Query(query string, args []any) ([]map[string]any, error) {
+	return pluginDb.query(query, args, statementTimeout)
+}
+
+// QuerySync is Query from the event loop, bounded so a wait for a connection
+// cannot take the whole plugin with it.
+func (pluginDb *PluginDb) QuerySync(query string, args []any) ([]map[string]any, error) {
+	return pluginDb.query(query, args, pluginSyncDbTimeout)
+}
+
+func (pluginDb *PluginDb) query(query string, args []any, timeout time.Duration) ([]map[string]any, error) {
 	if keyword := leadingKeyword(query); keyword != "" && !pluginQueryStatements[keyword] {
 		return nil, fmt.Errorf("%s returns no rows; use rdio.db.exec for it", strings.ToUpper(keyword))
 	}
@@ -230,7 +257,7 @@ func (pluginDb *PluginDb) Query(query string, args []any) ([]map[string]any, err
 	//
 	// Safe to cancel on return because the rows are fully drained below and
 	// never handed to a caller.
-	ctx, cancel := context.WithTimeout(context.Background(), statementTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	rows, err := pluginDb.database.QueryContext(ctx, rewritten, args...)
@@ -280,12 +307,22 @@ func (pluginDb *PluginDb) Query(query string, args []any) ([]map[string]any, err
 // creates them, namespaces them, and knows to remove them on purge — but a
 // plugin that needs to build schema at runtime is not stopped from doing so.
 func (pluginDb *PluginDb) Exec(query string, args []any) (int64, error) {
+	return pluginDb.exec(query, args, statementTimeout)
+}
+
+// ExecSync is Exec from the event loop, bounded for the same reason QuerySync
+// is: a write waiting on a busy pool must not become the plugin waiting.
+func (pluginDb *PluginDb) ExecSync(query string, args []any) (int64, error) {
+	return pluginDb.exec(query, args, pluginSyncDbTimeout)
+}
+
+func (pluginDb *PluginDb) exec(query string, args []any, timeout time.Duration) (int64, error) {
 	rewritten, err := pluginDb.rewrite(query)
 	if err != nil {
 		return 0, err
 	}
 
-	result, err := pluginDb.database.Exec(rewritten, args...)
+	result, err := pluginDb.database.ExecTimeout(timeout, rewritten, args...)
 	if err != nil {
 		return 0, err
 	}

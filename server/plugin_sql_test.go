@@ -16,8 +16,11 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func sqlRewriter() *PluginDb {
@@ -134,5 +137,54 @@ func TestRewriteSurvivesMalformedSql(t *testing.T) {
 		if _, err := db.rewrite(query); err != nil {
 			t.Errorf("%q produced an error rather than being passed through: %v", query, err)
 		}
+	}
+}
+
+// A plugin's synchronous database calls are bounded far more tightly than a
+// statement is, because what they hold up is not one statement but the whole
+// plugin: its routes, its observers, its timers, all on one event loop. The
+// five-minute statement timeout is a reasonable ceiling for a statement and an
+// absurd one for a loop, and in production it was reached — a minute and a half
+// of a plugin answering nothing while a write waited for a pooled connection.
+func TestSynchronousPluginDbIsBoundedTighterThanAStatement(t *testing.T) {
+	if pluginSyncDbTimeout >= statementTimeout {
+		t.Errorf("sync ceiling %v is not tighter than the statement timeout %v",
+			pluginSyncDbTimeout, statementTimeout)
+	}
+
+	// Loop-shaped rather than statement-shaped. A ceiling in minutes would
+	// technically satisfy the check above and still be useless.
+	if pluginSyncDbTimeout > 30*time.Second {
+		t.Errorf("sync ceiling %v is too long to protect an event loop", pluginSyncDbTimeout)
+	}
+}
+
+// The deadline has to reach the statement, not merely be declared. A timeout
+// that is computed and then not threaded through is the failure this catches:
+// everything still works, and nothing is bounded.
+func TestExecTimeoutReachesTheStatement(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if _, err := db.Exec("create table `deadlineprobe` (`id` integer)"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// A negative duration puts the deadline in the past, which cancels the
+	// context as it is built. A tiny positive one would be a race: the
+	// deadline passes immediately but Done() only closes when the timer
+	// goroutine runs, and database/sql's check is a non-blocking select.
+	_, err := db.ExecTimeout(-time.Second, "insert into `deadlineprobe` (`id`) values (1)")
+	if err == nil {
+		t.Fatal("an expired deadline let the statement through")
+	}
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("failed with %v, want a deadline error", err)
+	}
+
+	// The ordinary path is unaffected.
+	if _, err := db.Exec("insert into `deadlineprobe` (`id`) values (2)"); err != nil {
+		t.Errorf("normal exec failed: %v", err)
 	}
 }
