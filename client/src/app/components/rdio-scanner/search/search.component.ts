@@ -43,6 +43,16 @@ import { readAdminToken } from '../admin/admin-token';
 const FILTERS_STORAGE_KEY = 'rdio-scanner-search-filters';
 
 /**
+ * How long a queued transcription may go unanswered before the row stops
+ * claiming to be working on it.
+ *
+ * Generous on purpose: the provider is allowed sixty seconds per attempt and
+ * retries a rate-limited one with backoff, so a transcript that is merely slow
+ * must not be declared lost while it is still coming.
+ */
+const TRANSCRIBE_WATCHDOG_MS = 180000;
+
+/**
  * Rows per request. The server caps `limit` at 500; 100 keeps each chunk small
  * enough to render in one frame while still being a meaningful jump.
  */
@@ -278,6 +288,9 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     expandedTranscriptId: number | undefined;
     transcribingIds = new Set<number>();
 
+    /** Watchdog timers for queued transcriptions, keyed by call id. */
+    private transcribeWatchdogs = new Map<number, number>();
+
     // Deep-link focus state. When a user lands on ?call=<id>, we highlight
     // that call's row and scroll to it. Cleared on any user-driven form
     // change so normal searches don't carry the highlight.
@@ -356,6 +369,8 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         if (this.qDebounce) clearTimeout(this.qDebounce);
         if (this.tgDebounce) clearTimeout(this.tgDebounce);
         if (this.highlightClearTimer) clearTimeout(this.highlightClearTimer);
+        this.transcribeWatchdogs.forEach((timer) => window.clearTimeout(timer));
+        this.transcribeWatchdogs.clear();
     }
 
     @HostListener('document:keydown.escape')
@@ -1339,19 +1354,62 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
 
         try {
             const url = `${window.location.href}/../api/admin/transcribe`;
-            const res = await firstValueFrom(this.ngHttpClient.post<{ id: number; transcript: string }>(
+            const res = await firstValueFrom(this.ngHttpClient.post<{ id: number; transcript?: string }>(
                 url,
                 { id, manual: false },
                 { headers: new HttpHeaders({ Authorization: token }), responseType: 'json' },
             ));
 
-            this.applyTranscript(id, res.transcript);
+            // A transcript in the reply means the plugin did the work inline
+            // and this is done. Anything else means it took the request as a
+            // request — the job is queued, and the result will arrive as a
+            // push. Both shapes are accepted because the plugin that answers
+            // this route is versioned separately from the server.
+            if (typeof res?.transcript === 'string') {
+                this.transcribingIds.delete(id);
+                this.applyTranscript(id, res.transcript);
+                return;
+            }
+
+            this.startTranscribeWatchdog(id);
         } catch (err: any) {
+            this.transcribingIds.delete(id);
+
             const msg = err?.error?.error || err?.message || 'Transcription failed.';
             this.matSnackBar.open(msg, '', { duration: 5000 });
         } finally {
-            this.transcribingIds.delete(id);
             this.ngChangeDetectorRef.detectChanges();
+        }
+    }
+
+    /**
+     * Stops a queued transcription from spinning forever.
+     *
+     * The push is the only thing that reports success, and it can legitimately
+     * be a minute or two away behind a busy provider — but it can also never
+     * come, if the audio was too short to transcribe or the model returned only
+     * silence. Both are outcomes the server logs and neither sends a push, so
+     * without this the row keeps a spinner until the page is reloaded.
+     */
+    private startTranscribeWatchdog(id: number): void {
+        this.clearTranscribeWatchdog(id);
+
+        this.transcribeWatchdogs.set(id, window.setTimeout(() => {
+            this.transcribeWatchdogs.delete(id);
+
+            if (!this.transcribingIds.delete(id)) return;
+
+            this.matSnackBar.open('Still transcribing, or nothing usable in the audio.', '', { duration: 5000 });
+            this.ngChangeDetectorRef.detectChanges();
+        }, TRANSCRIBE_WATCHDOG_MS));
+    }
+
+    private clearTranscribeWatchdog(id: number): void {
+        const timer = this.transcribeWatchdogs.get(id);
+
+        if (timer !== undefined) {
+            window.clearTimeout(timer);
+            this.transcribeWatchdogs.delete(id);
         }
     }
 
@@ -1900,6 +1958,25 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     }
 
     private eventHandler(event: RdioScannerEvent): void {
+        // A transcript finished on the server for a call this page is showing.
+        //
+        // Retranscribing is queued rather than answered inline, so this is how
+        // the result arrives — the same push that delivers a transcript nobody
+        // asked for by hand. The server sends it to every connected client, not
+        // only those subscribed to that talkgroup, so the admin who asked gets
+        // it whatever they happen to be listening to.
+        if (event.transcriptReady) {
+            const { id, transcript } = event.transcriptReady;
+
+            this.clearTranscribeWatchdog(id);
+
+            if (this.transcribingIds.delete(id)) {
+                this.expandedTranscriptId = id;
+            }
+
+            this.applyTranscript(id, transcript);
+        }
+
         if ('call' in event) {
             this.call = event.call;
 
