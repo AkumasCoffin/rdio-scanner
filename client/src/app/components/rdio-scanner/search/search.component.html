@@ -190,6 +190,28 @@
                         ? 'Show fewer' : 'Show all ' + optionsTag.length + ' tags' }}</button>
                 </div>
             </section>
+
+            <!--
+                Admin only, because it exists to find the calls transcription
+                missed rather than to browse with. It is a convenience, not a
+                boundary: it narrows a list by something every listener can
+                already see on the rows themselves.
+            -->
+            <section class="fgroup" *ngIf="isAdminAuthenticated()">
+                <h4>Transcript</h4>
+                <div class="opts">
+                    <button type="button" class="opt" [class.on]="transcriptFilter() === 'with'"
+                        (click)="setTranscriptFilter('with')">
+                        <span class="tick"></span>
+                        <span class="opt-label">With transcript</span>
+                    </button>
+                    <button type="button" class="opt" [class.on]="transcriptFilter() === 'without'"
+                        (click)="setTranscriptFilter('without')">
+                        <span class="tick"></span>
+                        <span class="opt-label">Without transcript</span>
+                    </button>
+                </div>
+            </section>
         </div>
 
         <!-- Only reachable at the phone breakpoint, where the rail is a sheet. -->

@@ -983,13 +983,39 @@
   background: var(--led);
 }
 
+/* Bigger than the ticks in the filter rail, deliberately.
+   Those are picked once while setting a search up; this one is picked over and
+   over, against a moving virtual list, and often on a phone — so it gets a
+   target you can hit without aiming, stretched to the full row height so the
+   gap above and below the box is still the button. */
 .row-pick {
-  align-self: center;
+  align-self: stretch;
   display: inline-flex;
-  padding: 6px 2px 6px 8px;
+  align-items: center;
+  padding: 6px 6px 6px 12px;
   border: 0;
   background: none;
   cursor: pointer;
+
+  .tick {
+    width: 18px;
+    height: 18px;
+    border-width: 1.5px;
+  }
+
+  /* The checkmark is drawn to the box, so it has to grow with it. */
+  &.on > .tick::after,
+  .picked &.tick::after {
+    left: 6px;
+    top: 2px;
+    width: 4px;
+    height: 9px;
+    border-width: 0 2.5px 2.5px 0;
+  }
+
+  &:hover .tick {
+    border-color: var(--accent);
+  }
 }
 
 .row-time {

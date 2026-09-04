@@ -196,6 +196,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         talkgroups: [[] as string[]],
         groups: [[] as string[]],
         tags: [[] as string[]],
+        transcript: ['' as '' | 'with' | 'without'],
     });
 
     private qDebounce: ReturnType<typeof setTimeout> | undefined;
@@ -798,6 +799,24 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         return (this.form.value.tags as string[]).includes(tag);
     }
 
+    /**
+     * Narrows to calls that have a transcript, or that lack one.
+     *
+     * Pressing the active choice again clears it, so the filter can be undone
+     * without a separate "any" button taking up a third of the row.
+     */
+    setTranscriptFilter(want: 'with' | 'without'): void {
+        const next = this.form.value.transcript === want ? '' : want;
+
+        this.form.patchValue({ transcript: next as '' | 'with' | 'without' });
+
+        this.applyFilters();
+    }
+
+    transcriptFilter(): string {
+        return (this.form.value.transcript as string) || '';
+    }
+
     toggleTag(tag: string): void {
         this.form.patchValue({ tags: this.toggled(this.form.value.tags as string[], tag) });
 
@@ -992,6 +1011,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
             talkgroups: [],
             groups: [],
             tags: [],
+            transcript: '',
         });
 
         this.talkgroupQuery = '';
@@ -1077,6 +1097,13 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
 
         if (q) {
             options.q = q;
+        }
+
+        // Only sent when the rail is offering it. Someone who signed out with
+        // the filter set should get their whole list back, not a narrowed one
+        // they can no longer see the control for.
+        if ((value.transcript === 'with' || value.transcript === 'without') && this.isAdminAuthenticated()) {
+            options.transcript = value.transcript;
         }
 
         const systems = value.systems as number[];
@@ -1181,6 +1208,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
                 talkgroups: value.talkgroups,
                 groups: value.groups,
                 tags: value.tags,
+                transcript: value.transcript,
                 groupByBurst: this.groupByBurst,
                 liveUpdate: this.liveUpdate,
             }));
@@ -1214,6 +1242,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
                 talkgroups: Array.isArray(saved.talkgroups) ? saved.talkgroups.filter((key: unknown) => typeof key === 'string') : [],
                 groups: Array.isArray(saved.groups) ? saved.groups.filter((g: unknown) => typeof g === 'string') : [],
                 tags: Array.isArray(saved.tags) ? saved.tags.filter((t: unknown) => typeof t === 'string') : [],
+                transcript: saved.transcript === 'with' || saved.transcript === 'without' ? saved.transcript : '',
             });
 
             this.groupByBurst = saved.groupByBurst === true;

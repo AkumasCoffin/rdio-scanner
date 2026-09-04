@@ -988,6 +988,50 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 		}
 	}
 
+	// Calls that have text, or that have none.
+	//
+	// Same exists() shape as the free-text filter above, minus the comparison:
+	// the question is whether a row is there and holds something, not what it
+	// holds. Empty strings count as absent — a transcript that came back as
+	// silence is stored as one, and calling that "has a transcript" would hide
+	// exactly the calls this filter exists to find.
+	transcriptFilter, _ := searchOptions.Transcript.(string)
+
+	if want := strings.ToLower(strings.TrimSpace(transcriptFilter)); want == "with" || want == "without" {
+		// Not expressible as a finite set of system/talkgroup pairs, so the
+		// fast date-bound probe cannot be used — it would measure bounds over
+		// a set this filter has not been applied to.
+		probeExact = false
+
+		predicates := []string{}
+
+		for _, extension := range searchExtensions {
+			predicates = append(predicates, fmt.Sprintf(
+				"exists (select 1 from `%s` where `%s`.`%s` = `rdioScannerCalls`.`id` and `%s`.`%s` is not null and `%s`.`%s` <> '')",
+				extension.table,
+				extension.table, extension.key,
+				extension.table, extension.text,
+				extension.table, extension.text,
+			))
+		}
+
+		switch {
+		case len(predicates) == 0:
+			// Nothing registers searchable text, so nothing can have any.
+			// "without" is then every call and "with" is none — which is the
+			// honest answer rather than dropping the filter.
+			if want == "with" {
+				where += " and 1 = 0"
+			}
+
+		case want == "with":
+			where += fmt.Sprintf(" and (%s)", strings.Join(predicates, " or "))
+
+		default:
+			where += fmt.Sprintf(" and not (%s)", strings.Join(predicates, " or "))
+		}
+	}
+
 	// Everything above narrows *which* calls exist for this search, so it is
 	// what the date-bound probes measure. Everything below picks a window and a
 	// page inside that set.
@@ -1613,6 +1657,15 @@ type CallsSearchOptions struct {
 	Talkgroup  any `json:"talkgroup,omitempty"`
 	Talkgroups any `json:"talkgroups,omitempty"`
 
+	// Transcript narrows to calls that have one, or that do not: "with" or
+	// "without". Anything else is treated as no filter at all.
+	//
+	// "Has one" is decided the same way the free-text search decides what to
+	// look in — over whatever tables plugins registered — so this stays true
+	// for any plugin that supplies searchable text, and correctly matches
+	// nothing when none is installed.
+	Transcript any `json:"transcript,omitempty"`
+
 	searchPatchedTalkgroups bool
 }
 
@@ -1756,6 +1809,14 @@ func (searchOptions *CallsSearchOptions) fromMap(m map[string]any) error {
 		s := strings.TrimSpace(v)
 		if s != "" {
 			searchOptions.Q = s
+		}
+	}
+
+	switch v := m["transcript"].(type) {
+	case string:
+		s := strings.ToLower(strings.TrimSpace(v))
+		if s == "with" || s == "without" {
+			searchOptions.Transcript = s
 		}
 	}
 

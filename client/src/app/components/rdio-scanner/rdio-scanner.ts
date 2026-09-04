@@ -240,6 +240,8 @@ export interface RdioScannerSearchOptions {
     group?: string;
     groups?: string[];
     limit: number;
+    /** 'with' or 'without' narrows to calls that have a transcript, or lack one. */
+    transcript?: 'with' | 'without';
     offset?: number;
     q?: string;
     sort: number;
