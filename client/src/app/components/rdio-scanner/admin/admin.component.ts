@@ -17,12 +17,13 @@
  * ****************************************************************************
  */
 
-import { Component, OnDestroy, ViewChild, ViewEncapsulation } from '@angular/core';
+import { Component, OnDestroy, OnInit, ViewChild, ViewEncapsulation } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
 import { firstValueFrom } from 'rxjs';
 import packageInfo from '../../../../../package.json';
 import { AdminEvent, RdioScannerAdminService } from './admin.service';
 import { ConfigSection, RdioScannerAdminConfigComponent } from './config/config.component';
+import { RdioScannerPluginHostService } from '../plugins/plugin-host.service';
 import { RdioScannerAdminRestartDialogComponent } from './restart-dialog.component';
 
 export type AdminTab = ConfigSection | 'dashboard' | 'plugins' | 'logs' | 'tools';
@@ -59,7 +60,7 @@ const CONFIG_TABS: AdminTab[] = ['options', 'systems', 'groupsTags', 'patches', 
     styleUrls: ['./admin.component.scss'],
     templateUrl: './admin.component.html',
 })
-export class RdioScannerAdminComponent implements OnDestroy {
+export class RdioScannerAdminComponent implements OnInit, OnDestroy {
     @ViewChild('configComponent') configComponent: RdioScannerAdminConfigComponent | undefined;
 
     authenticated = this.adminService.authenticated;
@@ -79,6 +80,14 @@ export class RdioScannerAdminComponent implements OnDestroy {
     // config section.
     configSection: ConfigSection = 'options';
 
+    ngOnInit(): void {
+        // Plugin frontends are otherwise loaded only by the scanner's config
+        // socket, which this page does not have — so without this the
+        // admin-panel slot below the plugin manager is always empty, and a
+        // plugin's own settings UI never appears.
+        this.pluginHost.syncFromLoader();
+    }
+
     private eventSubscription = this.adminService.event.subscribe(async (event: AdminEvent) => {
         if ('authenticated' in event) {
             this.authenticated = event.authenticated || false;
@@ -92,6 +101,7 @@ export class RdioScannerAdminComponent implements OnDestroy {
     constructor(
         private adminService: RdioScannerAdminService,
         private matDialog: MatDialog,
+        private pluginHost: RdioScannerPluginHostService,
     ) { }
 
     /**

@@ -393,6 +393,29 @@ export class RdioScannerPluginHostService {
         }
     }
 
+    /**
+     * Loads plugin frontends from the list the server's loader script publishes.
+     *
+     * The ordinary path is sync(), driven by the plugins array on the scanner's
+     * CFG websocket message. The admin panel never receives that: it is a
+     * lazily-loaded module that talks HTTP to /api/admin/config and opens no
+     * socket, so nothing there ever loaded a plugin frontend and the one
+     * admin-side slot could not be filled. A plugin's admin UI was served,
+     * listed, and never run.
+     *
+     * The loader publishes the same list on every page, so the admin can use it
+     * directly. Idempotent: sync() skips anything already loaded, so arriving
+     * here after the socket has already synced changes nothing.
+     */
+    syncFromLoader(): void {
+        const published = (window as unknown as { rdioScannerPluginEntries?: PluginEntry[] })
+            .rdioScannerPluginEntries;
+
+        if (Array.isArray(published)) {
+            this.sync(published);
+        }
+    }
+
     /** Publishes an app event to plugin handlers. */
     emit(event: string, payload: unknown): void {
         this.lastEvent.set(event, payload);
