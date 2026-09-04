@@ -156,6 +156,23 @@ type Calls struct {
 	mutex     sync.Mutex
 	metaMutex sync.Mutex
 	metaCache map[string]*callsSearchMeta
+
+	// The unfiltered date bounds, remembered rather than asked for.
+	//
+	// `select dateTime from rdioScannerCalls order by dateTime asc limit 1`
+	// looks like a one-row index peek and is not one on a table with
+	// time-based retention: prune deletes the oldest rows, so the low end of
+	// the time index fills with dead entries and the scan walks every one of
+	// them before it reaches a live row. Measured at 21 seconds in production,
+	// with the descending twin at 14, both re-run every 105 seconds to keep a
+	// date picker's bounds warm.
+	//
+	// Neither needs a query in the steady state. The newest call is the one
+	// just ingested, which WriteCall reports here; the oldest only moves when
+	// prune deletes, which clears it alongside the cache. So the probes run
+	// once at startup and then only after a prune.
+	oldest time.Time
+	newest time.Time
 }
 
 type callsSearchMeta struct {
@@ -193,6 +210,38 @@ func NewCalls() *Calls {
 func (calls *Calls) InvalidateSearchMeta() {
 	calls.metaMutex.Lock()
 	calls.metaCache = make(map[string]*callsSearchMeta)
+	// The oldest call is exactly what a prune moves, so it has to be found
+	// again. The newest is untouched: prune deletes from the old end.
+	calls.oldest = time.Time{}
+	calls.metaMutex.Unlock()
+}
+
+// noteNewest records the most recent call seen, so the unfiltered upper bound
+// never has to be queried for.
+func (calls *Calls) noteNewest(at time.Time) {
+	if at.IsZero() {
+		return
+	}
+
+	calls.metaMutex.Lock()
+	if at.After(calls.newest) {
+		calls.newest = at
+	}
+	calls.metaMutex.Unlock()
+}
+
+// knownBounds returns the remembered unfiltered bounds. A zero time means not
+// known yet, and only then is a probe worth running.
+func (calls *Calls) knownBounds() (time.Time, time.Time) {
+	calls.metaMutex.Lock()
+	defer calls.metaMutex.Unlock()
+
+	return calls.oldest, calls.newest
+}
+
+func (calls *Calls) noteOldest(at time.Time) {
+	calls.metaMutex.Lock()
+	calls.oldest = at
 	calls.metaMutex.Unlock()
 }
 
@@ -1434,6 +1483,11 @@ func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 		if err != nil {
 			return 0, formatError(err)
 		}
+
+		// The unfiltered upper bound, without anyone having to go and look for
+		// it. See the note on Calls.newest.
+		calls.noteNewest(call.DateTime)
+
 		return uint(id), nil
 	}
 
@@ -1442,6 +1496,8 @@ func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 	}
 
 	if id, err = res.LastInsertId(); err == nil {
+		calls.noteNewest(call.DateTime)
+
 		return uint(id), nil
 	} else {
 		return 0, formatError(err)
@@ -1458,21 +1514,32 @@ func (calls *Calls) WarmSearchMeta(db *Database) {
 		t        time.Time
 	)
 
-	startQuery := fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %s order by `dateTime` asc limit 1", where)
-	var start time.Time
-	if err := db.QueryRow(startQuery).Scan(&dateTime); err == nil {
-		if t, err = db.ParseDateTime(dateTime); err == nil {
-			start = t
+	start, stop := calls.knownBounds()
+
+	// Only when it is genuinely unknown — at startup, and after a prune has
+	// moved it. Every other run of this reuses the answer.
+	if start.IsZero() {
+		startQuery := fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %s order by `dateTime` asc limit 1", where)
+		if err := db.QueryRow(startQuery).Scan(&dateTime); err == nil {
+			if t, err = db.ParseDateTime(dateTime); err == nil {
+				start = t
+				calls.noteOldest(t)
+			}
 		}
 	}
 
-	stopQuery := fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %s order by `dateTime` desc limit 1", where)
-	var stop time.Time
-	if err := db.QueryRow(stopQuery).Scan(&dateTime); err == nil {
-		if t, err = db.ParseDateTime(dateTime); err == nil {
-			stop = t
+	// The upper bound comes from ingest, which knows it without asking. Only a
+	// server that has not stored a call since it started has to look.
+	if stop.IsZero() {
+		stopQuery := fmt.Sprintf("select `dateTime` from `rdioScannerCalls` where %s order by `dateTime` desc limit 1", where)
+		if err := db.QueryRow(stopQuery).Scan(&dateTime); err == nil {
+			if t, err = db.ParseDateTime(dateTime); err == nil {
+				stop = t
+				calls.noteNewest(t)
+			}
 		}
 	}
+
 	if stop.IsZero() {
 		stop = time.Now()
 	}

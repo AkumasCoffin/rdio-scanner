@@ -1009,3 +1009,92 @@ func TestSearchProbePairsMatchThePlainProbe(t *testing.T) {
 		t.Errorf("dateStop = %v, want %v", results.DateStop, want)
 	}
 }
+
+// The unfiltered date bounds are the most expensive thing this server used to
+// ask for when nobody had asked it anything. `order by dateTime asc limit 1`
+// reads like a one-row index peek and is not one under time-based retention:
+// prune deletes from the old end, and the scan walks the dead index entries it
+// leaves behind. Twenty-one seconds in production, every 105 seconds, for a
+// date picker.
+//
+// Neither bound needs a query in the steady state, and this holds the server to
+// that: after the first warm, the probes must not run again unless a prune has
+// moved the floor.
+func TestWarmSearchMetaStopsProbingOnceTheBoundsAreKnown(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	base := time.Date(2024, 3, 5, 12, 0, 0, 0, time.UTC)
+	for n := 0; n < 3; n++ {
+		insertSearchTestCall(t, db, base.Add(time.Duration(n)*time.Minute), 1, 100)
+	}
+
+	calls := NewCalls()
+	calls.WarmSearchMeta(db)
+
+	oldest, newest := calls.knownBounds()
+	if oldest.IsZero() || newest.IsZero() {
+		t.Fatalf("first warm left the bounds unknown: oldest=%v newest=%v", oldest, newest)
+	}
+
+	if !oldest.Equal(base.UTC()) {
+		t.Errorf("oldest is %v, want %v", oldest, base.UTC())
+	}
+
+	// Rename the table so any probe fails loudly. A warm that still answers is
+	// a warm that asked nothing.
+	if _, err := db.Exec("alter table `rdioScannerCalls` rename to `rdioScannerCallsHidden`"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	defer db.Exec("alter table `rdioScannerCallsHidden` rename to `rdioScannerCalls`")
+
+	calls.WarmSearchMeta(db)
+
+	again, _ := calls.knownBounds()
+	if !again.Equal(oldest) {
+		t.Errorf("second warm changed the floor to %v, want %v — it went back to the table", again, oldest)
+	}
+
+	// A prune genuinely moves the floor, and that is the one thing that must
+	// send it looking again.
+	calls.InvalidateSearchMeta()
+
+	if floor, _ := calls.knownBounds(); !floor.IsZero() {
+		t.Error("a prune left the old floor in place; the next search would report a range that no longer exists")
+	}
+}
+
+// The upper bound comes from ingest rather than from a query: the newest call
+// is the one just written.
+func TestWriteCallReportsTheNewestBound(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	calls := NewCalls()
+
+	if _, newest := calls.knownBounds(); !newest.IsZero() {
+		t.Fatal("a fresh Calls already claims to know the newest call")
+	}
+
+	at := time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC)
+	call := &Call{System: 1, Talkgroup: 100, DateTime: at, Audio: []byte{1}, AudioName: "a.wav"}
+
+	if _, err := calls.WriteCall(call, db); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if _, newest := calls.knownBounds(); !newest.Equal(at) {
+		t.Errorf("newest is %v after a write, want %v", newest, at)
+	}
+
+	// An older call must not drag the upper bound backwards.
+	older := &Call{System: 1, Talkgroup: 100, DateTime: at.Add(-time.Hour), Audio: []byte{1}, AudioName: "b.wav"}
+
+	if _, err := calls.WriteCall(older, db); err != nil {
+		t.Fatalf("write older: %v", err)
+	}
+
+	if _, newest := calls.knownBounds(); !newest.Equal(at) {
+		t.Errorf("an older call moved the newest bound to %v, want %v", newest, at)
+	}
+}
