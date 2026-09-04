@@ -18,6 +18,7 @@
 import { Injectable, NgZone } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 import { anchorSelector, boostSelector, cssDeclarations } from './plugin-css';
+import { readAdminToken } from '../admin/admin-token';
 
 /**
  * The webapp is AOT-compiled and embedded in the server binary, so a plugin
@@ -188,7 +189,7 @@ interface DomDecoration {
  * reached exactly as before.
  */
 function pluginApiHeaders(): Record<string, string> {
-    const token = window?.sessionStorage?.getItem('rdio-scanner-admin-token') || '';
+    const token = readAdminToken();
 
     return token ? { Authorization: token } : {};
 }

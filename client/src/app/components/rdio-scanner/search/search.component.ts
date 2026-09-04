@@ -36,8 +36,9 @@ import {
 } from '../rdio-scanner';
 import { RdioScannerService } from '../rdio-scanner.service';
 import { LED_HEX } from '../led-colors';
+import { readAdminToken } from '../admin/admin-token';
 
-const ADMIN_TOKEN_STORAGE_KEY = 'rdio-scanner-admin-token';
+
 
 const FILTERS_STORAGE_KEY = 'rdio-scanner-search-filters';
 
@@ -1269,7 +1270,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     // ------------------------------------------------------------ row features
 
     isAdminAuthenticated(): boolean {
-        return !!window?.sessionStorage?.getItem(ADMIN_TOKEN_STORAGE_KEY);
+        return !!readAdminToken();
     }
 
     toggleTranscript(id: number | undefined): void {
@@ -1326,7 +1327,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     async transcribeCall(id: number | undefined): Promise<void> {
         if (!id || this.transcribingIds.has(id)) return;
 
-        const token = window?.sessionStorage?.getItem(ADMIN_TOKEN_STORAGE_KEY);
+        const token = readAdminToken();
         if (!token) {
             this.matSnackBar.open('Sign in as admin to request a transcription.', '', { duration: 4000 });
             return;

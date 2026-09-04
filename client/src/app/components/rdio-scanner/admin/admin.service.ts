@@ -24,6 +24,7 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { firstValueFrom, timer } from 'rxjs';
 import { AppUpdateService } from '../../../shared/update/update.service';
 import { LED_NAMES } from '../led-colors';
+import { readAdminToken, writeAdminToken } from './admin-token';
 
 export interface Access {
     _id?: string;
@@ -493,7 +494,7 @@ enum url {
     stats = 'stats',
 }
 
-const SESSION_STORAGE_KEY = 'rdio-scanner-admin-token';
+
 
 @Injectable()
 export class RdioScannerAdminService implements OnDestroy {
@@ -518,11 +519,11 @@ export class RdioScannerAdminService implements OnDestroy {
     private _passwordNeedChange = false;
 
     private get token(): string {
-        return window?.sessionStorage?.getItem(SESSION_STORAGE_KEY) || '';
+        return readAdminToken();
     }
 
     private set token(token: string) {
-        window?.sessionStorage?.setItem(SESSION_STORAGE_KEY, token);
+        writeAdminToken(token);
     }
 
     constructor(
