@@ -18,7 +18,7 @@
 import { Injectable, NgZone } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 import { anchorSelector, boostSelector, cssDeclarations } from './plugin-css';
-import { readAdminToken } from '../admin/admin-token';
+import { clearAdminToken, readAdminToken } from '../admin/admin-token';
 
 /**
  * The webapp is AOT-compiled and embedded in the server binary, so a plugin
@@ -188,6 +188,24 @@ interface DomDecoration {
  * token and nothing is added, so a plugin route that does not check one is
  * reached exactly as before.
  */
+/**
+ * Turns a plugin API response into its body, or an error.
+ *
+ * A 401 gets one extra step: the token is discarded. The allowlist the server
+ * checks tokens against lives in memory, so a restart invalidates every issued
+ * one while the browser still holds a perfectly well-formed copy — and a
+ * plugin's settings panel would go on rendering, and go on being refused, with
+ * nothing to say the session was the problem. Dropping it makes the admin panel
+ * ask for a password again, which is the actual fix.
+ */
+function readPluginApiResponse(res: Response): Promise<unknown> {
+    if (res.status === 401) {
+        clearAdminToken();
+    }
+
+    return res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`));
+}
+
 function pluginApiHeaders(): Record<string, string> {
     const token = readAdminToken();
 
@@ -1130,14 +1148,14 @@ export class RdioScannerPluginHostService {
                 get(path: string): Promise<unknown> {
                     return fetch(`api/plugin/${pluginId}/${String(path).replace(/^\/+/, '')}`, {
                         headers: pluginApiHeaders(),
-                    }).then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))));
+                    }).then(readPluginApiResponse);
                 },
                 post(path: string, body: unknown): Promise<unknown> {
                     return fetch(`api/plugin/${pluginId}/${String(path).replace(/^\/+/, '')}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', ...pluginApiHeaders() },
                         body: JSON.stringify(body ?? {}),
-                    }).then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))));
+                    }).then(readPluginApiResponse);
                 },
             },
 

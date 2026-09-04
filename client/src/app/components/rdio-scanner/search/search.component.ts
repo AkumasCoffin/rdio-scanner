@@ -36,7 +36,7 @@ import {
 } from '../rdio-scanner';
 import { RdioScannerService } from '../rdio-scanner.service';
 import { LED_HEX } from '../led-colors';
-import { readAdminToken } from '../admin/admin-token';
+import { clearAdminToken, readAdminToken } from '../admin/admin-token';
 
 
 
@@ -1374,6 +1374,18 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
             this.startTranscribeWatchdog(id);
         } catch (err: any) {
             this.transcribingIds.delete(id);
+
+            // A 401 means the token is real but the server no longer honours
+            // it, which is the ordinary state of affairs after a restart: the
+            // allowlist tokens are checked against lives in memory, so every
+            // deploy invalidates all of them. Holding on to a token the server
+            // has forgotten would keep offering a control that cannot work, so
+            // it goes, and the button goes with it until the next sign-in.
+            if (err?.status === 401) {
+                clearAdminToken();
+                this.matSnackBar.open('Admin session expired — sign in again to retranscribe.', '', { duration: 5000 });
+                return;
+            }
 
             const msg = err?.error?.error || err?.message || 'Transcription failed.';
             this.matSnackBar.open(msg, '', { duration: 5000 });
