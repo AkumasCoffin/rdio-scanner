@@ -264,6 +264,13 @@
                 <mat-icon>description</mat-icon>
                 <span>With transcripts</span>
             </button>
+            <button type="button" class="lb-dl" *ngIf="canRetranscribeSelection"
+                [disabled]="bulkTranscribing" (click)="retranscribeSelected()"
+                title="Transcribe every selected call again, replacing any transcript they already have">
+                <mat-icon *ngIf="!bulkTranscribing">record_voice_over</mat-icon>
+                <mat-icon *ngIf="bulkTranscribing" class="spin">cached</mat-icon>
+                <span>Retranscribe</span>
+            </button>
         </ng-container>
     </div>
 

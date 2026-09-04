@@ -42,15 +42,17 @@ import { clearAdminToken, readAdminToken } from '../admin/admin-token';
 
 const FILTERS_STORAGE_KEY = 'rdio-scanner-search-filters';
 
+/** How often outstanding transcriptions are asked about. */
+const TRANSCRIBE_POLL_MS = 15000;
+
 /**
- * How long a queued transcription may go unanswered before the row stops
- * claiming to be working on it.
+ * How long to keep asking before the row stops claiming to be working.
  *
- * Generous on purpose: the provider is allowed sixty seconds per attempt and
- * retries a rate-limited one with backoff, so a transcript that is merely slow
- * must not be declared lost while it is still coming.
+ * Generous on purpose. A rate-limited job is retried with a backoff that starts
+ * at 75 seconds and can run to eight attempts, so a transcript that is merely
+ * slow must not be declared lost while it is still coming.
  */
-const TRANSCRIBE_WATCHDOG_MS = 180000;
+const TRANSCRIBE_POLL_MAX_MS = 600000;
 
 /**
  * Rows per request. The server caps `limit` at 500; 100 keeps each chunk small
@@ -288,8 +290,19 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     expandedTranscriptId: number | undefined;
     transcribingIds = new Set<number>();
 
-    /** Watchdog timers for queued transcriptions, keyed by call id. */
-    private transcribeWatchdogs = new Map<number, number>();
+    /**
+     * Transcriptions this page is waiting on, and when each was asked for.
+     *
+     * One shared ticker rather than a timer each: a bulk retranscribe can put
+     * dozens of calls in here at once, and they are all answered by the same
+     * question asked once per interval.
+     */
+    private transcribeWaiting = new Map<number, number>();
+
+    /** True while a bulk retranscribe is being sent. */
+    bulkTranscribing = false;
+
+    private transcribePoller?: number;
 
     // Deep-link focus state. When a user lands on ?call=<id>, we highlight
     // that call's row and scroll to it. Cleared on any user-driven form
@@ -369,8 +382,8 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         if (this.qDebounce) clearTimeout(this.qDebounce);
         if (this.tgDebounce) clearTimeout(this.tgDebounce);
         if (this.highlightClearTimer) clearTimeout(this.highlightClearTimer);
-        this.transcribeWatchdogs.forEach((timer) => window.clearTimeout(timer));
-        this.transcribeWatchdogs.clear();
+        if (this.transcribePoller !== undefined) window.clearInterval(this.transcribePoller);
+        this.transcribeWaiting.clear();
     }
 
     @HostListener('document:keydown.escape')
@@ -1348,9 +1361,81 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
             return;
         }
 
-        this.transcribingIds.add(id);
         this.expandedTranscriptId = id;
+        await this.requestTranscribe(id, token);
         this.ngChangeDetectorRef.detectChanges();
+    }
+
+    /** True while any call in the current selection can be retranscribed. */
+    get canRetranscribeSelection(): boolean {
+        return this.showRetranscribeButton && this.isAdminAuthenticated() && this.selectedCalls.size > 0;
+    }
+
+    /**
+     * Retranscribes everything currently selected.
+     *
+     * Requests go out a few at a time rather than all at once. The route only
+     * queues the work, so the server would cope with the whole selection
+     * arriving together — but a browser will not open a hundred parallel
+     * connections, and the ones it holds back would sit behind the rest of the
+     * page's requests instead.
+     */
+    async retranscribeSelected(): Promise<void> {
+        const token = readAdminToken();
+        if (!token) {
+            this.matSnackBar.open('Sign in as admin to request a transcription.', '', { duration: 4000 });
+            return;
+        }
+
+        const ids = Array.from(this.selectedCalls).filter((id) => id && !this.transcribingIds.has(id));
+        if (!ids.length) return;
+
+        this.bulkTranscribing = true;
+        this.ngChangeDetectorRef.detectChanges();
+
+        const CONCURRENCY = 4;
+        let queued = 0;
+        let failed = 0;
+
+        for (let i = 0; i < ids.length; i += CONCURRENCY) {
+            const batch = ids.slice(i, i + CONCURRENCY);
+            const results = await Promise.all(batch.map((id) => this.requestTranscribe(id, token)));
+
+            for (const ok of results) {
+                if (ok) queued++;
+                else failed++;
+            }
+
+            // Stop the whole run rather than throwing the rest of the
+            // selection at a server that has already said no — a rejected
+            // token or a plugin that is switched off refuses every one of
+            // them, and a hundred identical failures is not more useful than
+            // the first.
+            if (!readAdminToken()) break;
+
+            this.ngChangeDetectorRef.detectChanges();
+        }
+
+        this.bulkTranscribing = false;
+        this.ngChangeDetectorRef.detectChanges();
+
+        if (queued) {
+            this.matSnackBar.open(
+                `Queued ${queued} call${queued === 1 ? '' : 's'} for transcription` +
+                (failed ? `, ${failed} refused.` : '. They appear here as they land.'),
+                '', { duration: 6000 });
+        }
+    }
+
+    /**
+     * Asks the server to transcribe one call. Returns whether it was accepted.
+     *
+     * Shared by the per-row button and the bulk action so that a selection of
+     * fifty behaves exactly like pressing the button fifty times — same
+     * spinner, same 401 handling, same waiting.
+     */
+    private async requestTranscribe(id: number, token: string): Promise<boolean> {
+        this.transcribingIds.add(id);
 
         try {
             const url = `${window.location.href}/../api/admin/transcribe`;
@@ -1368,10 +1453,11 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
             if (typeof res?.transcript === 'string') {
                 this.transcribingIds.delete(id);
                 this.applyTranscript(id, res.transcript);
-                return;
+                return true;
             }
 
-            this.startTranscribeWatchdog(id);
+            this.watchTranscribe(id);
+            return true;
         } catch (err: any) {
             this.transcribingIds.delete(id);
 
@@ -1384,44 +1470,93 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
             if (err?.status === 401) {
                 clearAdminToken();
                 this.matSnackBar.open('Admin session expired — sign in again to retranscribe.', '', { duration: 5000 });
-                return;
+                return false;
             }
 
-            const msg = err?.error?.error || err?.message || 'Transcription failed.';
-            this.matSnackBar.open(msg, '', { duration: 5000 });
-        } finally {
-            this.ngChangeDetectorRef.detectChanges();
+            // One message per call would bury the screen under a bulk run that
+            // fails the same way every time, so the bulk caller reports the
+            // count and this only speaks for a single request.
+            if (!this.bulkTranscribing) {
+                const msg = err?.error?.error || err?.message || 'Transcription failed.';
+                this.matSnackBar.open(msg, '', { duration: 5000 });
+            }
+
+            return false;
         }
     }
 
     /**
-     * Stops a queued transcription from spinning forever.
+     * Waits for a queued transcription by asking, rather than only listening.
      *
-     * The push is the only thing that reports success, and it can legitimately
-     * be a minute or two away behind a busy provider — but it can also never
-     * come, if the audio was too short to transcribe or the model returned only
-     * silence. Both are outcomes the server logs and neither sends a push, so
-     * without this the row keeps a spinner until the page is reloaded.
+     * The push was the sole source of truth at first, and it is not reliable
+     * enough to be one. It is delivered as an unsolicited event only when
+     * nothing else is already waiting on that call — a concurrent
+     * fetchTranscript for the same id takes the message instead and resolves
+     * its own promise with it, so the page waiting for the event never hears.
+     * That, plus a rate-limited job whose backoff outlasts any fixed timeout,
+     * is how a call that transcribed perfectly well still reported "still
+     * transcribing, or nothing usable in the audio".
+     *
+     * Asking removes both problems: fetchTranscript is a request with an
+     * answer, so a transcript that landed while nobody was listening is still
+     * found, and the wait ends when the work is actually done rather than when
+     * a timer says it should have been.
      */
-    private startTranscribeWatchdog(id: number): void {
-        this.clearTranscribeWatchdog(id);
+    private watchTranscribe(id: number): void {
+        this.transcribeWaiting.set(id, Date.now());
 
-        this.transcribeWatchdogs.set(id, window.setTimeout(() => {
-            this.transcribeWatchdogs.delete(id);
-
-            if (!this.transcribingIds.delete(id)) return;
-
-            this.matSnackBar.open('Still transcribing, or nothing usable in the audio.', '', { duration: 5000 });
-            this.ngChangeDetectorRef.detectChanges();
-        }, TRANSCRIBE_WATCHDOG_MS));
+        if (this.transcribePoller === undefined) {
+            this.transcribePoller = window.setInterval(() => this.pollTranscribes(), TRANSCRIBE_POLL_MS);
+        }
     }
 
-    private clearTranscribeWatchdog(id: number): void {
-        const timer = this.transcribeWatchdogs.get(id);
+    private stopWatchingTranscribe(id: number): void {
+        this.transcribeWaiting.delete(id);
 
-        if (timer !== undefined) {
-            window.clearTimeout(timer);
-            this.transcribeWatchdogs.delete(id);
+        if (!this.transcribeWaiting.size && this.transcribePoller !== undefined) {
+            window.clearInterval(this.transcribePoller);
+            this.transcribePoller = undefined;
+        }
+    }
+
+    private async pollTranscribes(): Promise<void> {
+        const now = Date.now();
+        let changed = false;
+        let gaveUp = 0;
+
+        for (const [id, since] of Array.from(this.transcribeWaiting)) {
+            const text = await this.rdioScannerService.fetchTranscript(id);
+
+            if (text) {
+                this.transcribingIds.delete(id);
+                this.stopWatchingTranscribe(id);
+                this.applyTranscript(id, text);
+                changed = true;
+                continue;
+            }
+
+            if (now - since >= TRANSCRIBE_POLL_MAX_MS) {
+                this.transcribingIds.delete(id);
+                this.stopWatchingTranscribe(id);
+                gaveUp++;
+                changed = true;
+            }
+        }
+
+        if (gaveUp) {
+            // Deliberately not phrased as a failure. Nothing here knows whether
+            // the job is still queued behind a rate limit or produced nothing
+            // usable — only that it has not landed yet — and the transcript
+            // still appears on its own if it arrives later.
+            this.matSnackBar.open(
+                gaveUp === 1
+                    ? 'Transcription is taking a while — it will appear here when it lands.'
+                    : `${gaveUp} transcriptions are taking a while — they will appear here when they land.`,
+                '', { duration: 6000 });
+        }
+
+        if (changed) {
+            this.ngChangeDetectorRef.detectChanges();
         }
     }
 
@@ -1980,7 +2115,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         if (event.transcriptReady) {
             const { id, transcript } = event.transcriptReady;
 
-            this.clearTranscribeWatchdog(id);
+            this.stopWatchingTranscribe(id);
 
             if (this.transcribingIds.delete(id)) {
                 this.expandedTranscriptId = id;
