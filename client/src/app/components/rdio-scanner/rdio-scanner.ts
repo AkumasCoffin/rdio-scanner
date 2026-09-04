@@ -93,8 +93,22 @@ export enum RdioScannerCategoryType {
     Tag = 'tag',
 }
 
+/**
+ * A "has it / has none" filter a plugin registered, with the word it chose.
+ *
+ * The app renders whatever it is given here and knows nothing about what the
+ * text is. Nothing arrives when no plugin registers one, which is how the
+ * filter leaves with its plugin rather than lingering as a control over
+ * something that is no longer installed.
+ */
+export interface RdioScannerSearchFilter {
+    field: string;
+    label: string;
+}
+
 export interface RdioScannerConfig {
     afs?: string;
+    searchFilters?: RdioScannerSearchFilter[];
     alerts?: { [name: string]: RdioScannerBeep[] };
     branding?: string;
     dimmerDelay: number | false;
@@ -240,8 +254,10 @@ export interface RdioScannerSearchOptions {
     group?: string;
     groups?: string[];
     limit: number;
-    /** 'with' or 'without' narrows to calls that have a transcript, or lack one. */
-    transcript?: 'with' | 'without';
+    /** Names a plugin-registered field the call must carry. */
+    hasField?: string;
+    /** Names a plugin-registered field the call must not carry. */
+    lacksField?: string;
     offset?: number;
     q?: string;
     sort: number;

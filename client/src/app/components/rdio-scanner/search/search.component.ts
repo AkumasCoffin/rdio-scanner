@@ -31,6 +31,7 @@ import {
     RdioScannerPlaybackList,
     RdioScannerPreset,
     RdioScannerSearchCursor,
+    RdioScannerSearchFilter,
     RdioScannerSearchOptions,
     RdioScannerSearchTalkgroupRef,
 } from '../rdio-scanner';
@@ -196,7 +197,9 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         talkgroups: [[] as string[]],
         groups: [[] as string[]],
         tags: [[] as string[]],
-        transcript: ['' as '' | 'with' | 'without'],
+        // "<field>:with" / "<field>:without", or empty. The field is whatever
+        // a plugin registered, so nothing here names a concept the app owns.
+        presence: [''],
     });
 
     private qDebounce: ReturnType<typeof setTimeout> | undefined;
@@ -262,6 +265,9 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
 
     // Admin-gated retranscribe button. Controlled by the server via CFG.
     showRetranscribeButton = false;
+
+    /** Presence filters the server says are available, named by their plugins. */
+    searchFilters: RdioScannerSearchFilter[] = [];
 
     // Multi-select download state
     selectedCalls = new Set<number>();
@@ -800,21 +806,44 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     }
 
     /**
-     * Narrows to calls that have a transcript, or that lack one.
+     * Narrows to calls that carry a plugin-registered field, or that lack it.
      *
      * Pressing the active choice again clears it, so the filter can be undone
      * without a separate "any" button taking up a third of the row.
      */
-    setTranscriptFilter(want: 'with' | 'without'): void {
-        const next = this.form.value.transcript === want ? '' : want;
+    setPresenceFilter(field: string, want: 'with' | 'without'): void {
+        const key = `${field}:${want}`;
+        const next = this.form.value.presence === key ? '' : key;
 
-        this.form.patchValue({ transcript: next as '' | 'with' | 'without' });
+        this.form.patchValue({ presence: next });
 
         this.applyFilters();
     }
 
-    transcriptFilter(): string {
-        return (this.form.value.transcript as string) || '';
+    isPresenceFilter(field: string, want: 'with' | 'without'): boolean {
+        return this.form.value.presence === `${field}:${want}`;
+    }
+
+    /** Whether these filters are offered at all: one exists and this is an admin. */
+    get canFilterByPresence(): boolean {
+        return this.searchFilters.length > 0 && this.isAdminAuthenticated();
+    }
+
+    private presenceFilter(): { field: string; want: 'with' | 'without' } | undefined {
+        const raw = (this.form.value.presence as string) || '';
+        const at = raw.lastIndexOf(':');
+
+        if (at <= 0) return undefined;
+
+        const field = raw.slice(0, at);
+        const want = raw.slice(at + 1);
+
+        // A filter saved against a plugin that is no longer installed is
+        // dropped rather than sent, so uninstalling one cannot leave a list
+        // silently narrowed by a control that is no longer on screen.
+        if (!this.searchFilters.some((filter) => filter.field === field)) return undefined;
+
+        return want === 'with' || want === 'without' ? { field, want } : undefined;
     }
 
     toggleTag(tag: string): void {
@@ -1011,7 +1040,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
             talkgroups: [],
             groups: [],
             tags: [],
-            transcript: '',
+            presence: '',
         });
 
         this.talkgroupQuery = '';
@@ -1099,11 +1128,17 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
             options.q = q;
         }
 
-        // Only sent when the rail is offering it. Someone who signed out with
-        // the filter set should get their whole list back, not a narrowed one
-        // they can no longer see the control for.
-        if ((value.transcript === 'with' || value.transcript === 'without') && this.isAdminAuthenticated()) {
-            options.transcript = value.transcript;
+        // Only sent when the rail is offering it. Someone who signed out, or
+        // whose plugin was uninstalled, should get their whole list back
+        // rather than a narrowed one with no visible control.
+        const presence = this.presenceFilter();
+
+        if (presence && this.canFilterByPresence) {
+            if (presence.want === 'with') {
+                options.hasField = presence.field;
+            } else {
+                options.lacksField = presence.field;
+            }
         }
 
         const systems = value.systems as number[];
@@ -1208,7 +1243,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
                 talkgroups: value.talkgroups,
                 groups: value.groups,
                 tags: value.tags,
-                transcript: value.transcript,
+                presence: value.presence,
                 groupByBurst: this.groupByBurst,
                 liveUpdate: this.liveUpdate,
             }));
@@ -1242,7 +1277,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
                 talkgroups: Array.isArray(saved.talkgroups) ? saved.talkgroups.filter((key: unknown) => typeof key === 'string') : [],
                 groups: Array.isArray(saved.groups) ? saved.groups.filter((g: unknown) => typeof g === 'string') : [],
                 tags: Array.isArray(saved.tags) ? saved.tags.filter((t: unknown) => typeof t === 'string') : [],
-                transcript: saved.transcript === 'with' || saved.transcript === 'without' ? saved.transcript : '',
+                presence: typeof saved.presence === 'string' ? saved.presence : '',
             });
 
             this.groupByBurst = saved.groupByBurst === true;
@@ -2128,6 +2163,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
 
         this.time12h = config.time12hFormat || false;
         this.showRetranscribeButton = !!config.showRetranscribeButton;
+        this.searchFilters = Array.isArray(config.searchFilters) ? config.searchFilters : [];
 
         this.refreshOptions();
         this.rebuildChips();

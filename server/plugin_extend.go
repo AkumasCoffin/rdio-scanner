@@ -93,6 +93,14 @@ type pluginResolvedSearch struct {
 	key         string
 	text        string
 	resultField string
+	label       string
+}
+
+// PluginSearchFilter is one "has it / has none" filter offered to the webapp,
+// named by the plugin that registered the text behind it.
+type PluginSearchFilter struct {
+	Field string `json:"field"`
+	Label string `json:"label"`
 }
 
 // PluginSearchExtensions returns every registered search extension, resolved to
@@ -114,11 +122,34 @@ func (controller *Controller) PluginSearchExtensions() []pluginResolvedSearch {
 				key:         extension.KeyColumn,
 				text:        extension.TextColumn,
 				resultField: field,
+				label:       extension.Label,
 			})
 		}
 	}
 
 	return resolved
+}
+
+// PluginSearchFilters lists the presence filters the webapp may offer.
+//
+// The server contributes the mechanism and the plugin contributes the noun:
+// core knows a call either has some registered text or does not, and nothing
+// about what that text is. Without this the webapp would have to hardcode a
+// word like "transcript" for a feature no part of core implements, and the
+// filter would still be there with the plugin uninstalled.
+func (controller *Controller) PluginSearchFilters() []PluginSearchFilter {
+	filters := []PluginSearchFilter{}
+	seen := map[string]bool{}
+
+	for _, extension := range controller.PluginSearchExtensions() {
+		if extension.label == "" || extension.resultField == "" || seen[extension.resultField] {
+			continue
+		}
+		seen[extension.resultField] = true
+		filters = append(filters, PluginSearchFilter{Field: extension.resultField, Label: extension.label})
+	}
+
+	return filters
 }
 
 // ApplyPluginFields fills in a call's plugin-contributed fields. Called on the

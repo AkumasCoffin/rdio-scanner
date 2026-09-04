@@ -311,6 +311,14 @@ func (client *Client) SendConfig(groups *Groups, options *Options, systems *Syst
 		if entries := client.Controller.PluginWebEntries(); len(entries) > 0 {
 			payload["plugins"] = entries
 		}
+
+		// Presence filters the search rail may offer, each named by the plugin
+		// that registered the text behind it. Absent when nothing registers
+		// one, which is how the filter disappears with its plugin instead of
+		// lingering as a control over something no longer there.
+		if filters := client.Controller.PluginSearchFilters(); len(filters) > 0 {
+			payload["searchFilters"] = filters
+		}
 	}
 
 	// Last word on what this client is configured with. After the plugin-exposed

@@ -139,6 +139,9 @@ type pluginSearchExtension struct {
 	KeyColumn   string
 	TextColumn  string
 	ResultField string
+	// Label names this text in words, e.g. "transcript". Optional; when set
+	// the webapp offers a has-it / has-none filter worded with it.
+	Label string
 }
 
 // PluginRuntime is one plugin's JavaScript environment: a goja runtime, its

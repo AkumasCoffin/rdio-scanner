@@ -192,26 +192,32 @@
             </section>
 
             <!--
-                Admin only, because it exists to find the calls transcription
-                missed rather than to browse with. It is a convenience, not a
-                boundary: it narrows a list by something every listener can
-                already see on the rows themselves.
+                One section per presence filter a plugin registered; none at
+                all when none is. The wording comes from the plugin, so nothing
+                here knows what the text behind it is.
+
+                Admin only, because these exist to find what a plugin missed
+                rather than to browse with. A convenience, not a boundary: they
+                narrow a list by something every listener can already see on
+                the rows themselves.
             -->
-            <section class="fgroup" *ngIf="isAdminAuthenticated()">
-                <h4>Transcript</h4>
-                <div class="opts">
-                    <button type="button" class="opt" [class.on]="transcriptFilter() === 'with'"
-                        (click)="setTranscriptFilter('with')">
-                        <span class="tick"></span>
-                        <span class="opt-label">With transcript</span>
-                    </button>
-                    <button type="button" class="opt" [class.on]="transcriptFilter() === 'without'"
-                        (click)="setTranscriptFilter('without')">
-                        <span class="tick"></span>
-                        <span class="opt-label">Without transcript</span>
-                    </button>
-                </div>
-            </section>
+            <ng-container *ngIf="canFilterByPresence">
+                <section class="fgroup" *ngFor="let filter of searchFilters">
+                    <h4>{{ filter.label | titlecase }}</h4>
+                    <div class="opts">
+                        <button type="button" class="opt" [class.on]="isPresenceFilter(filter.field, 'with')"
+                            (click)="setPresenceFilter(filter.field, 'with')">
+                            <span class="tick"></span>
+                            <span class="opt-label">With {{ filter.label }}</span>
+                        </button>
+                        <button type="button" class="opt" [class.on]="isPresenceFilter(filter.field, 'without')"
+                            (click)="setPresenceFilter(filter.field, 'without')">
+                            <span class="tick"></span>
+                            <span class="opt-label">Without {{ filter.label }}</span>
+                        </button>
+                    </div>
+                </section>
+            </ng-container>
         </div>
 
         <!-- Only reachable at the phone breakpoint, where the rail is a sheet. -->

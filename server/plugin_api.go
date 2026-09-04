@@ -682,6 +682,12 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 			KeyColumn:   stringFromMap(m, "keyColumn"),
 			TextColumn:  stringFromMap(m, "textColumn"),
 			ResultField: stringFromMap(m, "resultField"),
+			// Optional. Naming the thing in words offers a "has one / has
+			// none" filter in the search rail, worded by the plugin. The
+			// server has no idea what this text is — only that some calls have
+			// it and some do not — so a plugin that does not name it gets the
+			// searching without the filter.
+			Label: stringFromMap(m, "label"),
 		}
 
 		if err := rt.validateExtension(extension.TextColumn, extension.Table, extension.KeyColumn, extension.TextColumn); err != nil {

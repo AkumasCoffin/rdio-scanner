@@ -2918,6 +2918,14 @@ export class RdioScannerService implements OnDestroy {
                         umamiUrl: typeof config.umamiUrl === 'string' ? config.umamiUrl : undefined,
                         umamiWebsiteId: typeof config.umamiWebsiteId === 'string' ? config.umamiWebsiteId : undefined,
                         showRetranscribeButton: typeof config.showRetranscribeButton === 'boolean' ? config.showRetranscribeButton : false,
+                        // Presence filters a plugin registered, each carrying
+                        // the word that plugin chose. Validated by shape rather
+                        // than by name — the whole point is that nothing here
+                        // knows what any of them are about.
+                        searchFilters: Array.isArray(config.searchFilters)
+                            ? config.searchFilters.filter((entry: any) =>
+                                entry && typeof entry.field === 'string' && typeof entry.label === 'string')
+                            : [],
                     };
 
                     // Server-driven wait-for-transcript (admin option).
