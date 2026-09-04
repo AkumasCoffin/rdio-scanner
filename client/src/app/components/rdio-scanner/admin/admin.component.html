@@ -69,6 +69,8 @@
             <section *ngIf="activeTab === 'tools'" data-rdio="admin-tools">
                 <rdio-scanner-admin-tools
                     (config)="configComponent?.reset($event, { dirty: true }); select('systems')"></rdio-scanner-admin-tools>
+                <!-- Plugin-provided tools, alongside the built-in ones. -->
+                <rdio-plugin-slot name="admin-tools"></rdio-plugin-slot>
             </section>
         </main>
     </div>

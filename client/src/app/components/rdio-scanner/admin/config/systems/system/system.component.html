@@ -126,6 +126,10 @@
             </mat-select>
         </mat-form-field>
     </div>
+    <!-- Anything a plugin wants to configure per system belongs with that
+         system's own settings, not in a list of every system under the plugin
+         manager. -->
+    <rdio-plugin-slot name="admin-system" [data]="pluginContext"></rdio-plugin-slot>
     </div>
     <div class="system-pane" *ngIf="tab === 'talkgroups'">
                 <div class="row top">

@@ -50,6 +50,21 @@ export class RdioScannerAdminSystemComponent {
             .some((key) => this.form.get(key)?.invalid === true);
     }
 
+    /**
+     * What a plugin mounted in the admin-system slot is handed.
+     *
+     * Rebuilt only when the editor is pointed at a different system, never on
+     * every change-detection pass: the slot re-renders whenever this input
+     * changes by reference, and a fresh object each pass would tear down and
+     * remount the plugin's UI continuously.
+     *
+     * It is therefore a snapshot taken when the system was selected. That is
+     * the right granularity for what plugins key off — the saved system id —
+     * and a system whose id is being edited has not been saved under the new
+     * one yet.
+     */
+    pluginContext: { id: number | null; label: string } = { id: null, label: '' };
+
     private formValue = new FormGroup({});
 
     @Input()
@@ -65,6 +80,11 @@ export class RdioScannerAdminSystemComponent {
         // The active tab is deliberately NOT reset: comparing the same tab
         // across systems is the reason to click through the list, and being
         // thrown back to Settings each time makes that a chore.
+        this.pluginContext = {
+            id: form?.get('id')?.value ?? null,
+            label: form?.get('label')?.value ?? '',
+        };
+
         this.selectedTalkgroup = undefined;
         this.selectedUnit = undefined;
         this.talkgroupQuery = '';
