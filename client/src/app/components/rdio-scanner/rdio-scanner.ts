@@ -251,6 +251,15 @@ export interface RdioScannerSearchOptions {
     /** Inclusive window, RFC3339. Covers one day, a slice of a day, or a span. */
     dateStart?: string;
     dateStop?: string;
+    /**
+     * A slice of the clock, "HH:MM" each, applied to every day in range rather
+     * than bounding the ends of the span. timeOffset carries the viewer's
+     * minutes from UTC, because calls are stored in UTC and nobody means UTC
+     * when they say four in the morning.
+     */
+    timeStart?: string;
+    timeStop?: string;
+    timeOffset?: number;
     group?: string;
     groups?: string[];
     limit: number;

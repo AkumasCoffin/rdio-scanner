@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1033,6 +1034,35 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 		where += andScopeClause(bySystem, systemIds)
 	}
 
+	// A slice of the clock, on every day the rest of the filters allow.
+	//
+	// Kept in probeWhere, unlike the plugin-table filters below: it reads one
+	// column of the row the index scan already has, so the bound probes can
+	// carry it without the cost that made those two worth dropping. The date
+	// picker then reports the span of days that actually contain matches.
+	startMinute, hasStart := parseMinuteOfDay(searchOptions.TimeStart)
+	stopMinute, hasStop := parseMinuteOfDay(searchOptions.TimeStop)
+
+	if hasStart || hasStop {
+		if !hasStart {
+			startMinute = 0
+		}
+		if !hasStop {
+			stopMinute = 23*60 + 59
+		}
+
+		offset := 0
+		if v, ok := searchOptions.TimeOffset.(float64); ok && v > -1440 && v < 1440 {
+			offset = int(v)
+		}
+
+		// Not expressible as a set of system/talkgroup pairs, so the fast probe
+		// form cannot stand in for it.
+		probeExact = false
+
+		where += fmt.Sprintf(" and %s", timeOfDayPredicate(db, startMinute, stopMinute, offset))
+	}
+
 	// What the date-bound probes will measure, captured before the two filters
 	// that reach into a plugin's tables.
 	//
@@ -1735,6 +1765,81 @@ type CallsSearchCursor struct {
 // system 0 is not a system, but limit 0 and sort 0 are real values — and
 // because the singular filters predate the plural ones and must keep their
 // exact behaviour for the Android app and for plugins.
+// timeOfDayPredicate restricts calls to a slice of the clock, on every day the
+// rest of the filters allow.
+//
+// "Between 4 and 5 in the morning" is a scanner question — overnight traffic,
+// the pre-dawn shift — and it is not the same question as a date range. This is
+// what makes the two independent: the dates say which days, this says which
+// part of them.
+//
+// Computed as minutes since local midnight so the two ends are one comparison
+// on one expression. offset shifts UTC to the viewer's clock before the
+// arithmetic, because dateTime is stored in UTC and nobody means UTC when they
+// say four in the morning. A fixed offset rather than a zone name: SQLite has
+// no timezone database, so a name could not be honoured on all three backends,
+// and the cost is that a range spanning a daylight-saving change is an hour out
+// on one side of it.
+//
+// A start after the stop reads as crossing midnight — 22:00 to 02:00 is four
+// hours of night, not twenty of day — which is the reading that makes an
+// overnight window expressible at all.
+func timeOfDayPredicate(db *Database, startMinute int, stopMinute int, offsetMinutes int) string {
+	var minuteOfDay string
+
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		// Minutes since the epoch, modulo a day. The epoch is midnight, so the
+		// remainder is the minute of the day, and shifting first makes it local.
+		minuteOfDay = fmt.Sprintf(
+			`((extract(epoch from ("rdioScannerCalls"."dateTime" + interval '%d minutes'))::bigint / 60) %% 1440)`,
+			offsetMinutes)
+
+	case DbTypeSqlite:
+		minuteOfDay = fmt.Sprintf(
+			"(cast(strftime('%%H', `rdioScannerCalls`.`dateTime`, '%d minutes') as integer) * 60 + "+
+				"cast(strftime('%%M', `rdioScannerCalls`.`dateTime`, '%d minutes') as integer))",
+			offsetMinutes, offsetMinutes)
+
+	default:
+		minuteOfDay = fmt.Sprintf(
+			"(hour(date_add(`rdioScannerCalls`.`dateTime`, interval %d minute)) * 60 + "+
+				"minute(date_add(`rdioScannerCalls`.`dateTime`, interval %d minute)))",
+			offsetMinutes, offsetMinutes)
+	}
+
+	if startMinute <= stopMinute {
+		return fmt.Sprintf("(%s between %d and %d)", minuteOfDay, startMinute, stopMinute)
+	}
+
+	return fmt.Sprintf("(%s >= %d or %s <= %d)", minuteOfDay, startMinute, minuteOfDay, stopMinute)
+}
+
+// parseMinuteOfDay reads an "HH:MM" clock time as minutes since midnight.
+func parseMinuteOfDay(raw any) (int, bool) {
+	text, ok := raw.(string)
+	if !ok {
+		return 0, false
+	}
+
+	parts := strings.Split(strings.TrimSpace(text), ":")
+	if len(parts) != 2 {
+		return 0, false
+	}
+
+	hours, err := strconv.Atoi(parts[0])
+	if err != nil || hours < 0 || hours > 23 {
+		return 0, false
+	}
+
+	minutes, err := strconv.Atoi(parts[1])
+	if err != nil || minutes < 0 || minutes > 59 {
+		return 0, false
+	}
+
+	return hours*60 + minutes, true
+}
+
 // fieldPresencePredicate builds "this call has that plugin field" — or its
 // negation — over every extension registered under that name.
 //
@@ -1809,6 +1914,14 @@ type CallsSearchOptions struct {
 	Tags       any `json:"tags,omitempty"`
 	Talkgroup  any `json:"talkgroup,omitempty"`
 	Talkgroups any `json:"talkgroups,omitempty"`
+
+	// TimeStart / TimeStop restrict to a slice of the clock — "HH:MM" each —
+	// on every day the other filters allow, rather than bounding the ends of a
+	// span. TimeOffset carries the viewer's minutes from UTC, because dateTime
+	// is stored in UTC and nobody means UTC when they say four in the morning.
+	TimeStart  any `json:"timeStart,omitempty"`
+	TimeStop   any `json:"timeStop,omitempty"`
+	TimeOffset any `json:"timeOffset,omitempty"`
 
 	// HasField / LacksField narrow to calls that carry a plugin-contributed
 	// text field, or that do not. The value is the field's name as the plugin
@@ -1967,6 +2080,28 @@ func (searchOptions *CallsSearchOptions) fromMap(m map[string]any) error {
 		if s != "" {
 			searchOptions.Q = s
 		}
+	}
+
+	for _, key := range []string{"timeStart", "timeStop"} {
+		v, ok := m[key].(string)
+		if !ok {
+			continue
+		}
+
+		if _, valid := parseMinuteOfDay(v); !valid {
+			continue
+		}
+
+		if key == "timeStart" {
+			searchOptions.TimeStart = v
+		} else {
+			searchOptions.TimeStop = v
+		}
+	}
+
+	// Sent as a number by the webapp; JSON gives it back as float64.
+	if v, ok := m["timeOffset"].(float64); ok {
+		searchOptions.TimeOffset = v
 	}
 
 	if v, ok := m["hasField"].(string); ok {

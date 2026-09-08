@@ -143,6 +143,15 @@ const COLLAPSED_OPTIONS = 8;
  */
 const SEARCH_DEBOUNCE_MS = 250;
 
+/**
+ * How far back a time-of-day filter reaches when no dates are picked.
+ *
+ * Matching the clock means computing each row's minute of the day, which no
+ * index can seek on — so the date range is what keeps the work bounded, and
+ * there has to be one.
+ */
+const TIME_ONLY_WINDOW_DAYS = 30;
+
 /** The spans offered above the two date fields, in days back from today. */
 const DATE_PRESETS: { key: string; label: string; days: number }[] = [
     { key: 'today', label: 'Today', days: 0 },
@@ -946,10 +955,16 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         }
 
         if (value.timeStart || value.timeStop) {
+            const slice = `${value.timeStart || '00:00'} – ${value.timeStop || '23:59'}`;
+
             chips.push({
                 kind: 'time',
                 value: 'time',
-                label: `${value.timeStart || '00:00'} – ${value.timeStop || '23:59'}`,
+                // Naming the implied window on the chip, because that is the
+                // one place the filter is visible once the rail is closed —
+                // and a clock slice with no dates silently reaching back a
+                // month is exactly the kind of thing to say out loud.
+                label: start || end ? slice : `${slice} · last ${TIME_ONLY_WINDOW_DAYS} days`,
             });
         }
 
@@ -1213,6 +1228,21 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
             options.dateStop = window.stop;
         }
 
+        if (this.hasTimeOfDay()) {
+            const timeStart = this.parseTime(value.timeStart);
+            const timeStop = this.parseTime(value.timeStop);
+
+            const clock = (parts: [number, number]) =>
+                `${String(parts[0]).padStart(2, '0')}:${String(parts[1]).padStart(2, '0')}`;
+
+            options.timeStart = clock(timeStart || [0, 0]);
+            options.timeStop = clock(timeStop || [23, 59]);
+
+            // Minutes to add to UTC to get the viewer's clock. getTimezoneOffset
+            // reports the opposite sign, hence the negation.
+            options.timeOffset = -new Date().getTimezoneOffset();
+        }
+
         const q = typeof value.q === 'string' ? value.q.trim() : '';
 
         if (q) {
@@ -1281,21 +1311,70 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         const end = this.form.value.range?.end as Date | null;
 
         if (!start && !end) {
+            // A time of day with no dates used to fall out here, and the times
+            // were simply dropped — while the panel went on showing a chip for
+            // them. Setting a filter that quietly does nothing is worse than
+            // not offering it, so a bare time gets a window to apply to.
+            //
+            // Bounded rather than open-ended: the server matches the clock by
+            // computing each row's minute of the day, which no index can seek
+            // on, so an unbounded one would read every call ever recorded. A
+            // month is far more than anyone scrolls and keeps the date index
+            // doing the narrowing.
+            if (this.hasTimeOfDay()) {
+                const now = new Date();
+                const from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+                from.setDate(from.getDate() - (TIME_ONLY_WINDOW_DAYS - 1));
+
+                return {
+                    start: from.toISOString(),
+                    stop: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).toISOString(),
+                };
+            }
+
             return {};
         }
 
+        // Whole days. The clock slice is a filter of its own now, applied to
+        // every day in the range — so folding it into the ends here would mean
+        // "from 4am on the first day to 5am on the last", which is a different
+        // question and not the one the label asks.
         const from = (start || end) as Date;
         const to = (end || start) as Date;
 
-        const opens = this.parseTime(this.form.value.timeStart) || [0, 0];
-        const closes = this.parseTime(this.form.value.timeStop) || [23, 59];
-
-        const dateStart = new Date(from.getFullYear(), from.getMonth(), from.getDate(), opens[0], opens[1], 0, 0);
-        // Inclusive to the end of the chosen minute: the input has no seconds,
-        // so "to 17:00" plainly means through 17:00, not up to it.
-        const dateStop = new Date(to.getFullYear(), to.getMonth(), to.getDate(), closes[0], closes[1], 59, 999);
+        const dateStart = new Date(from.getFullYear(), from.getMonth(), from.getDate(), 0, 0, 0, 0);
+        const dateStop = new Date(to.getFullYear(), to.getMonth(), to.getDate(), 23, 59, 59, 999);
 
         return { start: dateStart.toISOString(), stop: dateStop.toISOString() };
+    }
+
+    /**
+     * Says what the clock slice will actually do, including the window it
+     * implies when no dates are picked.
+     *
+     * The hint used to read "bounds the selected dates", which described the
+     * old behaviour truthfully and was still the thing people read straight
+     * past before setting a time that did nothing. Now that a bare time works,
+     * what needs saying is how far back it reaches.
+     */
+    timeOfDayHint(): string {
+        if (!this.hasTimeOfDay()) {
+            return `Matches this part of every day. Without dates, the last ${TIME_ONLY_WINDOW_DAYS} days.`;
+        }
+
+        const start = this.form.value.range?.start as Date | null;
+        const end = this.form.value.range?.end as Date | null;
+
+        if (start || end) {
+            return 'Matching this part of each day in the selected dates.';
+        }
+
+        return `Matching this part of every day for the last ${TIME_ONLY_WINDOW_DAYS} days — pick dates to narrow it.`;
+    }
+
+    /** Whether either end of the clock slice is set and usable. */
+    private hasTimeOfDay(): boolean {
+        return !!this.parseTime(this.form.value.timeStart) || !!this.parseTime(this.form.value.timeStop);
     }
 
     private parseTime(value: unknown): [number, number] | undefined {

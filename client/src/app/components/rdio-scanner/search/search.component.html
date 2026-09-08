@@ -96,7 +96,7 @@
                         <input type="time" formControlName="timeStop" (change)="applyFilters()">
                     </label>
                 </div>
-                <p class="fhint">Bounds the selected dates. Pick one day for a slice of that day.</p>
+                <p class="fhint">{{ timeOfDayHint() }}</p>
             </section>
 
             <section class="fgroup">
