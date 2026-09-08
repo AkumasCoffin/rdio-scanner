@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -157,6 +158,10 @@ type Calls struct {
 	metaMutex sync.Mutex
 	metaCache map[string]*callsSearchMeta
 
+	// Computations already running, keyed the same way the cache is, so a
+	// second caller waits for the first answer rather than asking again.
+	inFlight map[string]*metaFlight
+
 	// The unfiltered date bounds, remembered rather than asked for.
 	//
 	// `select dateTime from rdioScannerCalls order by dateTime asc limit 1`
@@ -243,6 +248,78 @@ func (calls *Calls) noteOldest(at time.Time) {
 	calls.metaMutex.Lock()
 	calls.oldest = at
 	calls.metaMutex.Unlock()
+}
+
+// metaFlight is one computation of a cache entry that is already running.
+//
+// Concurrent callers for the same key wait on done and then read meta and err —
+// the leader's answer, error included — so a follower ends up behaving exactly
+// as if it had run the query itself, minus the query.
+type metaFlight struct {
+	done chan struct{}
+	meta *callsSearchMeta
+	err  error
+
+	// How many callers this flight spared from asking the same question.
+	// Counted rather than inferred so the collapsing can be seen from outside,
+	// which is the only way to tell "the stampede stopped" from "the stampede
+	// never happened on this run".
+	waiters int32
+}
+
+// searchMetaOnce returns the cached entry for key, computing it with fn when it
+// is not there, and running fn at most once however many callers arrive.
+//
+// This closes a gap that was costing whole seconds. getSearchMeta takes
+// metaMutex, reads, and releases it before the query runs; putSearchMeta only
+// takes it again once the answer is back. Every caller arriving in between saw
+// a miss and issued its own copy of the same statement — and the window is as
+// long as the query, so the slower the question, the more duplicates of it. A
+// restart, where every open tab searches at once against a cold cache, is the
+// worst case and exactly when it happened.
+func (calls *Calls) searchMetaOnce(key string, fn func() (*callsSearchMeta, error)) (*callsSearchMeta, error) {
+	calls.metaMutex.Lock()
+
+	if m, ok := calls.metaCache[key]; ok && !time.Now().After(m.expires) {
+		calls.metaMutex.Unlock()
+		return m, nil
+	}
+
+	if flight, running := calls.inFlight[key]; running {
+		calls.metaMutex.Unlock()
+
+		atomic.AddInt32(&flight.waiters, 1)
+		<-flight.done
+
+		// Whatever the leader got, including its error. A follower that retried
+		// on failure would be the stampede this exists to prevent.
+		return flight.meta, flight.err
+	}
+
+	flight := &metaFlight{done: make(chan struct{})}
+	if calls.inFlight == nil {
+		calls.inFlight = map[string]*metaFlight{}
+	}
+	calls.inFlight[key] = flight
+	calls.metaMutex.Unlock()
+
+	flight.meta, flight.err = fn()
+
+	calls.metaMutex.Lock()
+	delete(calls.inFlight, key)
+	if flight.err == nil && flight.meta != nil {
+		// Stored inline rather than through putSearchMeta, which takes the same
+		// mutex this already holds. Same soft ceiling as putSearchMeta.
+		if len(calls.metaCache) > 256 {
+			calls.metaCache = make(map[string]*callsSearchMeta)
+		}
+		calls.metaCache[key] = flight.meta
+	}
+	calls.metaMutex.Unlock()
+
+	close(flight.done)
+
+	return flight.meta, flight.err
 }
 
 func (calls *Calls) getSearchMeta(key string) (*callsSearchMeta, bool) {
@@ -1252,10 +1329,14 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 	plan := buildCallsSearchPlan(searchOptions, client, db, searchExtensions)
 
 	rangeKey := "range:" + plan.probeWhere
-	if cached, ok := calls.getSearchMeta(rangeKey); ok {
-		searchResults.DateStart = cached.dateStart
-		searchResults.DateStop = cached.dateStop
-	} else {
+
+	rangeMeta, rangeErr := calls.searchMetaOnce(rangeKey, func() (*callsSearchMeta, error) {
+		var (
+			dateTime any
+			err      error
+			t        time.Time
+		)
+
 		// One statement per bound. With an exact pair set, each bound is the
 		// min (or max) over per-pair index seeks on (system, talkgroup,
 		// dateTime) — milliseconds however large the table — where the plain
@@ -1290,50 +1371,67 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 			return value, err
 		}
 
+		meta := &callsSearchMeta{expires: time.Now().Add(callsSearchMetaTTL)}
+
 		if dateTime, err = probe("min"); err != nil && err != sql.ErrNoRows {
-			return nil, formatError(err)
+			return nil, err
 		}
 
 		if t, err = db.ParseDateTime(dateTime); err == nil {
-			searchResults.DateStart = t
+			meta.dateStart = t
 		}
 
 		if dateTime, err = probe("max"); err != nil && err != sql.ErrNoRows {
-			return nil, formatError(err)
+			return nil, err
 		}
 
 		if t, err = db.ParseDateTime(dateTime); err == nil {
-			searchResults.DateStop = t
+			meta.dateStop = t
 		} else {
-			searchResults.DateStop = time.Now()
+			meta.dateStop = time.Now()
 		}
 
-		calls.putSearchMeta(rangeKey, &callsSearchMeta{
-			dateStart: searchResults.DateStart,
-			dateStop:  searchResults.DateStop,
-			expires:   time.Now().Add(callsSearchMetaTTL),
-		})
+		return meta, nil
+	})
+
+	if rangeErr != nil {
+		return nil, formatError(rangeErr)
+	}
+
+	if rangeMeta != nil {
+		searchResults.DateStart = rangeMeta.dateStart
+		searchResults.DateStop = rangeMeta.dateStop
 	}
 
 	if plan.withCount {
-		countKey := plan.countKey()
-		if cached, ok := calls.getSearchMeta(countKey); ok {
-			searchResults.Count = cached.count
-		} else {
+		// Single-flighted for the same reason as the bounds above, and it
+		// matters more here: count(*) over the calls table is the most
+		// expensive statement in this file.
+		countMeta, countErr := calls.searchMetaOnce(plan.countKey(), func() (*callsSearchMeta, error) {
+			meta := &callsSearchMeta{expires: time.Now().Add(callsSearchMetaTTL)}
+
 			// An unfiltered search counts the whole table, which is the one
 			// count the planner's estimate can stand in for.
 			if estimate, ok := db.ApproxCallCount(); ok && plan.where == "true" {
-				searchResults.Count = estimate
-			} else {
-				query = fmt.Sprintf("select count(*) from `rdioScannerCalls` where %v", plan.where)
-				if err = db.QueryRow(query, plan.whereArgs...).Scan(&searchResults.Count); err != nil && err != sql.ErrNoRows {
-					return nil, formatError(fmt.Errorf("%v, %v", err, query))
-				}
+				meta.count = estimate
+
+				return meta, nil
 			}
-			calls.putSearchMeta(countKey, &callsSearchMeta{
-				count:   searchResults.Count,
-				expires: time.Now().Add(callsSearchMetaTTL),
-			})
+
+			countQuery := fmt.Sprintf("select count(*) from `rdioScannerCalls` where %v", plan.where)
+			if err := db.QueryRow(countQuery, plan.whereArgs...).Scan(&meta.count); err != nil && err != sql.ErrNoRows {
+				return nil, fmt.Errorf("%v, %v", err, countQuery)
+			}
+
+			return meta, nil
+		})
+
+		if countErr != nil {
+			return nil, formatError(countErr)
+		}
+
+		if countMeta != nil {
+			searchResults.Count = countMeta.count
 		}
 	}
 

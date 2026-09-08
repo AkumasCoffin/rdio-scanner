@@ -37,6 +37,19 @@ import (
 // configuration save) finish well inside this.
 const statementTimeout = 5 * time.Minute
 
+// The indexes the calls search depends on, named once so the migrations that
+// build them and the startup check that reports them cannot drift apart.
+//
+// Each one exists for a different shape of search: the first for a filter on
+// one system or talkgroup, the second for an unfiltered or date-only list,
+// which is the default view. Losing either does not break anything — it makes
+// Postgres read and sort the whole table instead, which on a large install is
+// the difference between a page and a minute.
+const (
+	callsSystemTalkgroupDateTimeIndex = "rdio_scanner_calls_system_talkgroup_date_time"
+	callsDateTimeIdIndex              = "rdio_scanner_calls_date_time_id"
+)
+
 type Database struct {
 	Config         *Config
 	DateTimeFormat string
@@ -129,6 +142,8 @@ func NewDatabase(config *Config) *Database {
 	if err = database.migrate(); err != nil {
 		log.Fatal(err)
 	}
+
+	database.reportMissingCallsIndexes()
 
 	if err = database.seed(); err != nil {
 		log.Fatal(err)
@@ -834,6 +849,9 @@ func (db *Database) migrate() error {
 		err = db.migration20260823120000(verbose)
 	}
 	if err == nil {
+		err = db.migration20260908120000(verbose)
+	}
+	if err == nil {
 		err = db.migrationTranscriptsToPlugin(verbose)
 	}
 
@@ -1372,7 +1390,8 @@ func (db *Database) migration20260822100000(verbose bool) error {
 
 	switch db.Config.DbType {
 	case DbTypePostgres:
-		if err := db.createCallsSearchIndex(name); err != nil {
+		if err := db.createCallsIndexConcurrently(name, callsSystemTalkgroupDateTimeIndex,
+			fmt.Sprintf(`create index concurrently if not exists %q on "rdioScannerCalls" ("system", "talkgroup", "dateTime", "id")`, callsSystemTalkgroupDateTimeIndex)); err != nil {
 			log.Printf("%s: could not create (system, talkgroup, dateTime, id) index on rdioScannerCalls, calls search will keep using the dateTime-leading index: %v", name, err)
 		} else if verbose {
 			log.Printf("%s: (system, talkgroup, dateTime, id) index ensured", name)
@@ -1408,8 +1427,133 @@ func (db *Database) migration20260822100000(verbose bool) error {
 	return db.recordMigration(name)
 }
 
-// createCallsSearchIndex does the Postgres half of migration20260822100000, on a
-// connection of its own.
+// migration20260908120000 adds (dateTime, id) on rdioScannerCalls, which is the
+// order every search actually asks for.
+//
+// The search orders by `dateTime DESC, id DESC` — the id tiebreak is what makes
+// cursor paging stable — and until now nothing could supply it. The
+// dateTime-leading composite gives the date order but not the tiebreak, so
+// Postgres put a Sort back on top; the (system, talkgroup, dateTime, id) index
+// has two unconstrained leading columns and cannot be used at all when nothing
+// is filtered; BRIN cannot supply ordering. So an unfiltered search — the
+// default view every listener opens, and what the live poll re-runs every five
+// seconds — read the whole table and sorted it to return a hundred rows.
+// Production measured that at 39 to 48 seconds on 610k rows, with the pool
+// reporting no connection waits at all: that time was execution.
+//
+// The same reasoning was already applied to the filtered case when
+// (system, talkgroup, dateTime, id) was added. This is the unfiltered half of
+// it, which was missed.
+//
+// Two columns sorting the same direction need only one ascending btree:
+// Postgres reads it backwards for DESC and forwards for ASC, so this serves
+// both sort orders, and LIMIT stops the scan after a hundred entries instead of
+// after the table. It also covers the two `order by dateTime limit 1` probes
+// the search uses to find its date bounds.
+//
+// Built CONCURRENTLY on Postgres and tolerant of failure, for the reasons
+// spelled out on migration20260822100000 above.
+func (db *Database) migration20260908120000(verbose bool) error {
+	const name = "20260908120000-calls-date-time-id-idx"
+
+	if done, err := db.migrationDone(name); err != nil || done {
+		return err
+	}
+
+	if verbose {
+		log.Printf("running database migration %s", name)
+	}
+
+	const failed = "%s: could not create (dateTime, id) index on rdioScannerCalls, an unfiltered calls search will keep sorting the whole table: %v"
+
+	switch db.Config.DbType {
+	case DbTypePostgres:
+		if err := db.createCallsIndexConcurrently(name, callsDateTimeIdIndex,
+			fmt.Sprintf(`create index concurrently if not exists %q on "rdioScannerCalls" ("dateTime", "id")`, callsDateTimeIdIndex)); err != nil {
+			log.Printf(failed, name, err)
+		} else if verbose {
+			log.Printf("%s: (dateTime, id) index ensured", name)
+		}
+
+	default:
+		// Same IF NOT EXISTS split as migration20260822100000: SQLite takes it,
+		// MySQL 8 rejects it on CREATE INDEX, and the meta ledger is what stops
+		// a second run there.
+		query := db.formatQuery("create index `rdio_scanner_calls_date_time_id` on `rdioScannerCalls` (`dateTime`, `id`)")
+		if db.Config.DbType == DbTypeSqlite {
+			query = db.formatQuery("create index if not exists `rdio_scanner_calls_date_time_id` on `rdioScannerCalls` (`dateTime`, `id`)")
+		}
+		if _, err := db.Sql.Exec(query); err != nil {
+			log.Printf(failed, name, err)
+		} else if verbose {
+			log.Printf("%s: (dateTime, id) index ensured", name)
+		}
+	}
+
+	// Fresh stats, so the planner costs the new index on the first search
+	// rather than after the next autovacuum.
+	if db.Config.DbType == DbTypePostgres {
+		if _, err := db.Sql.Exec(`analyze "rdioScannerCalls"`); err != nil {
+			log.Printf("%s: could not analyze rdioScannerCalls: %v", name, err)
+		}
+	}
+
+	return db.recordMigration(name)
+}
+
+// reportMissingCallsIndexes says plainly which calls-search index is absent.
+//
+// The index migrations are deliberately tolerant: a build that fails is logged
+// and the migration is recorded anyway, so a boot is never blocked and never
+// retries the same failing DDL forever. The cost of that is a server which runs
+// perfectly well while every search reads and sorts the whole table, and the
+// only evidence is one line in a log from whenever the migration first ran —
+// possibly months ago, possibly on a host nobody kept the output from.
+//
+// So the state gets restated at every boot, where it can be found. Postgres
+// only: it is the backend where the tolerance applies and the one where a
+// missing index is measured in minutes.
+func (db *Database) reportMissingCallsIndexes() {
+	for _, name := range db.missingCallsIndexes() {
+		log.Printf("index %s is missing from rdioScannerCalls — calls searches will read and sort the whole table until it is rebuilt", name)
+	}
+}
+
+// missingCallsIndexes returns the expected indexes that are absent or unusable.
+//
+// Postgres only: it is the backend where the index migrations are tolerant and
+// the one where a missing index is measured in minutes rather than
+// milliseconds.
+func (db *Database) missingCallsIndexes() []string {
+	if db.Config.DbType != DbTypePostgres {
+		return nil
+	}
+
+	missing := []string{}
+
+	for _, name := range []string{callsSystemTalkgroupDateTimeIndex, callsDateTimeIdIndex} {
+		var present bool
+
+		// indisvalid matters as much as existence: an interrupted CONCURRENTLY
+		// build leaves a catalog row behind that no query will ever use.
+		const query = `select coalesce(bool_or(i.indisvalid), false) from pg_index i
+			join pg_class c on c.oid = i.indexrelid where c.relname = $1`
+
+		if err := db.Sql.QueryRow(query, name).Scan(&present); err != nil {
+			log.Printf("could not check for index %s on rdioScannerCalls: %v", name, err)
+			continue
+		}
+
+		if !present {
+			missing = append(missing, name)
+		}
+	}
+
+	return missing
+}
+
+// createCallsIndexConcurrently builds one index on rdioScannerCalls without
+// holding a write lock, on a connection of its own.
 //
 // The dedicated connection is not tidiness. Every connection this server opens
 // carries statement_timeout=5m from the DSN, and a concurrent build over a table
@@ -1423,7 +1567,7 @@ func (db *Database) migration20260822100000(verbose bool) error {
 // invalid, and the IF NOT EXISTS below would then see a name that exists and skip
 // forever, leaving an index nothing can use and nothing will rebuild. Dropping it
 // first is what makes a retry mean anything.
-func (db *Database) createCallsSearchIndex(name string) error {
+func (db *Database) createCallsIndexConcurrently(name string, indexName string, definition string) error {
 	ctx := context.Background()
 
 	conn, err := db.Sql.Conn(ctx)
@@ -1448,18 +1592,18 @@ func (db *Database) createCallsSearchIndex(name string) error {
 
 	var invalid bool
 	const invalidQuery = `select coalesce(bool_or(not i.indisvalid), false) from pg_index i
-		join pg_class c on c.oid = i.indexrelid where c.relname = 'rdio_scanner_calls_system_talkgroup_date_time'`
-	if err := conn.QueryRowContext(ctx, invalidQuery).Scan(&invalid); err != nil {
+		join pg_class c on c.oid = i.indexrelid where c.relname = $1`
+	if err := conn.QueryRowContext(ctx, invalidQuery, indexName).Scan(&invalid); err != nil {
 		return err
 	}
 	if invalid {
-		log.Printf("%s: dropping a leftover invalid rdio_scanner_calls_system_talkgroup_date_time from an interrupted build", name)
-		if _, err := conn.ExecContext(ctx, `drop index concurrently if exists "rdio_scanner_calls_system_talkgroup_date_time"`); err != nil {
+		log.Printf("%s: dropping a leftover invalid %s from an interrupted build", name, indexName)
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf(`drop index concurrently if exists %q`, indexName)); err != nil {
 			return err
 		}
 	}
 
-	_, err = conn.ExecContext(ctx, `create index concurrently if not exists "rdio_scanner_calls_system_talkgroup_date_time" on "rdioScannerCalls" ("system", "talkgroup", "dateTime", "id")`)
+	_, err = conn.ExecContext(ctx, definition)
 	return err
 }
 

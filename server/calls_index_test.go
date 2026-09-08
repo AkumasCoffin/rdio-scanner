@@ -223,6 +223,12 @@ func waitForValidPostgresIndex(ctx context.Context, t *testing.T, db *Database, 
 func callsSearchIndexPresent(t *testing.T, db *Database) bool {
 	t.Helper()
 
+	return callsIndexPresent(t, db, callsSearchIndexName)
+}
+
+func callsIndexPresent(t *testing.T, db *Database, name string) bool {
+	t.Helper()
+
 	var query string
 	switch db.Config.DbType {
 	case DbTypePostgres:
@@ -237,9 +243,138 @@ func callsSearchIndexPresent(t *testing.T, db *Database) bool {
 	}
 
 	var count int
-	if err := db.Sql.QueryRow(query, callsSearchIndexName).Scan(&count); err != nil {
-		t.Fatalf("cannot look up %s: %v", callsSearchIndexName, err)
+	if err := db.Sql.QueryRow(query, name).Scan(&count); err != nil {
+		t.Fatalf("cannot look up %s: %v", name, err)
 	}
 
 	return count > 0
+}
+
+// The statement that was costing production two and a half minutes: the search
+// page's own first page, with nothing filtered. Written the way call.go writes
+// it, tiebreak included.
+//
+// Before rdio_scanner_calls_date_time_id existed, no index could serve this.
+// The dateTime-leading composite supplies the date order but not the id
+// tiebreak, so Postgres put a Sort back on top; (system, talkgroup, dateTime,
+// id) has two unconstrained leading columns and cannot be entered at all when
+// nothing is filtered. A production EXPLAIN showed the consequence exactly:
+// Parallel Seq Scan over 643,975 rows feeding a top-N heapsort, 150,871 ms to
+// return 100 rows.
+const callsUnfilteredPlanQuery = `select "id" from "rdioScannerCalls" where true order by "dateTime" desc, "id" desc limit 100`
+
+func TestCallsDateTimeIdIndexCreatedByMigrations(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if !callsIndexPresent(t, db, callsDateTimeIdIndex) {
+		t.Fatalf("%s missing after migrations on %s", callsDateTimeIdIndex, db.Config.DbType)
+	}
+}
+
+// The migration is tolerant and its ledger row is what stops a second run, so
+// the DDL still has to survive being executed against a database that already
+// has the index — otherwise a rewound ledger turns a restart into a boot error.
+func TestCallsDateTimeIdIndexMigrationIsIdempotent(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if err := db.migration20260908120000(false); err != nil {
+		t.Fatalf("re-running the migration failed: %v", err)
+	}
+
+	if _, err := db.Exec("delete from `rdioScannerMeta` where `name` = ?", "20260908120000-calls-date-time-id-idx"); err != nil {
+		t.Fatalf("cannot rewind the migration: %v", err)
+	}
+	if err := db.migration20260908120000(false); err != nil {
+		t.Fatalf("re-running the migration against an existing index failed: %v", err)
+	}
+
+	if !callsIndexPresent(t, db, callsDateTimeIdIndex) {
+		t.Fatalf("%s missing after the migration ran twice", callsDateTimeIdIndex)
+	}
+}
+
+// The assertion that matters: an unfiltered search reaches its page through the
+// index instead of reading the table and sorting it.
+func TestCallsDateTimeIdIndexServesTheUnfilteredPlan(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if db.Config.DbType != DbTypePostgres {
+		t.Skipf("plan assertions are Postgres-specific; suite is running on %s", db.Config.DbType)
+	}
+
+	ctx := context.Background()
+
+	const seed = `insert into "rdioScannerCalls" ("audio", "dateTime", "frequencies", "patches", "sources", "system", "talkgroup")
+		select ''::bytea, now() - (g * interval '1 second'), '[]', '[]', '[]', (g % 7) + 1, (g % 53) + 1
+		from generate_series(1, 8000) g`
+	if _, err := db.Sql.ExecContext(ctx, seed); err != nil {
+		t.Fatalf("cannot seed calls: %v", err)
+	}
+
+	waitForValidPostgresIndex(ctx, t, db, callsDateTimeIdIndex)
+
+	if _, err := db.Sql.ExecContext(ctx, `analyze "rdioScannerCalls"`); err != nil {
+		t.Fatalf("cannot analyze: %v", err)
+	}
+
+	conn, err := db.Sql.Conn(ctx)
+	if err != nil {
+		t.Fatalf("cannot take a dedicated connection: %v", err)
+	}
+	defer conn.Close()
+
+	plan := explainOn(ctx, t, conn, callsUnfilteredPlanQuery)
+	t.Logf("plan with default planner settings:\n%s", plan)
+
+	// Same reasoning as the filtered test above: on a few thousand rows a scan
+	// and a top-N sort can genuinely be the cheaper plan, and the planner is
+	// right to pick it. Taking sorting away is what shows whether an ordered
+	// path through the index exists at all — which is the thing a table of
+	// production size depends on, and the thing that was missing.
+	if strings.Contains(plan, "Sort") {
+		for _, off := range []string{"set enable_sort = off", "set enable_seqscan = off", "set enable_bitmapscan = off"} {
+			if _, err := conn.ExecContext(ctx, off); err != nil {
+				t.Fatalf("cannot apply %q: %v", off, err)
+			}
+		}
+		plan = explainOn(ctx, t, conn, callsUnfilteredPlanQuery)
+		t.Logf("plan with sorting and scans discouraged:\n%s", plan)
+	}
+
+	if strings.Contains(plan, "Sort") {
+		t.Fatalf("no ordered path for an unfiltered search, so it must sort the table:\n%s", plan)
+	}
+	if !strings.Contains(plan, callsDateTimeIdIndex) {
+		t.Fatalf("an unfiltered search does not use %s:\n%s", callsDateTimeIdIndex, plan)
+	}
+}
+
+// The index migrations log a failure and record themselves anyway, so a server
+// can run for months with every search reading the whole table and nothing to
+// show for it but a line from whenever the migration first ran. A production
+// database was found in exactly that state: one index present out of the set
+// the search depends on. This is the check that says so at every boot.
+func TestMissingCallsIndexesAreReported(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if db.Config.DbType != DbTypePostgres {
+		t.Skipf("the tolerant index migrations are Postgres-specific; suite is running on %s", db.Config.DbType)
+	}
+
+	if missing := db.missingCallsIndexes(); len(missing) != 0 {
+		t.Fatalf("a freshly migrated database reports %v missing", missing)
+	}
+
+	if _, err := db.Sql.Exec(`drop index "` + callsDateTimeIdIndex + `"`); err != nil {
+		t.Fatalf("cannot drop the index: %v", err)
+	}
+
+	missing := db.missingCallsIndexes()
+	if len(missing) != 1 || missing[0] != callsDateTimeIdIndex {
+		t.Fatalf("after dropping %s the check reports %v", callsDateTimeIdIndex, missing)
+	}
 }
