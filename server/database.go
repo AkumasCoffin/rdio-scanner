@@ -48,6 +48,11 @@ const statementTimeout = 5 * time.Minute
 const (
 	callsSystemTalkgroupDateTimeIndex = "rdio_scanner_calls_system_talkgroup_date_time"
 	callsDateTimeIdIndex              = "rdio_scanner_calls_date_time_id"
+
+	// The primary key's own index. Postgres names it after the table by
+	// default; naming it here is what lets the constraint be attached to an
+	// index built ahead of time instead of one built under an exclusive lock.
+	callsPrimaryKeyIndex = "rdioScannerCalls_pkey"
 )
 
 type Database struct {
@@ -852,6 +857,9 @@ func (db *Database) migrate() error {
 		err = db.migration20260908120000(verbose)
 	}
 	if err == nil {
+		err = db.migration20260908180000(verbose)
+	}
+	if err == nil {
 		err = db.migrationTranscriptsToPlugin(verbose)
 	}
 
@@ -1515,6 +1523,11 @@ func (db *Database) migration20260908120000(verbose bool) error {
 // missing index is measured in minutes.
 func (db *Database) reportMissingCallsIndexes() {
 	for _, name := range db.missingCallsIndexes() {
+		if name == callsPrimaryKeyIndex {
+			log.Printf("rdioScannerCalls has no primary key — every lookup of one call by id is reading the whole table")
+			continue
+		}
+
 		log.Printf("index %s is missing from rdioScannerCalls — calls searches will read and sort the whole table until it is rebuilt", name)
 	}
 }
@@ -1530,6 +1543,18 @@ func (db *Database) missingCallsIndexes() []string {
 	}
 
 	missing := []string{}
+
+	// The primary key first: losing it costs more than losing either of the
+	// others, because it is every lookup of a single call rather than one page.
+	//
+	// Asked for by constraint type rather than by index name, because the name
+	// is not predictable. The v4 rebuild created the table as rdioScannerCalls2
+	// and renamed it, and Postgres does not rename indexes with their table, so
+	// a healthy install carries a primary key called rdioScannerCalls2_pkey.
+	// Looking for a name would report every one of them as broken.
+	if !db.callsHasPrimaryKey() {
+		missing = append(missing, callsPrimaryKeyIndex)
+	}
 
 	for _, name := range []string{callsSystemTalkgroupDateTimeIndex, callsDateTimeIdIndex} {
 		var present bool
@@ -1550,6 +1575,142 @@ func (db *Database) missingCallsIndexes() []string {
 	}
 
 	return missing
+}
+
+// migration20260908180000 puts the primary key back on rdioScannerCalls.
+//
+// A production database was found without one. Not a missing index — a missing
+// constraint: pg_constraint held only NOT NULL entries, and the table had two
+// indexes, neither on id. The constraint names on it still carried the
+// rdioScannerCalls2 prefix and a deduplicating suffix from the v4 table rebuild,
+// so the likeliest story is a restore or a rebuild that copied the rows and the
+// column definitions but not the key.
+//
+// Everything that reads one call by id was consequently a sequential scan of
+// the whole table. Production logs showed what that costs: playing a call,
+// `select "audio", ... where "id" = 1898917`, at 67 seconds; the downstream
+// forwarder's `select "talkgroup", "patches" ... where "id" = ?` at 2m4s; and
+// ingest's own insert blocked behind them at 1m12s. With several of those in
+// flight at once the table is being read end to end many times over, which is
+// why the whole server slows down and not just one page.
+//
+// Built as a unique index CONCURRENTLY and then attached, rather than a plain
+// ALTER TABLE ADD PRIMARY KEY: the latter builds its index while holding
+// ACCESS EXCLUSIVE, which on a table this size is an outage. Attaching a
+// finished index takes the same lock for the moment it takes to update the
+// catalog.
+//
+// Tolerant like the index migrations around it, with one addition: duplicate
+// ids would make the unique build fail, and that is worth saying out loud
+// rather than leaving as a generic error, because it needs a human to decide
+// which row to keep.
+func (db *Database) migration20260908180000(verbose bool) error {
+	const name = "20260908180000-calls-primary-key"
+
+	if done, err := db.migrationDone(name); err != nil || done {
+		return err
+	}
+
+	if verbose {
+		log.Printf("running database migration %s", name)
+	}
+
+	// Postgres only. SQLite and MySQL declare the key in the CREATE TABLE and
+	// cannot lose it the way this was lost, and neither supports attaching an
+	// index as a constraint.
+	if db.Config.DbType == DbTypePostgres {
+		if err := db.ensureCallsPrimaryKey(name); err != nil {
+			log.Printf("%s: could not restore the primary key on rdioScannerCalls, every lookup of one call by id will keep scanning the whole table: %v", name, err)
+		}
+	}
+
+	return db.recordMigration(name)
+}
+
+// callsHasPrimaryKey reports whether rdioScannerCalls has a primary key at all,
+// under whatever name it happens to carry.
+func (db *Database) callsHasPrimaryKey() bool {
+	var present bool
+
+	const check = `select exists (select 1 from pg_constraint
+		where conrelid = '"rdioScannerCalls"'::regclass and contype = 'p')`
+
+	if err := db.Sql.QueryRow(check).Scan(&present); err != nil {
+		log.Printf("could not check for a primary key on rdioScannerCalls: %v", err)
+
+		// Unknown rather than absent: claiming it is missing would send someone
+		// looking for a fault that may not be there.
+		return true
+	}
+
+	return present
+}
+
+// ensureCallsPrimaryKey adds the primary key back when it is absent, and does
+// nothing at all when it is there.
+func (db *Database) ensureCallsPrimaryKey(name string) error {
+	ctx := context.Background()
+
+	if db.callsHasPrimaryKey() {
+		return nil
+	}
+
+	log.Printf("%s: rdioScannerCalls has no primary key; rebuilding it", name)
+
+	var duplicates int64
+	const dupes = `select count(*) from (select "id" from "rdioScannerCalls" group by "id" having count(*) > 1) d`
+	if err := db.Sql.QueryRowContext(ctx, dupes).Scan(&duplicates); err != nil {
+		return err
+	}
+	if duplicates > 0 {
+		return fmt.Errorf("%d duplicated id values, which have to be resolved by hand before a primary key can exist", duplicates)
+	}
+
+	conn, err := db.Sql.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "set statement_timeout = 0"); err != nil {
+		return err
+	}
+	defer func() {
+		if _, err := conn.ExecContext(ctx, "reset statement_timeout"); err != nil {
+			log.Printf("%s: could not restore statement_timeout on the build connection: %v", name, err)
+		}
+	}()
+
+	// A leftover from an interrupted run would otherwise be skipped forever by
+	// IF NOT EXISTS while being unusable, exactly as for the search indexes.
+	var invalid bool
+	const invalidQuery = `select coalesce(bool_or(not i.indisvalid), false) from pg_index i
+		join pg_class c on c.oid = i.indexrelid where c.relname = $1`
+	if err := conn.QueryRowContext(ctx, invalidQuery, callsPrimaryKeyIndex).Scan(&invalid); err != nil {
+		return err
+	}
+	if invalid {
+		log.Printf("%s: dropping a leftover invalid %s from an interrupted build", name, callsPrimaryKeyIndex)
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf(`drop index concurrently if exists %q`, callsPrimaryKeyIndex)); err != nil {
+			return err
+		}
+	}
+
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf(
+		`create unique index concurrently if not exists %q on "rdioScannerCalls" ("id")`, callsPrimaryKeyIndex)); err != nil {
+		return err
+	}
+
+	// Instant: the index already exists, so this only writes the catalog entry.
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf(
+		`alter table "rdioScannerCalls" add constraint %q primary key using index %q`,
+		callsPrimaryKeyIndex, callsPrimaryKeyIndex)); err != nil {
+		return err
+	}
+
+	log.Printf("%s: primary key restored on rdioScannerCalls", name)
+
+	return nil
 }
 
 // createCallsIndexConcurrently builds one index on rdioScannerCalls without

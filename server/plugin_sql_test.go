@@ -166,9 +166,24 @@ func TestExecTimeoutReachesTheStatement(t *testing.T) {
 	db := newTestDatabase(t)
 	defer db.Sql.Close()
 
+	// Dropped first and cleaned up after. The probe table outlives a run that
+	// is interrupted or that fails before the end, and on a Postgres suite
+	// pointed at a persistent database the next run then fails on "already
+	// exists" — a stale table reported as a broken deadline, which is a
+	// misleading place to start looking.
+	if _, err := db.Exec("drop table if exists `deadlineprobe`"); err != nil {
+		t.Fatalf("cannot clear a leftover probe table: %v", err)
+	}
+
 	if _, err := db.Exec("create table `deadlineprobe` (`id` integer)"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
+
+	t.Cleanup(func() {
+		if _, err := db.Exec("drop table if exists `deadlineprobe`"); err != nil {
+			t.Logf("could not drop the probe table: %v", err)
+		}
+	})
 
 	// A negative duration puts the deadline in the past, which cancels the
 	// context as it is built. A tiny positive one would be a race: the

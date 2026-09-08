@@ -378,3 +378,93 @@ func TestMissingCallsIndexesAreReported(t *testing.T) {
 		t.Fatalf("after dropping %s the check reports %v", callsDateTimeIdIndex, missing)
 	}
 }
+
+// A production database was found with no primary key on rdioScannerCalls: only
+// NOT NULL constraints, and two indexes, neither on id. Every lookup of one
+// call by id was a sequential scan — playing a call measured at 67 seconds,
+// the downstream forwarder at over two minutes.
+func TestCallsPrimaryKeyIsRestored(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if db.Config.DbType != DbTypePostgres {
+		t.Skipf("attaching an index as a constraint is Postgres-specific; suite is running on %s", db.Config.DbType)
+	}
+
+	hasPrimaryKey := func() bool {
+		var present bool
+		const check = `select exists (select 1 from pg_constraint
+			where conrelid = '"rdioScannerCalls"'::regclass and contype = 'p')`
+		if err := db.Sql.QueryRow(check).Scan(&present); err != nil {
+			t.Fatalf("cannot check for a primary key: %v", err)
+		}
+		return present
+	}
+
+	if !hasPrimaryKey() {
+		t.Fatal("a freshly migrated database has no primary key on rdioScannerCalls")
+	}
+
+	// Reproduce the state the production database was in. The constraint is
+	// looked up rather than named: the v4 rebuild leaves a healthy install with
+	// a primary key called rdioScannerCalls2_pkey, because Postgres does not
+	// rename an index when its table is renamed.
+	var existing string
+	if err := db.Sql.QueryRow(`select conname from pg_constraint
+		where conrelid = '"rdioScannerCalls"'::regclass and contype = 'p'`).Scan(&existing); err != nil {
+		t.Fatalf("cannot find the primary key: %v", err)
+	}
+	if _, err := db.Sql.Exec(`alter table "rdioScannerCalls" drop constraint "` + existing + `"`); err != nil {
+		t.Fatalf("cannot drop the primary key: %v", err)
+	}
+	if hasPrimaryKey() {
+		t.Fatal("the primary key survived being dropped")
+	}
+
+	missing := db.missingCallsIndexes()
+	if len(missing) == 0 || missing[0] != callsPrimaryKeyIndex {
+		t.Fatalf("a missing primary key is not reported: %v", missing)
+	}
+
+	if err := db.ensureCallsPrimaryKey("test"); err != nil {
+		t.Fatalf("could not restore the primary key: %v", err)
+	}
+
+	if !hasPrimaryKey() {
+		t.Fatal("the primary key was not restored")
+	}
+
+	// And restoring it is what makes a lookup by id an index scan again. Needs
+	// rows to be a real choice: on an empty table a scan is genuinely cheaper
+	// and the planner is right to take it.
+	ctx := context.Background()
+
+	const seed = `insert into "rdioScannerCalls" ("audio", "dateTime", "frequencies", "patches", "sources", "system", "talkgroup")
+		select ''::bytea, now() - (g * interval '1 second'), '[]', '[]', '[]', (g % 7) + 1, (g % 53) + 1
+		from generate_series(1, 8000) g`
+	if _, err := db.Sql.ExecContext(ctx, seed); err != nil {
+		t.Fatalf("cannot seed calls: %v", err)
+	}
+	if _, err := db.Sql.ExecContext(ctx, `analyze "rdioScannerCalls"`); err != nil {
+		t.Fatalf("cannot analyze: %v", err)
+	}
+
+	plan := explainOn(ctx, t, mustConn(t, db), `select "audio" from "rdioScannerCalls" where "id" = 4000`)
+	t.Logf("lookup by id after the key was restored: %s", plan)
+
+	if strings.Contains(plan, "Seq Scan") {
+		t.Fatalf("a lookup by id still reads the whole table: %s", plan)
+	}
+}
+
+func mustConn(t *testing.T, db *Database) *sql.Conn {
+	t.Helper()
+
+	conn, err := db.Sql.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("cannot take a connection: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	return conn
+}
