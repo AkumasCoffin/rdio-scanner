@@ -206,9 +206,18 @@ func TestCallsSearchPlanConstruction(t *testing.T) {
 			wantCount:  true,
 		},
 		{
+			// The page matches nothing, and the probes still report the whole
+			// archive's span: they no longer see the text filter at all, which
+			// is what stops a search paying for the date picker. A range that
+			// contains no matches is the honest consequence — the picker
+			// offers a window, and the empty result is what fills it.
 			name:      "old shape: q with no searchable plugin matches nothing",
 			options:   CallsSearchOptions{Q: "fire"},
-			wantProbe: "true and 1 = 0",
+			wantProbe: "true",
+			// Diverging from probeWhere is the point: the page still matches
+			// nothing, while the probes are spared the filter that made them
+			// expensive.
+			wantWhere: "true and 1 = 0",
 			wantOrder: "`dateTime` asc, `id` asc",
 			wantLimit: 200,
 			wantCount: true,
@@ -924,8 +933,20 @@ func TestSearchPlanProbePairsGating(t *testing.T) {
 			want: pairs(1, 100),
 		},
 		{
-			name:    "a free-text term forfeits the fast probe",
+			// It used to. The probes measured the text filter too, and no pair
+			// set can express "the transcript contains this", so the fast form
+			// was off. Now that the probes stop at the cheap filters, the pair
+			// set describes exactly what they measure and the fast form is
+			// correct again — which matters most here, because a text search is
+			// where the slow form cost seconds.
+			name:    "a free-text term keeps the fast probe",
 			options: CallsSearchOptions{Talkgroups: pairs(1, 110), Q: "fire"},
+			want:    pairs(1, 110),
+		},
+		{
+			name:    "so does a presence filter",
+			options: CallsSearchOptions{Talkgroups: pairs(1, 110), HasField: "transcript"},
+			want:    pairs(1, 110),
 		},
 		{
 			name:    "a scoped client forfeits the fast probe",

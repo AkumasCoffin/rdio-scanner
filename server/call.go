@@ -779,10 +779,13 @@ func (calls *Calls) Prune(db *Database, pruneDays uint) error {
 //
 // Three where variants, because the three queries Search runs do not filter
 // alike:
-//   - probeWhere carries the content filters only. It feeds the two
-//     `order by dateTime limit 1` bound probes, which report the extent of the
-//     matching calls to the client's date picker; folding the picked date range
-//     into them would collapse the bounds onto the current selection.
+//   - probeWhere carries the content filters that are cheap to order by time,
+//     which is all of them except the two that join a plugin's tables. It feeds
+//     the two `order by dateTime limit 1` bound probes, which report the extent
+//     of the matching calls to the client's date picker; folding the picked
+//     date range into them would collapse the bounds onto the current
+//     selection, and folding in a text filter would make the picker cost more
+//     than the search.
 //   - where adds the date window, and is what count(*) measures.
 //   - pageWhere adds the cursor predicate, and is what the page itself reads.
 //
@@ -1030,9 +1033,27 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 		where += andScopeClause(bySystem, systemIds)
 	}
 
-	if q, ok := searchOptions.Q.(string); ok && q != "" {
-		probeExact = false
+	// What the date-bound probes will measure, captured before the two filters
+	// that reach into a plugin's tables.
+	//
+	// Those probes exist to tell the date picker how far the matching calls
+	// span, and they ask for it as `order by dateTime limit 1` at each end. Add
+	// a text filter and each end has to order the transcript matches by time to
+	// find its extreme — production measured 5.2 seconds, twice, before the
+	// search returned anything, and the picker is the only thing waiting on it.
+	//
+	// So a text or presence filter widens the reported span to the calls that
+	// were in scope before it: the picker offers a range that certainly
+	// contains every match, rather than the tightest one. Nothing else reads
+	// these bounds — the count and the page both use `where`, which keeps every
+	// filter — so the results themselves are unchanged.
+	probeWhere := where
 
+	if q, ok := searchOptions.Q.(string); ok && q != "" {
+		// probeExact is deliberately left alone. It gates the fast per-pair
+		// form of the bound probes, and it goes false at any filter the probes
+		// cannot express — but the probes no longer see this one, so it no
+		// longer disqualifies them.
 		esc := strings.ReplaceAll(q, "'", "''")
 		op := "like"
 		if db.Config.DbType == DbTypePostgres {
@@ -1079,20 +1100,18 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 	hasField, _ := searchOptions.HasField.(string)
 	lacksField, _ := searchOptions.LacksField.(string)
 
+	// Neither touches probeExact, for the same reason as the text filter above.
 	if field := strings.TrimSpace(hasField); field != "" {
-		probeExact = false
 		where += fmt.Sprintf(" and %s", fieldPresencePredicate(searchExtensions, field, true))
 	}
 
 	if field := strings.TrimSpace(lacksField); field != "" {
-		probeExact = false
 		where += fmt.Sprintf(" and %s", fieldPresencePredicate(searchExtensions, field, false))
 	}
 
-	// Everything above narrows *which* calls exist for this search, so it is
-	// what the date-bound probes measure. Everything below picks a window and a
-	// page inside that set.
-	plan := callsSearchPlan{probeWhere: where, withCount: true}
+	// Everything above narrows *which* calls exist for this search. Everything
+	// below picks a window and a page inside that set.
+	plan := callsSearchPlan{probeWhere: probeWhere, withCount: true}
 
 	// The fast probe form needs the filters to reduce to a finite pair set:
 	// at least one pair constraint, everything else expressible against it.
