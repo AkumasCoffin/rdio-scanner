@@ -704,6 +704,7 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 		rt.controller.ensureSearchIndex(
 			rt.manifest.TableName(extension.Table),
 			extension.TextColumn,
+			extension.KeyColumn,
 		)
 
 		return goja.Undefined()

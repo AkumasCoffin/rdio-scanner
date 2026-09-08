@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -1337,6 +1338,14 @@ func (controller *Controller) Start() error {
 		}
 	}()
 
+	// Rebuild anything the calls table is missing, in the background.
+	//
+	// Not during NewDatabase: a CONCURRENTLY build on a large table takes
+	// minutes, and the boot would sit there not serving while it ran. The
+	// warning printed back there says what is wrong immediately; this puts it
+	// right without holding anything up.
+	go controller.Database.ReconcileSchema()
+
 	// Keep the unscoped search metadata (dateStart/dateStop/count) warm so the
 	// first user hit never waits on a cold count(*) over the whole table.
 	go func() {
@@ -1465,14 +1474,29 @@ func (controller *Controller) Terminate() {
 // it.
 //
 // Never returns: the process is either replaced or exits.
-func (controller *Controller) Restart() {
+// Restart re-executes the server, optionally at a caller-supplied path.
+//
+// The path matters more than it looks. An update applies by renaming the
+// running binary to <exe>.old and the download into its place, and on Linux
+// os.Executable() reads /proc/self/exe, which follows the *inode* — so after
+// that rename it reports <exe>.old, and re-execing it faithfully brings the
+// old version back up. Same PID, same banner, no error: an update that looks
+// like it worked and did nothing. So the update path passes the name it
+// captured before the swap, and only a plain restart resolves its own.
+func (controller *Controller) Restart(target ...string) {
 	if !terminating.CompareAndSwap(false, true) {
 		log.Println("already shutting down; ignoring the restart request")
 		return
 	}
 
-	exe, err := os.Executable()
-	if err != nil {
+	var (
+		exe string
+		err error
+	)
+
+	if len(target) > 0 && target[0] != "" {
+		exe = target[0]
+	} else if exe, err = os.Executable(); err != nil {
 		// Nothing to re-exec. Better to stop than to carry on in a state the
 		// operator has already been told is restarting; a supervisor brings it
 		// back, and one without a supervisor sees the reason in the log.
@@ -1481,11 +1505,38 @@ func (controller *Controller) Restart() {
 		os.Exit(1)
 	}
 
+	exe = restartTarget(exe)
+
 	controller.shutdown()
 
-	log.Println("restarting")
+	log.Printf("restarting into %s", exe)
 
 	restartSelf(exe)
+}
+
+// restartTarget picks the binary to come back up as.
+//
+// Ordinarily that is the path handed in. The exception is a process already
+// living on <exe>.old — the state the bug above used to leave behind — where
+// the real binary is sitting next to it under the un-suffixed name. Preferring
+// the sibling is what lets such a process climb out at its next restart
+// instead of re-execing the old version forever.
+func restartTarget(exe string) string {
+	const suffix = ".old"
+
+	if !strings.HasSuffix(exe, suffix) {
+		return exe
+	}
+
+	sibling := strings.TrimSuffix(exe, suffix)
+
+	if info, err := os.Stat(sibling); err == nil && !info.IsDir() {
+		log.Printf("restart: running from %s; coming back up as %s instead", exe, sibling)
+
+		return sibling
+	}
+
+	return exe
 }
 
 // shutdown runs the bounded cleanup and reports what it was doing if the

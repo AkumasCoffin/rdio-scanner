@@ -468,3 +468,144 @@ func mustConn(t *testing.T, db *Database) *sql.Conn {
 
 	return conn
 }
+
+// The reconcile exists because a migration ledger cannot describe a database
+// that lost schema *after* the migration ran. A restore, a manual rebuild, an
+// interrupted concurrent build — all leave every migration marked complete and
+// the index gone. So it asks the catalog, every boot.
+func TestReconcileSchemaRebuildsWhatIsMissing(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if db.Config.DbType != DbTypePostgres {
+		t.Skipf("the reconcile is Postgres-specific; suite is running on %s", db.Config.DbType)
+	}
+
+	if missing := db.missingCallsIndexes(); len(missing) != 0 {
+		t.Fatalf("a freshly migrated database reports %v missing", missing)
+	}
+
+	// Reproduce the production state: no primary key, and every expected index
+	// dropped, with the ledger still saying all of it was done.
+	var pk string
+	if err := db.Sql.QueryRow(`select conname from pg_constraint
+		where conrelid = '"rdioScannerCalls"'::regclass and contype = 'p'`).Scan(&pk); err != nil {
+		t.Fatalf("cannot find the primary key: %v", err)
+	}
+	if _, err := db.Sql.Exec(`alter table "rdioScannerCalls" drop constraint "` + pk + `"`); err != nil {
+		t.Fatalf("cannot drop the primary key: %v", err)
+	}
+	for _, want := range expectedIndexes {
+		if _, err := db.Sql.Exec(`drop index if exists "` + want.name + `"`); err != nil {
+			t.Fatalf("cannot drop %s: %v", want.name, err)
+		}
+	}
+
+	missing := db.missingCallsIndexes()
+	if len(missing) != len(expectedIndexes)+1 {
+		t.Fatalf("after dropping everything the check reports %v", missing)
+	}
+
+	db.ReconcileSchema()
+
+	if missing := db.missingCallsIndexes(); len(missing) != 0 {
+		t.Fatalf("the reconcile left %v missing", missing)
+	}
+
+	if !db.callsHasPrimaryKey() {
+		t.Fatal("the reconcile did not restore the primary key")
+	}
+}
+
+// Doing nothing when there is nothing to do matters as much: this runs on
+// every boot, so a healthy install must pay a few catalog reads and no more.
+func TestReconcileSchemaIsAQuietNoOpWhenHealthy(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if db.Config.DbType != DbTypePostgres {
+		t.Skipf("the reconcile is Postgres-specific; suite is running on %s", db.Config.DbType)
+	}
+
+	before := map[string]string{}
+	rows, err := db.Sql.Query(`select indexname, indexdef from pg_indexes where tablename = 'rdioScannerCalls'`)
+	if err != nil {
+		t.Fatalf("cannot list indexes: %v", err)
+	}
+	for rows.Next() {
+		var name, def string
+		if err := rows.Scan(&name, &def); err != nil {
+			t.Fatalf("cannot read index row: %v", err)
+		}
+		before[name] = def
+	}
+	rows.Close()
+
+	db.ReconcileSchema()
+	db.ReconcileSchema()
+
+	after := map[string]string{}
+	rows, err = db.Sql.Query(`select indexname, indexdef from pg_indexes where tablename = 'rdioScannerCalls'`)
+	if err != nil {
+		t.Fatalf("cannot list indexes: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name, def string
+		if err := rows.Scan(&name, &def); err != nil {
+			t.Fatalf("cannot read index row: %v", err)
+		}
+		after[name] = def
+	}
+
+	if len(before) != len(after) {
+		t.Fatalf("index set changed across two reconciles: %v then %v", before, after)
+	}
+	for name, def := range before {
+		if after[name] != def {
+			t.Fatalf("index %s changed: %q became %q", name, def, after[name])
+		}
+	}
+}
+
+// Two servers can share one database, and the invalid-index handling cannot
+// tell another instance's in-progress CONCURRENTLY build from an abandoned
+// one — both are indisvalid. Without the lock the second instance drops the
+// index the first is still building.
+func TestReconcileSchemaYieldsToAnotherInstance(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if db.Config.DbType != DbTypePostgres {
+		t.Skipf("advisory locks are Postgres-specific; suite is running on %s", db.Config.DbType)
+	}
+
+	ctx := context.Background()
+
+	// Stand in for the other instance: hold the lock on its own session.
+	other, err := db.Sql.Conn(ctx)
+	if err != nil {
+		t.Fatalf("cannot take a second connection: %v", err)
+	}
+	defer other.Close()
+
+	var locked bool
+	if err := other.QueryRowContext(ctx, "select pg_try_advisory_lock($1)", int64(schemaReconcileLockId)).Scan(&locked); err != nil {
+		t.Fatalf("cannot take the lock: %v", err)
+	}
+	if !locked {
+		t.Fatal("could not take the schema lock to simulate another instance")
+	}
+	defer other.ExecContext(ctx, "select pg_advisory_unlock($1)", int64(schemaReconcileLockId))
+
+	if _, err := db.Sql.Exec(`drop index if exists "` + callsDateTimeIdIndex + `"`); err != nil {
+		t.Fatalf("cannot drop the index: %v", err)
+	}
+
+	// Should decline rather than rebuild — and crucially must not error.
+	db.ReconcileSchema()
+
+	if db.indexIsUsable(callsDateTimeIdIndex) {
+		t.Fatal("the reconcile rebuilt the index while another instance held the lock")
+	}
+}

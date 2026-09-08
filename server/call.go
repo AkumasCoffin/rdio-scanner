@@ -1731,6 +1731,19 @@ func fieldPresencePredicate(searchExtensions []pluginResolvedSearch, field strin
 			continue
 		}
 
+		// Correlated exists, deliberately, and measured against the
+		// alternative. Postgres turns this into an Anti Join for the "lacks"
+		// case and a Semi Join for "has", both of which stop as soon as the
+		// page is full. Rewriting it as `id not in (select ...)` looked like
+		// it should be cheaper — one hashed set instead of a probe per row —
+		// and on 644k calls it did not finish in ten minutes, because NOT IN
+		// blocks the anti-join transform and takes early termination with it.
+		//
+		// What the probe costs is decided by the index behind it. With only
+		// the plugin table's primary key it reads the heap for every call it
+		// walks, to check the text is non-empty; the partial index built in
+		// ensureSearchIndex carries exactly that condition, so the probe
+		// becomes an index-only scan and the heap is never touched.
 		predicates = append(predicates, fmt.Sprintf(
 			"exists (select 1 from `%s` where `%s`.`%s` = `rdioScannerCalls`.`id` and `%s`.`%s` is not null and `%s`.`%s` <> '')",
 			extension.table,

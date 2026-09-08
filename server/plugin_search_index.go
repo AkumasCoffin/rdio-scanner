@@ -43,12 +43,13 @@ import (
 // a B-tree on any engine; Postgres answers it with a trigram GIN index, while
 // MySQL and SQLite would need full-text tables and a different query, which is
 // a larger change than an index.
-func (controller *Controller) ensureSearchIndex(table string, column string) {
+func (controller *Controller) ensureSearchIndex(table string, column string, keyColumn string) {
 	if controller.Database == nil || controller.Database.Config.DbType != DbTypePostgres {
 		return
 	}
 
-	if !pluginIndexIdentifier.MatchString(table) || !pluginIndexIdentifier.MatchString(column) {
+	if !pluginIndexIdentifier.MatchString(table) || !pluginIndexIdentifier.MatchString(column) ||
+		!pluginIndexIdentifier.MatchString(keyColumn) {
 		// Registration validates these already; refusing anything unexpected
 		// here too, because this is the one place a plugin-supplied name is
 		// concatenated into DDL.
@@ -71,12 +72,7 @@ func (controller *Controller) ensureSearchIndex(table string, column string) {
 		// The index name is derived from the table and column so two plugins
 		// registering the same column name cannot collide — index names are
 		// database-wide on Postgres.
-		name := fmt.Sprintf("%s_%s_trgm", table, column)
-		if len(name) > 63 {
-			// Postgres truncates identifiers at 63 bytes, which would silently
-			// merge two long names into one index.
-			name = name[:63]
-		}
+		name := indexName(fmt.Sprintf("%s_%s_trgm", table, column))
 
 		// CONCURRENTLY so an existing server keeps taking calls while this
 		// builds. It cannot run inside a transaction, which is why this uses
@@ -93,7 +89,40 @@ func (controller *Controller) ensureSearchIndex(table string, column string) {
 		}
 
 		log.Printf("search index: %s.%s is indexed for text search", table, column)
+
+		// A second, much smaller index for the has-it / has-none filter.
+		//
+		// That filter asks which calls carry this text at all, which the
+		// trigram index cannot answer — it indexes the contents, not the
+		// presence. Partial and keys-only, so it holds one narrow entry per
+		// row that has text and nothing for the rest: the search reads it once
+		// to build its membership set instead of visiting the table.
+		presence := indexName(fmt.Sprintf("%s_%s_present", table, column))
+
+		statement = fmt.Sprintf(
+			`create index concurrently if not exists %q on %q (%q) where %q is not null and %q <> ''`,
+			presence, table, keyColumn, column, column,
+		)
+
+		if _, err := db.Sql.Exec(statement); err != nil {
+			log.Printf("search index: could not index which %s rows have %s, the with/without filter will scan — %s",
+				table, column, searchIndexUnavailableReason(err))
+			return
+		}
+
+		log.Printf("search index: %s.%s presence is indexed for the with/without filter", table, column)
 	}()
+}
+
+// indexName keeps a derived name inside Postgres's 63-byte identifier limit,
+// which it enforces by truncating — silently merging two long names into one
+// index if they are left to collide.
+func indexName(name string) string {
+	if len(name) > 63 {
+		return name[:63]
+	}
+
+	return name
 }
 
 // pluginIndexIdentifier is what a table or column may be called for the DDL

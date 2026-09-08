@@ -49,6 +49,12 @@ const (
 	callsSystemTalkgroupDateTimeIndex = "rdio_scanner_calls_system_talkgroup_date_time"
 	callsDateTimeIdIndex              = "rdio_scanner_calls_date_time_id"
 
+	// Created by migration 20210830092027 and never rebuilt by anything since.
+	// Most of the statistics dashboard groups and counts over dateTime alone,
+	// or over dateTime with system and talkgroup, so with this index those
+	// queries are answered from the index and without it they read call rows.
+	callsDateTimeSystemTalkgroupIndex = "rdio_scanner_calls_date_time_system_talkgroup"
+
 	// The primary key's own index. Postgres names it after the table by
 	// default; naming it here is what lets the constraint be attached to an
 	// index built ahead of time instead of one built under an exclusive lock.
@@ -1398,7 +1404,7 @@ func (db *Database) migration20260822100000(verbose bool) error {
 
 	switch db.Config.DbType {
 	case DbTypePostgres:
-		if err := db.createCallsIndexConcurrently(name, callsSystemTalkgroupDateTimeIndex,
+		if _, err := db.createCallsIndexConcurrently(name, callsSystemTalkgroupDateTimeIndex,
 			fmt.Sprintf(`create index concurrently if not exists %q on "rdioScannerCalls" ("system", "talkgroup", "dateTime", "id")`, callsSystemTalkgroupDateTimeIndex)); err != nil {
 			log.Printf("%s: could not create (system, talkgroup, dateTime, id) index on rdioScannerCalls, calls search will keep using the dateTime-leading index: %v", name, err)
 		} else if verbose {
@@ -1476,7 +1482,7 @@ func (db *Database) migration20260908120000(verbose bool) error {
 
 	switch db.Config.DbType {
 	case DbTypePostgres:
-		if err := db.createCallsIndexConcurrently(name, callsDateTimeIdIndex,
+		if _, err := db.createCallsIndexConcurrently(name, callsDateTimeIdIndex,
 			fmt.Sprintf(`create index concurrently if not exists %q on "rdioScannerCalls" ("dateTime", "id")`, callsDateTimeIdIndex)); err != nil {
 			log.Printf(failed, name, err)
 		} else if verbose {
@@ -1528,7 +1534,12 @@ func (db *Database) reportMissingCallsIndexes() {
 			continue
 		}
 
-		log.Printf("index %s is missing from rdioScannerCalls — calls searches will read and sort the whole table until it is rebuilt", name)
+		for _, want := range expectedIndexes {
+			if want.name == name {
+				log.Printf("index %s is missing from rdioScannerCalls — %s; it will be rebuilt in the background", name, want.because)
+				break
+			}
+		}
 	}
 }
 
@@ -1544,8 +1555,8 @@ func (db *Database) missingCallsIndexes() []string {
 
 	missing := []string{}
 
-	// The primary key first: losing it costs more than losing either of the
-	// others, because it is every lookup of a single call rather than one page.
+	// The primary key first: losing it costs more than losing any index,
+	// because it is every lookup of a single call rather than one page.
 	//
 	// Asked for by constraint type rather than by index name, because the name
 	// is not predictable. The v4 rebuild created the table as rdioScannerCalls2
@@ -1556,25 +1567,158 @@ func (db *Database) missingCallsIndexes() []string {
 		missing = append(missing, callsPrimaryKeyIndex)
 	}
 
-	for _, name := range []string{callsSystemTalkgroupDateTimeIndex, callsDateTimeIdIndex} {
-		var present bool
-
-		// indisvalid matters as much as existence: an interrupted CONCURRENTLY
-		// build leaves a catalog row behind that no query will ever use.
-		const query = `select coalesce(bool_or(i.indisvalid), false) from pg_index i
-			join pg_class c on c.oid = i.indexrelid where c.relname = $1`
-
-		if err := db.Sql.QueryRow(query, name).Scan(&present); err != nil {
-			log.Printf("could not check for index %s on rdioScannerCalls: %v", name, err)
-			continue
-		}
-
-		if !present {
-			missing = append(missing, name)
+	for _, want := range expectedIndexes {
+		if !db.indexIsUsable(want.name) {
+			missing = append(missing, want.name)
 		}
 	}
 
 	return missing
+}
+
+// indexIsUsable reports whether an index exists *and* can be used.
+//
+// indisvalid matters as much as existence: an interrupted CONCURRENTLY build
+// leaves a catalog row behind that no query will ever touch, and a name check
+// alone would call that healthy.
+func (db *Database) indexIsUsable(name string) bool {
+	var present bool
+
+	const query = `select coalesce(bool_or(i.indisvalid), false) from pg_index i
+		join pg_class c on c.oid = i.indexrelid where c.relname = $1`
+
+	if err := db.Sql.QueryRow(query, name).Scan(&present); err != nil {
+		log.Printf("could not check for index %s: %v", name, err)
+
+		// Unknown rather than absent: a repair pass must not start rebuilding
+		// on the strength of a failed question.
+		return true
+	}
+
+	return present
+}
+
+// takeSchemaLock tries to become the one instance rebuilding schema.
+//
+// Session-scoped and non-blocking: an instance that cannot have it returns
+// immediately and leaves the work to whoever holds it, rather than queueing
+// behind a build that can legitimately run for an hour.
+func (db *Database) takeSchemaLock(ctx context.Context, conn *sql.Conn, name string) (bool, error) {
+	var locked bool
+
+	if err := conn.QueryRowContext(ctx, "select pg_try_advisory_lock($1)", int64(schemaReconcileLockId)).Scan(&locked); err != nil {
+		return false, err
+	}
+
+	if !locked {
+		log.Printf("%s: another instance is already rebuilding schema; leaving it to that one", name)
+	}
+
+	return locked, nil
+}
+
+func (db *Database) releaseSchemaLock(ctx context.Context, conn *sql.Conn, name string) {
+	if _, err := conn.ExecContext(ctx, "select pg_advisory_unlock($1)", int64(schemaReconcileLockId)); err != nil {
+		log.Printf("%s: could not release the schema lock: %v", name, err)
+	}
+}
+
+// ReconcileSchema rebuilds whatever the calls table is missing.
+//
+// Runs on every boot rather than once, because the thing being guarded against
+// is loss *after* the migration that created it: a restore, a manual rebuild,
+// an interrupted concurrent build. The migration ledger cannot help there — it
+// records success and failure alike — so the catalog is the only honest source.
+//
+// Slow and tolerant by design. Each build is CONCURRENTLY, one at a time, and
+// a failure is logged and stepped over: a server that cannot build an index is
+// still a server, and blocking the boot on it would turn a performance problem
+// into an outage.
+func (db *Database) ReconcileSchema() {
+	if db.Config.DbType != DbTypePostgres {
+		return
+	}
+
+	if !db.callsHasPrimaryKey() {
+		if err := db.ensureCallsPrimaryKey("schema reconcile"); err != nil {
+			log.Printf("schema reconcile: could not restore the primary key on rdioScannerCalls: %v", err)
+		}
+	}
+
+	for _, want := range expectedIndexes {
+		if db.indexIsUsable(want.name) {
+			continue
+		}
+
+		log.Printf("schema reconcile: %s is missing, so %s; rebuilding it", want.name, want.because)
+
+		built, err := db.createCallsIndexConcurrently("schema reconcile", want.name,
+			fmt.Sprintf(want.definition, want.name))
+		if err != nil {
+			log.Printf("schema reconcile: could not rebuild %s: %v", want.name, err)
+			continue
+		}
+
+		// Not built means another instance holds the lock and is doing it.
+		// Saying "rebuilt" there would be a lie in the one log an operator
+		// reads to find out whether the repair happened.
+		if built {
+			log.Printf("schema reconcile: %s rebuilt", want.name)
+		}
+	}
+
+	// The planner costs a new index off whatever it believed about the table
+	// before it existed, so without this the rebuild only takes effect at the
+	// next autovacuum.
+	if _, err := db.Sql.Exec(`analyze "rdioScannerCalls"`); err != nil {
+		log.Printf("schema reconcile: could not analyze rdioScannerCalls: %v", err)
+	}
+}
+
+// schemaReconcileLockId is the advisory lock every instance takes before
+// touching an index.
+//
+// Two servers can share one database — nothing prevents it, and the listener
+// sampler already allows for it — and the invalid-index handling below is what
+// makes that dangerous: an in-progress CONCURRENTLY build on one instance is
+// indistinguishable from an abandoned one on another, both being indisvalid,
+// so without a lock the second instance drops the index the first is still
+// building. The number is arbitrary but must stay fixed.
+const schemaReconcileLockId = 0x7264696F5F696478
+
+// expectedIndex is one index the server needs and knows how to rebuild.
+type expectedIndex struct {
+	name       string
+	definition string
+	because    string
+}
+
+// The indexes that must exist for this server to perform, with the statement
+// that recreates each.
+//
+// This list is the repair, and it is deliberately checked against the catalog
+// rather than the migration ledger. Every migration that builds an index
+// records itself as done even when the build failed — a boot is never blocked
+// by a broken index — so a database that loses one after the fact has nothing
+// left that would ever notice. A production install was found in exactly that
+// state: two indexes present out of the set below, no primary key, and years
+// of migrations all marked complete.
+var expectedIndexes = []expectedIndex{
+	{
+		name:       callsSystemTalkgroupDateTimeIndex,
+		definition: `create index concurrently if not exists %q on "rdioScannerCalls" ("system", "talkgroup", "dateTime", "id")`,
+		because:    "a search filtered by system or talkgroup reads the table instead of seeking",
+	},
+	{
+		name:       callsDateTimeIdIndex,
+		definition: `create index concurrently if not exists %q on "rdioScannerCalls" ("dateTime", "id")`,
+		because:    "an unfiltered search sorts the whole table to return one page",
+	},
+	{
+		name:       callsDateTimeSystemTalkgroupIndex,
+		definition: `create index concurrently if not exists %q on "rdioScannerCalls" ("dateTime", "system", "talkgroup")`,
+		because:    "the statistics dashboard reads call rows instead of answering from the index alone",
+	},
 }
 
 // migration20260908180000 puts the primary key back on rdioScannerCalls.
@@ -1681,6 +1825,16 @@ func (db *Database) ensureCallsPrimaryKey(name string) error {
 		}
 	}()
 
+	// Same lock as the index builder, for the same reason.
+	locked, err := db.takeSchemaLock(ctx, conn, name)
+	if err != nil {
+		return err
+	}
+	if !locked {
+		return nil
+	}
+	defer db.releaseSchemaLock(ctx, conn, name)
+
 	// A leftover from an interrupted run would otherwise be skipped forever by
 	// IF NOT EXISTS while being unusable, exactly as for the search indexes.
 	var invalid bool
@@ -1728,17 +1882,17 @@ func (db *Database) ensureCallsPrimaryKey(name string) error {
 // invalid, and the IF NOT EXISTS below would then see a name that exists and skip
 // forever, leaving an index nothing can use and nothing will rebuild. Dropping it
 // first is what makes a retry mean anything.
-func (db *Database) createCallsIndexConcurrently(name string, indexName string, definition string) error {
+func (db *Database) createCallsIndexConcurrently(name string, indexName string, definition string) (bool, error) {
 	ctx := context.Background()
 
 	conn, err := db.Sql.Conn(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer conn.Close()
 
 	if _, err := conn.ExecContext(ctx, "set statement_timeout = 0"); err != nil {
-		return err
+		return false, err
 	}
 
 	// Closing a *sql.Conn hands the session back to the pool, settings and all,
@@ -1751,21 +1905,37 @@ func (db *Database) createCallsIndexConcurrently(name string, indexName string, 
 		}
 	}()
 
+	// One builder at a time across every instance sharing this database. See
+	// schemaReconcileLockId: the invalid-index drop below cannot tell another
+	// instance's in-progress build from an abandoned one, so without this two
+	// servers starting together can destroy each other's work.
+	locked, err := db.takeSchemaLock(ctx, conn, name)
+	if err != nil {
+		return false, err
+	}
+	if !locked {
+		return false, nil
+	}
+	defer db.releaseSchemaLock(ctx, conn, name)
+
 	var invalid bool
 	const invalidQuery = `select coalesce(bool_or(not i.indisvalid), false) from pg_index i
 		join pg_class c on c.oid = i.indexrelid where c.relname = $1`
 	if err := conn.QueryRowContext(ctx, invalidQuery, indexName).Scan(&invalid); err != nil {
-		return err
+		return false, err
 	}
 	if invalid {
 		log.Printf("%s: dropping a leftover invalid %s from an interrupted build", name, indexName)
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf(`drop index concurrently if exists %q`, indexName)); err != nil {
-			return err
+			return false, err
 		}
 	}
 
-	_, err = conn.ExecContext(ctx, definition)
-	return err
+	if _, err = conn.ExecContext(ctx, definition); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 // migration20260422180000 adds a GIN trigram index on the transcript column

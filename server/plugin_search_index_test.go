@@ -103,7 +103,7 @@ func TestSearchIndexMakesTranscriptSearchIndexedOnPostgres(t *testing.T) {
 	}
 
 	controller := &Controller{Database: db}
-	controller.ensureSearchIndex(table, "transcript")
+	controller.ensureSearchIndex(table, "transcript", "callId")
 
 	// The build runs off the caller's goroutine so startup is not held up.
 	//
@@ -181,5 +181,92 @@ func TestSearchIndexMakesTranscriptSearchIndexedOnPostgres(t *testing.T) {
 		t.Errorf("no index can serve a leading-wildcard ILIKE on this column:\n%s", plan.String())
 	} else {
 		t.Logf("plan:\n%s", plan.String())
+	}
+}
+
+// The with/without-transcript filter asks a different question from the text
+// search: not what the text says, but which calls have any. The trigram index
+// cannot answer that, and without a partial index every call the search walks
+// reads the plugin table's heap to check the text is non-empty — measured on
+// 644k calls as 80,764 buffers to return one page.
+func TestEnsureSearchIndexBuildsThePresenceIndex(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if db.Config.DbType != DbTypePostgres {
+		t.Skipf("partial indexes are Postgres-specific here; suite is running on %s", db.Config.DbType)
+	}
+
+	table := "plugin_presence_probe_calls"
+
+	if _, err := db.Sql.Exec(fmt.Sprintf(`drop table if exists %q`, table)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Sql.Exec(fmt.Sprintf(
+		`create table %q ("callId" int primary key, "transcript" text)`, table)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Sql.Exec(fmt.Sprintf(`drop table if exists %q`, table)) })
+
+	for i := 1; i <= 200; i++ {
+		text := fmt.Sprintf("transcript for call %d", i)
+		if i%50 == 0 {
+			text = "" // some calls carry an empty transcript, which counts as none
+		}
+		if _, err := db.Sql.Exec(fmt.Sprintf(
+			`insert into %q ("callId", "transcript") values ($1, $2)`, table), i, text); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	controller := &Controller{Database: db}
+	controller.ensureSearchIndex(table, "transcript", "callId")
+
+	// Built off the caller's goroutine, and CONCURRENTLY publishes its catalog
+	// row before it is usable — so wait for indisvalid, not for existence.
+	want := table + "_transcript_present"
+	deadline := time.Now().Add(60 * time.Second)
+	built := false
+	for time.Now().Before(deadline) {
+		var count int
+		if err := db.Sql.QueryRow(`
+			select count(*) from pg_index i
+			join pg_class c on c.oid = i.indexrelid
+			where c.relname = $1 and i.indisvalid and i.indisready`, want,
+		).Scan(&count); err == nil && count > 0 {
+			built = true
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	if !built {
+		t.Fatalf("%s was not created; the with/without filter would read the heap per call", want)
+	}
+
+	// Partial, and on the key column: it holds one narrow entry per row that
+	// has text and nothing for the rest, which is what lets the probe be
+	// index-only.
+	var def string
+	if err := db.Sql.QueryRow(
+		`select indexdef from pg_indexes where indexname = $1`, want).Scan(&def); err != nil {
+		t.Fatalf("cannot read the index definition: %v", err)
+	}
+
+	for _, fragment := range []string{"callId", "WHERE", "transcript"} {
+		if !strings.Contains(def, fragment) {
+			t.Fatalf("index definition %q does not mention %q", def, fragment)
+		}
+	}
+
+	// The empty transcripts must be excluded, or "has a transcript" would be
+	// true for a call whose transcription produced nothing.
+	var indexed int
+	if err := db.Sql.QueryRow(fmt.Sprintf(
+		`select count(*) from %q where "transcript" is not null and "transcript" <> ''`, table)).Scan(&indexed); err != nil {
+		t.Fatal(err)
+	}
+	if indexed != 196 {
+		t.Fatalf("%d rows qualify as having a transcript, want 196", indexed)
 	}
 }

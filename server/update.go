@@ -107,13 +107,31 @@ func assetForPlatform(r githubRelease) *githubAsset {
 			continue
 		}
 		switch {
+		// Archives: the updater swaps the file in directly and cannot unpack.
 		case strings.HasSuffix(name, ".zip"),
 			strings.HasSuffix(name, ".apk"),
 			strings.HasSuffix(name, ".gz"),
 			strings.HasSuffix(name, ".tar"),
 			strings.HasSuffix(name, ".tgz"),
 			strings.HasSuffix(name, ".bz2"),
-			strings.HasSuffix(name, ".xz"):
+			strings.HasSuffix(name, ".xz"),
+
+			// Things published *beside* a binary rather than instead of one.
+			// The match above is a substring, so a checksum or signature named
+			// after the same platform matches just as well as the binary does —
+			// and being earlier in the release would win. Staging one would
+			// pass the size check, replace the server with a text file, and
+			// only fail at the exec.
+			strings.HasSuffix(name, ".sha256"),
+			strings.HasSuffix(name, ".sha512"),
+			strings.HasSuffix(name, ".md5"),
+			strings.HasSuffix(name, ".sig"),
+			strings.HasSuffix(name, ".asc"),
+			strings.HasSuffix(name, ".pem"),
+			strings.HasSuffix(name, ".txt"),
+			strings.HasSuffix(name, ".json"),
+			strings.HasSuffix(name, ".deb"),
+			strings.HasSuffix(name, ".rpm"):
 			continue
 		}
 		return &r.Assets[i]
@@ -639,8 +657,13 @@ func (admin *Admin) UpdateApplyHandler(w http.ResponseWriter, r *http.Request) {
 	// so the binary swap gets the same clean shutdown a plain restart does —
 	// re-executing on the spot skipped plugin shutdown handlers and dropped the
 	// database mid-connection.
+	//
+	// exe is passed explicitly because it was resolved *before* the rename
+	// above. Letting Restart look it up again would hand back <exe>.old, since
+	// /proc/self/exe follows the inode this process was started from — and the
+	// update would apply to disk and then boot the version it replaced.
 	go func() {
 		time.Sleep(750 * time.Millisecond)
-		admin.Controller.Restart()
+		admin.Controller.Restart(exe)
 	}()
 }

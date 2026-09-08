@@ -18,6 +18,7 @@
 package main
 
 import (
+	"log"
 	"os"
 	"syscall"
 )
@@ -26,7 +27,15 @@ import (
 // binary via execve(2). The PID is preserved, so a systemd / Docker supervisor
 // sees the same process and is happy, and it works even with no supervisor.
 func restartSelf(exe string) {
-	_ = syscall.Exec(exe, os.Args, os.Environ())
-	// If exec failed for some reason, exit so a supervisor can relaunch.
-	os.Exit(0)
+	err := syscall.Exec(exe, os.Args, os.Environ())
+
+	// Only reachable when exec failed — on success this process image is gone.
+	//
+	// Exiting 1 rather than 0 is the difference between a supervisor bringing
+	// the server back and a service that quietly stays dead: systemd's
+	// Restart=on-failure treats a zero exit as a job well done, so the old
+	// code turned a failed restart into an outage with nothing in the journal
+	// to explain it.
+	log.Printf("restart: cannot execute %s (%v); exiting so a supervisor can relaunch", exe, err)
+	os.Exit(1)
 }

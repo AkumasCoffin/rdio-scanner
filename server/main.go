@@ -73,6 +73,14 @@ func main() {
 	fmt.Printf("\nRdio Scanner v%s\n", Version)
 	fmt.Printf("----------------------------------\n")
 
+	// Which file this version came out of, not just which version it claims
+	// to be. An update that applied to disk and then re-executed the binary it
+	// replaced prints an unchanged banner and looks fine; the path is what
+	// gives that away, and it costs one line in every journal to have it.
+	if exe, err := os.Executable(); err == nil {
+		log.Printf("running from %s", exe)
+	}
+
 	// Runs against the already-migrated target schema, then exits — the
 	// server itself never starts, so nothing is ingesting while the copy runs.
 	if config.importSqlite != "" {

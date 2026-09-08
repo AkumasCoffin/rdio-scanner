@@ -18,6 +18,7 @@
 package main
 
 import (
+	"log"
 	"os"
 	"os/exec"
 )
@@ -31,6 +32,13 @@ func restartSelf(exe string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-	_ = cmd.Start()
+
+	if err := cmd.Start(); err != nil {
+		// Same reasoning as the unix build: a supervisor has to be able to
+		// tell "restarted" from "gave up".
+		log.Printf("restart: cannot start %s (%v); exiting so a supervisor can relaunch", exe, err)
+		os.Exit(1)
+	}
+
 	os.Exit(0)
 }
