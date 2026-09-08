@@ -135,6 +135,14 @@ const MAX_RENDERED_OPTIONS = 300;
  */
 const COLLAPSED_OPTIONS = 8;
 
+/**
+ * How long the panel waits after a filter click before asking the server.
+ *
+ * Long enough to gather a burst of clicks into one request, short enough that
+ * a single deliberate click still feels immediate.
+ */
+const SEARCH_DEBOUNCE_MS = 250;
+
 /** The spans offered above the two date fields, in days back from today. */
 const DATE_PRESETS: { key: string; label: string; days: number }[] = [
     { key: 'today', label: 'Today', days: 0 },
@@ -203,6 +211,8 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     });
 
     private qDebounce: ReturnType<typeof setTimeout> | undefined;
+
+    private searchDebounce: ReturnType<typeof setTimeout> | undefined;
 
     livefeedOnline = false;
     livefeedPlayback = false;
@@ -387,6 +397,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         this.eventSubscription.unsubscribe();
         this.viewportResize?.disconnect();
         if (this.qDebounce) clearTimeout(this.qDebounce);
+        if (this.searchDebounce) clearTimeout(this.searchDebounce);
         if (this.tgDebounce) clearTimeout(this.tgDebounce);
         if (this.highlightClearTimer) clearTimeout(this.highlightClearTimer);
         if (this.transcribePoller !== undefined) window.clearInterval(this.transcribePoller);
@@ -519,17 +530,41 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         this.optionsTalkgroupByAgency = byAgency;
         this.talkgroupsTruncated = truncated;
 
-        const inScope = (predicate: (group: string, tag: string) => boolean) => config.systems
-            .filter((system) => !systems.length || systems.includes(system.id))
-            .flatMap((system) => system.talkgroups)
-            .some((talkgroup) => predicate(talkgroup.group, talkgroup.tag));
+        // Which groups and tags still have something behind them, in one pass.
+        //
+        // This used to ask per group and again per tag, and each question
+        // flattened every talkgroup in scope into a fresh array before scanning
+        // it. Forty-five groups and twenty-five tags meant seventy full passes
+        // over six thousand talkgroups, with seventy throwaway arrays, every
+        // time any filter changed — and this runs on the click, before the
+        // browser paints. One pass answers both.
+        const groupFilter = new Set(groups);
+        const tagFilter = new Set(tags);
+        const groupsInScope = new Set<string>();
+        const tagsInScope = new Set<string>();
+
+        for (const system of config.systems) {
+            if (systems.length && !systems.includes(system.id)) {
+                continue;
+            }
+
+            for (const talkgroup of system.talkgroups) {
+                if (!tagFilter.size || tagFilter.has(talkgroup.tag)) {
+                    groupsInScope.add(talkgroup.group);
+                }
+
+                if (!groupFilter.size || groupFilter.has(talkgroup.group)) {
+                    tagsInScope.add(talkgroup.tag);
+                }
+            }
+        }
 
         this.optionsGroup = Object.keys(config.groups)
-            .filter((group) => inScope((g, tag) => g === group && (!tags.length || tags.includes(tag))))
+            .filter((group) => groupsInScope.has(group))
             .sort((a, b) => a.localeCompare(b));
 
         this.optionsTag = Object.keys(config.tags)
-            .filter((tag) => inScope((group, t) => t === tag && (!groups.length || groups.includes(group))))
+            .filter((tag) => tagsInScope.has(tag))
             .sort((a, b) => a.localeCompare(b));
     }
 
@@ -596,7 +631,12 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
 
         this.form.patchValue({ talkgroups });
 
-        this.applyFilters();
+        // Picking a talkgroup cannot change which options exist — the lists are
+        // built from the systems, groups and tags filters and the search box,
+        // none of which this touched. Only the counts move, so rebuilding every
+        // agency and re-deriving the group and tag lists is work with no
+        // outcome, done on the click before the browser paints.
+        this.applyFilters({ optionsUnchanged: true });
     }
 
     /**
@@ -673,7 +713,9 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
 
         this.form.patchValue({ talkgroups: [...talkgroups] });
 
-        this.applyFilters();
+        // Same as one talkgroup: a selection, and nothing the option lists are
+        // built from.
+        this.applyFilters({ optionsUnchanged: true });
     }
 
     /** `yyyy-MM-dd`, the only format a native date input accepts. */
@@ -999,7 +1041,7 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
      * here: stop playback, drop the deep-link highlight, redraw the chips,
      * remember the filters, then start a fresh (non-cursor) search.
      */
-    applyFilters(): void {
+    applyFilters(options?: { optionsUnchanged?: boolean }): void {
         if (this.livefeedPlayback) {
             this.rdioScannerService.stopPlaybackMode();
         }
@@ -1008,11 +1050,60 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
         this.pendingFocusCallId = undefined;
         this.deepLinkChunks = 0;
 
-        this.refreshOptions();
+        if (options?.optionsUnchanged) {
+            this.refreshSelectionCounts();
+        } else {
+            this.refreshOptions();
+        }
+
         this.rebuildChips();
         this.persistFilters();
 
-        this.searchCalls();
+        this.scheduleSearch();
+    }
+
+    /**
+     * Coalesces the searches a burst of filter clicks would otherwise fire.
+     *
+     * Picking five talkgroups is one intention, and it used to be five
+     * searches: each one a round trip this server can take seconds over, four
+     * of them already irrelevant by the time they land. The bar starts moving
+     * on the first click so the panel still answers immediately, and the
+     * request goes once the clicking stops.
+     */
+    private scheduleSearch(): void {
+        this.resultsPending = true;
+
+        if (this.searchDebounce) {
+            clearTimeout(this.searchDebounce);
+        }
+
+        this.searchDebounce = setTimeout(() => {
+            this.searchDebounce = undefined;
+            this.searchCalls();
+        }, SEARCH_DEBOUNCE_MS);
+    }
+
+    /**
+     * The part of refreshOptions that a selection change actually affects: the
+     * lookup set, and each agency's "3/20" count. Set lookups over the options
+     * already built, with nothing allocated and nothing rebuilt, so Angular
+     * keeps the same objects and leaves the rendered rows alone.
+     */
+    private refreshSelectionCounts(): void {
+        this.selectedTalkgroups = new Set(this.form.value.talkgroups as string[]);
+
+        for (const agency of this.optionsTalkgroupByAgency) {
+            let selected = 0;
+
+            for (const talkgroup of agency.talkgroups) {
+                if (this.selectedTalkgroups.has(talkgroup.key)) {
+                    selected++;
+                }
+            }
+
+            agency.selected = selected;
+        }
     }
 
     /** Kept for the template's `(change)` bindings and the parent component. */
