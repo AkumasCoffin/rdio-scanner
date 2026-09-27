@@ -277,6 +277,12 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     /** No more chunks behind the cursor — hides "Load more" and stops auto-loading. */
     exhausted = false;
 
+    /**
+     * Set while results are partial: a bounded scan stopped here, and more
+     * unscanned history exists past it. Undefined when pages are complete.
+     */
+    scanBoundary: Date | undefined;
+
     /** Auto-load is on by default; the button below the list is the manual fallback. */
     autoLoad = AUTO_LOAD_WITHIN > 0;
 
@@ -2407,6 +2413,13 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
 
         if ('playbackList' in event) {
             this.playbackList = event.playbackList;
+
+            // Where a bounded scan stopped, when it stopped short. This is
+            // what lets the footer say "searched back to Tuesday" instead of
+            // pretending the archive ended there.
+            this.scanBoundary = event.playbackList?.more && event.playbackList.nextAfter
+                ? new Date(event.playbackList.nextAfter.dateTime)
+                : undefined;
 
             // The service owns the accumulation, so the component only ever
             // mirrors it. A new array identity is what tells the virtual

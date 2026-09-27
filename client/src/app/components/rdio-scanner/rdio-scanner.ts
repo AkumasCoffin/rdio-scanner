@@ -219,6 +219,14 @@ export interface RdioScannerPlaybackList {
     dateStop: Date;
     options: RdioScannerSearchOptions;
     results: RdioScannerCall[];
+    /**
+     * Set when a bounded scan stopped before the data did: the page is honest
+     * but partial, and nextAfter is where the scan ended — the position the
+     * next request must continue from. Deriving the next cursor from the last
+     * row shown would re-walk the same stretch forever.
+     */
+    more?: boolean;
+    nextAfter?: RdioScannerSearchCursor;
 }
 
 /**

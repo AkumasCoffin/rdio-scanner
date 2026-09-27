@@ -380,6 +380,13 @@ export class RdioScannerService implements OnDestroy {
     // signal there is now that the server no longer counts the match set.
     private searchExhausted = false;
 
+    /**
+     * The server-supplied continuation point of a bounded scan, when the last
+     * chunk carried one. Preferred over deriving a cursor from the last row —
+     * see searchCursor(). Cleared whenever a chunk arrives without one.
+     */
+    private searchNextCursor: RdioScannerSearchCursor | undefined;
+
     private skipDelay: Subscription | undefined;
 
     private websocket: WebSocket | undefined;
@@ -2332,6 +2339,7 @@ export class RdioScannerService implements OnDestroy {
         } else {
             this.searchModes = ['replace'];
             this.searchExhausted = false;
+            this.searchNextCursor = undefined;
         }
 
         const { after: _cursor, ...base } = options;
@@ -2372,6 +2380,14 @@ export class RdioScannerService implements OnDestroy {
      * caller knows to ask for a first page instead.
      */
     searchCursor(): RdioScannerSearchCursor | undefined {
+        // The server's boundary wins. A bounded scan can stop mid-walk with a
+        // short page; the place to continue from is then where the *scan*
+        // ended, not the last row it happened to return — resuming from the
+        // row would re-examine the same stretch on every request, forever.
+        if (this.searchNextCursor) {
+            return this.searchNextCursor;
+        }
+
         const results = this.playbackList?.results;
 
         if (!results?.length) {
@@ -3078,6 +3094,13 @@ export class RdioScannerService implements OnDestroy {
                                 // own cursor and must not inherit a stale one.
                                 options: this.searchOptions || this.playbackList.options,
                                 results: this.playbackList.results.concat(added),
+                                // From the fresh chunk, never inherited: the
+                                // spread above would otherwise carry the first
+                                // page's "more" forever, and the footer would
+                                // keep claiming a partial scan after the walk
+                                // ended.
+                                more: chunk.more,
+                                nextAfter: chunk.nextAfter,
                             };
 
                             if (added.length) {
@@ -3095,10 +3118,21 @@ export class RdioScannerService implements OnDestroy {
                             // returns the same rows forever. Auto-loading turns
                             // that into an endless request loop, which is worth
                             // one wrongly-early "End of results" to avoid.
-                            const limit = Number(this.searchOptions?.limit ?? 0);
-                            this.searchExhausted = chunk.results.length === 0
-                                || added.length === 0
-                                || (limit > 0 && chunk.results.length < limit);
+                            // Unless the server says otherwise. A bounded
+                            // scan legitimately returns short — even empty —
+                            // pages with more data past its budget, and marks
+                            // them. Its boundary cursor always advances, so
+                            // the stuck-cursor guard does not apply to it.
+                            this.searchNextCursor = chunk.more ? chunk.nextAfter : undefined;
+
+                            if (chunk.more) {
+                                this.searchExhausted = false;
+                            } else {
+                                const limit = Number(this.searchOptions?.limit ?? 0);
+                                this.searchExhausted = chunk.results.length === 0
+                                    || added.length === 0
+                                    || (limit > 0 && chunk.results.length < limit);
+                            }
 
                         } else {
                             const previous = new Set((this.playbackList?.results || []).map((call) => call.id));
@@ -3118,8 +3152,14 @@ export class RdioScannerService implements OnDestroy {
                             // A first page shorter than the limit already ends
                             // the walk, which saves one round-trip that could
                             // only ever come back empty.
-                            const limit = Number(this.searchOptions?.limit ?? chunk.options?.limit ?? 0);
-                            this.searchExhausted = limit > 0 && chunk.results.length < limit;
+                            this.searchNextCursor = chunk.more ? chunk.nextAfter : undefined;
+
+                            if (chunk.more) {
+                                this.searchExhausted = false;
+                            } else {
+                                const limit = Number(this.searchOptions?.limit ?? chunk.options?.limit ?? 0);
+                                this.searchExhausted = limit > 0 && chunk.results.length < limit;
+                            }
                         }
 
                         this.event.emit({ playbackList: this.playbackList, searchExhausted: this.searchExhausted });

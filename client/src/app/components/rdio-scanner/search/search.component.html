@@ -392,19 +392,27 @@
         </ng-container>
     </cdk-virtual-scroll-viewport>
 
-        <div class="results-empty" *ngIf="!(results | async)?.length && !resultsPending">
+        <!-- "Nothing matched" is only an honest claim once the whole range
+             was searched. A bounded scan that stopped early says how far it
+             got instead, and Load more continues from there. -->
+        <div class="results-empty" *ngIf="!(results | async)?.length && !resultsPending && !scanBoundary">
             <mat-icon>search_off</mat-icon>
             <p>No calls match these filters.</p>
+        </div>
+        <div class="results-empty" *ngIf="!(results | async)?.length && !resultsPending && scanBoundary">
+            <mat-icon>manage_search</mat-icon>
+            <p>Nothing yet — searched back to {{ scanBoundary | date: 'MMM d, HH:mm' }}. Load more keeps looking.</p>
         </div>
     </div>
 
     <!-- Load-more is the visible fallback; scrolling near the end fetches on its own. -->
     <section class="foot">
         <span class="foot-loaded" *ngIf="(results | async)?.length as loaded">{{ loaded }} loaded</span>
+        <span class="foot-loaded" *ngIf="scanBoundary">searched back to {{ scanBoundary | date: 'MMM d, HH:mm' }}</span>
         <button mat-stroked-button type="button" class="more-btn" *ngIf="!exhausted"
             [disabled]="resultsPending" (click)="loadMore()">
             <mat-icon *ngIf="resultsPending" class="spin">cached</mat-icon>
-            <span>{{ resultsPending ? 'Loading…' : 'Load more' }}</span>
+            <span>{{ resultsPending ? 'Loading…' : (scanBoundary ? 'Keep searching' : 'Load more') }}</span>
         </button>
         <span class="foot-end" *ngIf="exhausted && (results | async)?.length">End of results</span>
     </section>

@@ -803,6 +803,14 @@ type callsSearchPlan struct {
 	whereArgs  []any
 	pageWhere  string
 	pageArgs   []any
+
+	// The two halves of pageWhere, kept apart so the page query can be built
+	// in its bounded form: innerWhere is everything cheap — content filters,
+	// date window, cursor — and pluginWhere is the predicates that reach into
+	// a plugin's tables, each of which costs a probe per call walked. Empty
+	// pluginWhere means the flat form is the only form.
+	innerWhere  string
+	pluginWhere string
 	order      string
 	limit      uint
 	offset     uint
@@ -819,6 +827,21 @@ type callsSearchPlan struct {
 	// filters — and the probes then run against probeWhere as always.
 	probePairs []CallsSearchTalkgroup
 }
+
+// callsSearchScanBudget caps how many calls one bounded page request may
+// examine when the search carries a plugin-table predicate.
+//
+// Those predicates cost a probe per call walked, and when their matches are
+// rare the walk is otherwise unbounded — "without transcript" on an install
+// where 99% of calls are transcribed examined ten thousand calls to fill one
+// page, and timed out on slow storage. Twenty thousand keeps the worst case
+// near what a dense page already costs today, measured at ~5,000 buffers
+// against ~60,600 unbounded, while a page that fills early never reaches the
+// cap at all — the limits pipeline, so the budget is only paid when the data
+// makes it necessary.
+// A var rather than a const so a test can shrink the window to something a
+// seeded table can overflow; production never writes it.
+var callsSearchScanBudget = 20000
 
 // probePairLimit bounds the fast probe's union: past this many pairs the
 // statement itself becomes the cost, and the plain probe walks less.
@@ -1079,6 +1102,16 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 	// filter — so the results themselves are unchanged.
 	probeWhere := where
 
+	// Predicates that reach into a plugin's tables, kept apart from `where`.
+	//
+	// These are the expensive ones: each is evaluated per call the page scan
+	// walks, and when their matches are rare the walk is unbounded — which is
+	// how "without transcript" on a fully-transcribed install examined ten
+	// thousand calls to fill one page and timed out on slow storage. Keeping
+	// them separate lets Search cap that walk (see the bounded page query),
+	// which it cannot do once they are fused into one where string.
+	pluginPredicates := []string{}
+
 	if q, ok := searchOptions.Q.(string); ok && q != "" {
 		// probeExact is deliberately left alone. It gates the fast per-pair
 		// form of the bound probes, and it goes false at any filter the probes
@@ -1107,11 +1140,14 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 		}
 
 		if len(predicates) > 0 {
-			where += fmt.Sprintf(" and (%s)", strings.Join(predicates, " or "))
+			pluginPredicates = append(pluginPredicates, fmt.Sprintf("(%s)", strings.Join(predicates, " or ")))
 		} else {
 			// Nothing searchable is registered. Matching nothing is the honest
 			// answer — quietly dropping the filter would return every call and
-			// look like the search had worked.
+			// look like the search had worked. Straight into `where` rather
+			// than the plugin set: a constant needs no bounding, and marking
+			// it as expensive would make Search walk the archive in budgeted
+			// windows to discover nothing over and over.
 			where += " and 1 = 0"
 		}
 	}
@@ -1132,11 +1168,19 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 
 	// Neither touches probeExact, for the same reason as the text filter above.
 	if field := strings.TrimSpace(hasField); field != "" {
-		where += fmt.Sprintf(" and %s", fieldPresencePredicate(searchExtensions, field, true))
+		if predicate, real := fieldPresencePredicate(searchExtensions, field, true); real {
+			pluginPredicates = append(pluginPredicates, predicate)
+		} else {
+			where += fmt.Sprintf(" and %s", predicate)
+		}
 	}
 
 	if field := strings.TrimSpace(lacksField); field != "" {
-		where += fmt.Sprintf(" and %s", fieldPresencePredicate(searchExtensions, field, false))
+		if predicate, real := fieldPresencePredicate(searchExtensions, field, false); real {
+			pluginPredicates = append(pluginPredicates, predicate)
+		} else {
+			where += fmt.Sprintf(" and %s", predicate)
+		}
 	}
 
 	// Everything above narrows *which* calls exist for this search. Everything
@@ -1238,7 +1282,17 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 		plan.whereArgs = append(plan.whereArgs, dateStop.UTC())
 	}
 
-	plan.where = where
+	// The plugin predicates carry no bound arguments — everything in them is
+	// interpolated — so they can sit anywhere in the where text without
+	// disturbing the argument order.
+	plan.pluginWhere = strings.Join(pluginPredicates, " and ")
+
+	pluginClause := ""
+	if plan.pluginWhere != "" {
+		pluginClause = " and " + plan.pluginWhere
+	}
+
+	plan.where = where + pluginClause
 	// Copied rather than aliased: the cursor appends to pageArgs, and a shared
 	// backing array would let that write land in the count query's args.
 	plan.pageArgs = append([]any{}, plan.whereArgs...)
@@ -1284,7 +1338,8 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 		plan.offset = 0
 	}
 
-	plan.pageWhere = where
+	plan.innerWhere = where
+	plan.pageWhere = where + pluginClause
 
 	return plan
 }
@@ -1347,6 +1402,19 @@ func andScopeClause(bySystem map[uint][]uint, systemIds []uint) string {
 }
 
 func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*CallsSearchResults, error) {
+	// Plugin-contributed searchable columns, resolved once and reused for both
+	// the free-text filter and the result lookup further down. Resolution and
+	// the search itself are separate so a test can hand the search a made-up
+	// extension without standing up a plugin runtime.
+	var searchExtensions []pluginResolvedSearch
+	if client != nil && client.Controller != nil {
+		searchExtensions = client.Controller.PluginSearchExtensions()
+	}
+
+	return calls.searchWithExtensions(searchOptions, client, searchExtensions)
+}
+
+func (calls *Calls) searchWithExtensions(searchOptions *CallsSearchOptions, client *Client, searchExtensions []pluginResolvedSearch) (*CallsSearchResults, error) {
 	var (
 		dateTime any
 		err      error
@@ -1366,13 +1434,6 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 	searchResults := &CallsSearchResults{
 		Options: searchOptions,
 		Results: []CallsSearchResult{},
-	}
-
-	// Plugin-contributed searchable columns, resolved once and reused for both
-	// the free-text filter and the result lookup further down.
-	var searchExtensions []pluginResolvedSearch
-	if client != nil && client.Controller != nil {
-		searchExtensions = client.Controller.PluginSearchExtensions()
 	}
 
 	plan := buildCallsSearchPlan(searchOptions, client, db, searchExtensions)
@@ -1484,7 +1545,31 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 		}
 	}
 
-	query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup`, `patches` from `rdioScannerCalls` where %v order by %v limit %v offset %v", plan.pageWhere, plan.order, plan.limit, plan.offset)
+	// Two forms of the same page. The flat one is today's query. The bounded
+	// one applies when the filters reach into a plugin's tables and the caller
+	// pages by cursor: the inner select walks at most callsSearchScanBudget
+	// calls through the cheap filters, and the plugin predicates run over that
+	// window. The limits pipeline — a page that fills early stops the inner
+	// scan just as the flat form would — so the budget only binds when matches
+	// are rare, which is exactly when the flat form used to walk without
+	// limit. Offset callers keep the flat form: their contract includes a
+	// count over everything, which a window cannot honestly provide.
+	//
+	// The derived table is aliased back to `rdioScannerCalls` so the plugin
+	// predicates, which name that table, apply unchanged.
+	bounded := plan.pluginWhere != "" && !plan.withCount
+
+	if bounded {
+		query = fmt.Sprintf(
+			"select `id`, `dateTime`, `system`, `talkgroup`, `patches` from ("+
+				"select `id`, `dateTime`, `system`, `talkgroup`, `patches` from `rdioScannerCalls` where %v order by %v limit %v"+
+				") as `rdioScannerCalls` where %v order by %v limit %v offset %v",
+			plan.innerWhere, plan.order, callsSearchScanBudget,
+			plan.pluginWhere, plan.order, plan.limit, plan.offset)
+	} else {
+		query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup`, `patches` from `rdioScannerCalls` where %v order by %v limit %v offset %v", plan.pageWhere, plan.order, plan.limit, plan.offset)
+	}
+
 	if rows, err = db.Query(query, plan.pageArgs...); err != nil {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
@@ -1527,6 +1612,45 @@ func (calls *Calls) Search(searchOptions *CallsSearchOptions, client *Client) (*
 	// calls, and per-row lookups would turn one search into 200 round trips.
 	if len(searchExtensions) > 0 && len(searchResults.Results) > 0 {
 		calls.applyPluginSearchFields(db, searchExtensions, searchResults.Results)
+	}
+
+	// A short bounded page is ambiguous on its own: either the data ran out,
+	// or the scan budget did. One index-only look at the budget's edge settles
+	// it — a call sitting there means the window was full and unscanned
+	// history remains past it.
+	//
+	// The boundary is the last *candidate* the window admitted, not the last
+	// match returned. Every candidate up to it has been evaluated, so a
+	// continuation strictly past it skips nothing and repeats nothing. The
+	// client's own habit of resuming from the last row it was shown would
+	// re-walk the same stretch forever, which is why the position has to come
+	// from here.
+	if bounded && uint(len(searchResults.Results)) < plan.limit {
+		var (
+			boundaryTime any
+			boundaryId   uint
+		)
+
+		query = fmt.Sprintf(
+			"select `dateTime`, `id` from `rdioScannerCalls` where %v order by %v limit 1 offset %v",
+			plan.innerWhere, plan.order, callsSearchScanBudget-1)
+
+		err := db.QueryRow(query, plan.pageArgs...).Scan(&boundaryTime, &boundaryId)
+
+		switch {
+		case err == sql.ErrNoRows:
+			// The window undershot the budget: the scan genuinely reached the
+			// end of the data, and the short page means what it always meant.
+
+		case err != nil:
+			return nil, formatError(fmt.Errorf("%v, %v", err, query))
+
+		default:
+			if t, err := db.ParseDateTime(boundaryTime); err == nil {
+				searchResults.More = true
+				searchResults.NextAfter = &CallsSearchCursor{DateTime: t.UTC(), Id: boundaryId}
+			}
+		}
 	}
 
 	return searchResults, err
@@ -1847,7 +1971,12 @@ func parseMinuteOfDay(raw any) (int, bool) {
 // from any of them counts, so "has" is an OR and "lacks" is the negation of the
 // same OR rather than an AND of nots, which would mean something subtly
 // different once two plugins were installed.
-func fieldPresencePredicate(searchExtensions []pluginResolvedSearch, field string, present bool) string {
+// The second return says whether a real plugin-table predicate came back, as
+// opposed to the constant a filter over nothing collapses to. The caller keeps
+// constants in the cheap where clause: marking "1 = 0" as expensive would make
+// the bounded page scan walk the archive window by window to discover nothing,
+// over and over.
+func fieldPresencePredicate(searchExtensions []pluginResolvedSearch, field string, present bool) (string, bool) {
 	predicates := []string{}
 
 	for _, extension := range searchExtensions {
@@ -1863,18 +1992,40 @@ func fieldPresencePredicate(searchExtensions []pluginResolvedSearch, field strin
 		// and on 644k calls it did not finish in ten minutes, because NOT IN
 		// blocks the anti-join transform and takes early termination with it.
 		//
-		// What the probe costs is decided by the index behind it. With only
-		// the plugin table's primary key it reads the heap for every call it
-		// walks, to check the text is non-empty; the partial index built in
-		// ensureSearchIndex carries exactly that condition, so the probe
-		// becomes an index-only scan and the heap is never touched.
-		predicates = append(predicates, fmt.Sprintf(
-			"exists (select 1 from `%s` where `%s`.`%s` = `rdioScannerCalls`.`id` and `%s`.`%s` is not null and `%s`.`%s` <> '')",
-			extension.table,
-			extension.table, extension.key,
-			extension.table, extension.text,
-			extension.table, extension.text,
-		))
+		// The two directions deliberately ask different questions:
+		//
+		//   has   = a row with non-empty text. The plugin records terminal
+		//           no-text outcomes — silence, hallucinated noise — as empty
+		//           rows, and an empty row must never read as "has one".
+		//           Served index-only by the partial presence index, which
+		//           carries exactly this condition.
+		//
+		//   lacks = no row at all. A call whose transcription ran and stored
+		//           an empty answer was not missed; it was attempted and the
+		//           audio held nothing. Keeping those out of "without" is what
+		//           makes that list a work queue — everything in it is worth
+		//           retranscribing — rather than a graveyard of calls that
+		//           will never gain text however often they are retried.
+		//           Served index-only by the plugin table's primary key.
+		//
+		// A consequence worth stating: the two are no longer complements. An
+		// empty-marked call is in neither, which matches what each list is
+		// for.
+		if present {
+			predicates = append(predicates, fmt.Sprintf(
+				"exists (select 1 from `%s` where `%s`.`%s` = `rdioScannerCalls`.`id` and `%s`.`%s` is not null and `%s`.`%s` <> '')",
+				extension.table,
+				extension.table, extension.key,
+				extension.table, extension.text,
+				extension.table, extension.text,
+			))
+		} else {
+			predicates = append(predicates, fmt.Sprintf(
+				"exists (select 1 from `%s` where `%s`.`%s` = `rdioScannerCalls`.`id`)",
+				extension.table,
+				extension.table, extension.key,
+			))
+		}
 	}
 
 	// Nothing registers that field, so no call can carry it. Saying so beats
@@ -1882,18 +2033,18 @@ func fieldPresencePredicate(searchExtensions []pluginResolvedSearch, field strin
 	// worked.
 	if len(predicates) == 0 {
 		if present {
-			return "1 = 0"
+			return "1 = 0", false
 		}
-		return "1 = 1"
+		return "1 = 1", false
 	}
 
 	joined := strings.Join(predicates, " or ")
 
 	if present {
-		return fmt.Sprintf("(%s)", joined)
+		return fmt.Sprintf("(%s)", joined), true
 	}
 
-	return fmt.Sprintf("not (%s)", joined)
+	return fmt.Sprintf("not (%s)", joined), true
 }
 
 type CallsSearchOptions struct {
@@ -2164,4 +2315,16 @@ type CallsSearchResults struct {
 	DateStop  time.Time           `json:"dateStop"`
 	Options   *CallsSearchOptions `json:"options"`
 	Results   []CallsSearchResult `json:"results"`
+
+	// More and NextAfter report a bounded scan that stopped before the data
+	// did: the page is honest but partial, and NextAfter is where the scan
+	// ended — the position to continue from.
+	//
+	// Positive polarity on purpose. Several places hand-build an empty result
+	// (the plugin veto path among them), and a default-false "exhausted" field
+	// there would read as "keep going" forever. Absent means exactly what the
+	// wire meant before these fields existed, so a client that has never heard
+	// of them sees a short page and stops — less thorough, never wrong.
+	More      bool               `json:"more,omitempty"`
+	NextAfter *CallsSearchCursor `json:"nextAfter,omitempty"`
 }
