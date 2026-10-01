@@ -811,9 +811,9 @@ type callsSearchPlan struct {
 	// pluginWhere means the flat form is the only form.
 	innerWhere  string
 	pluginWhere string
-	order      string
-	limit      uint
-	offset     uint
+	order       string
+	limit       uint
+	offset      uint
 	// withCount is false once the caller has opted into cursor paging. count(*)
 	// over the calls table is the most expensive statement in this file — on a
 	// large install it is a full scan — and it exists only to number pages that

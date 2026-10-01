@@ -1095,6 +1095,11 @@ export class RdioScannerSearchComponent implements AfterViewInit, OnDestroy, OnI
     private scheduleSearch(): void {
         this.resultsPending = true;
 
+        // The previous search's boundary is not this one's. Left set, the
+        // footer would claim "searched back to <then>" for the filters the
+        // user just replaced, until the first chunk lands and corrects it.
+        this.scanBoundary = undefined;
+
         if (this.searchDebounce) {
             clearTimeout(this.searchDebounce);
         }
