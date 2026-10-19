@@ -82,23 +82,23 @@ func transcriptPluginTableSql(db *Database) []string {
 // The option rows the plugin re-reads under its own names, so a server that had
 // transcription configured keeps working once the plugin loads.
 var transcriptOptionMapping = map[string]string{
-	"option.transcriptionEnabled":         "enabled",
-	"option.transcriptionProvider":        "provider",
-	"option.transcriptionBaseUrl":         "groqBaseUrl",
-	"option.transcriptionApiKey":          "groqApiKey",
-	"option.transcriptionModel":           "groqModel",
-	"option.transcriptionOpenAIBaseUrl":   "openaiBaseUrl",
-	"option.transcriptionOpenAIApiKey":    "openaiApiKey",
-	"option.transcriptionOpenAIModel":     "openaiModel",
-	"option.transcriptionWhisperBaseUrl":  "whisperBaseUrl",
-	"option.transcriptionWhisperApiKey":   "whisperApiKey",
-	"option.transcriptionWhisperModel":    "whisperModel",
-	"option.transcriptionLanguage":        "language",
-	"option.transcriptionPrompt":          "prompt",
-	"option.transcriptionMaxPerMinute":    "maxPerMinute",
-	"option.transcriptionMinAudioBytes":   "minAudioBytes",
-	"option.waitForTranscript":            "waitForTranscript",
-	"option.showRetranscribeButton":       "showRetranscribeButton",
+	"option.transcriptionEnabled":        "enabled",
+	"option.transcriptionProvider":       "provider",
+	"option.transcriptionBaseUrl":        "groqBaseUrl",
+	"option.transcriptionApiKey":         "groqApiKey",
+	"option.transcriptionModel":          "groqModel",
+	"option.transcriptionOpenAIBaseUrl":  "openaiBaseUrl",
+	"option.transcriptionOpenAIApiKey":   "openaiApiKey",
+	"option.transcriptionOpenAIModel":    "openaiModel",
+	"option.transcriptionWhisperBaseUrl": "whisperBaseUrl",
+	"option.transcriptionWhisperApiKey":  "whisperApiKey",
+	"option.transcriptionWhisperModel":   "whisperModel",
+	"option.transcriptionLanguage":       "language",
+	"option.transcriptionPrompt":         "prompt",
+	"option.transcriptionMaxPerMinute":   "maxPerMinute",
+	"option.transcriptionMinAudioBytes":  "minAudioBytes",
+	"option.waitForTranscript":           "waitForTranscript",
+	"option.showRetranscribeButton":      "showRetranscribeButton",
 }
 
 func (db *Database) migrationDone(name string) (bool, error) {
@@ -263,7 +263,31 @@ func (db *Database) migrationTranscriptsToPlugin(verbose bool) error {
 			calls = transcriptDropAutoThreshold + 1
 		}
 
+		// A deferred step only makes sense if there is something to reclaim.
+		// The count above is of calls, not of transcripts, so an install whose
+		// legacy column never held anything — one upgrading from a version
+		// that predates transcripts, or a fresh install that got the column
+		// from a migration — was told to schedule downtime on every single
+		// start to recover space holding nothing. Checking once and recording
+		// the step as done leaves the two unused columns in place, which costs
+		// nothing: the server neither reads nor writes them.
 		if !db.Config.DropLegacyColumns && calls > transcriptDropAutoThreshold {
+			var remaining int
+			if err := db.Sql.QueryRow(db.formatQuery(
+				"select count(*) from `rdioScannerCalls` where `transcript` is not null and `transcript` <> ''",
+			)).Scan(&remaining); err != nil {
+				// Unreadable: assume there is something there and ask, which is
+				// the cautious answer and the previous behaviour.
+				remaining = 1
+			}
+
+			if remaining == 0 {
+				if verbose {
+					log.Printf("transcript migration: the legacy columns are empty, so there is nothing to reclaim; marking the drop as done")
+				}
+				return db.recordMigration(transcriptMigrationDrop)
+			}
+
 			log.Printf(
 				"transcript migration: transcripts are now served from the plugin tables. The original columns are "+
 					"still present and unused, holding roughly %d rows' worth of space. Dropping them rewrites the calls "+

@@ -186,6 +186,32 @@ host (e.g. `host rdio_scanner rdio 192.168.1.0/24 scram-sha-256`) and set
 Point rdio-scanner at it with `--db_type postgres --db_host … --db_user … --db_pass … --db_name … --config_save`. Schema migrations run automatically on
 first start (BRIN index, pg_trgm GIN index, composite search index, etc).
 
+## Coming from the original rdio-scanner
+
+This is a fork of [chuot/rdio-scanner](https://github.com/chuot/rdio-scanner),
+which stopped at v6.6.3. An existing install moves over in place — same
+database, same `rdio-scanner.ini`, same audio:
+
+1. **Back up the database file** (or dump it). The first start applies schema
+   migrations, and one of them converts the options row to a newer format, so
+   going back to 6.6.3 afterwards would come up with default settings. Nothing
+   else is one-way, but take the copy.
+2. Stop the old server, put this binary in its place, start it.
+
+Migrations run on the way up and are additive: nothing is dropped, renamed or
+rewritten. Calls, systems, talkgroups, units, API keys, access codes,
+downstreams and dirwatch entries are left exactly as they are, audio included,
+and the admin password still works. The config file needs no edits — every key
+is read the same way.
+
+Upstream supported SQLite, MySQL and MariaDB; all three upgrade in place. There
+is no upstream PostgreSQL install to carry over, because upstream never
+supported it — to end up on Postgres, create the database, point this server at
+it, and use the import below.
+
+A large MySQL or MariaDB install will spend a while on the first start building
+a search index over the calls table. That is expected and runs once.
+
 ## Migrating an existing SQLite install to PostgreSQL
 
 Point the config at the new database first (the target schema is created on
@@ -223,10 +249,19 @@ requires `-import_force`.
 
 Calls are **appended** and the copy resumes after the highest call id already
 present, so an interrupted run continues instead of duplicating. Call ids are
-preserved, so existing share links keep working.
+preserved, so existing share links keep working. The resume point is checked
+against the source: if the target holds calls of its own in the same id range,
+the import stops and says so rather than skipping that many of yours.
 
-Not copied: log history, and the internal schema-version and delayed-call
-tables (the target maintains its own).
+Each installed plugin's own tables come across too, including the transcript
+archive. A plugin table keyed by call id travels with `-import_calls`, because
+those rows describe specific calls — copying them while the calls stayed behind
+would attach old transcripts to unrelated new recordings. If a plugin is not
+installed on the target yet, the import names its table and skips it; install
+the plugin there and run the import again to bring those rows across.
+
+Not copied, and this is the whole list: log history, and the internal
+schema-version and delayed-call tables (the target maintains its own).
 
 ---
 
