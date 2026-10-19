@@ -2,9 +2,144 @@
 
 ## Unreleased
 
+### Migrating from the original rdio-scanner
+
+The original project stopped at v6.6.3. Everything below came out of checking
+what actually happens to a 6.6.3 install pointed at this fork — verified by
+building 6.6.3, seeding it, and upgrading it. The upgrade itself is clean:
+migrations are additive, every row and audio blob survives, the config file
+needs no edits and the admin password still works. These are the things that
+were not.
+
+- **Fixed: deleting an API key or a dirwatch entry failed on PostgreSQL.** Two
+  queries named their table in the wrong case. SQLite and MySQL fold
+  identifier case so it worked on two backends out of three; Postgres does
+  not, and the error aborted the whole admin save, persisting nothing. Only
+  the delete path spelled the names that way, so adding and editing always
+  worked — which is how it went unnoticed. Both typos are byte-identical
+  upstream. A static test now holds the whole class.
+
+- **Fixed: a large MySQL or MariaDB install could be wedged permanently by its
+  first start.** Migrations ran under the five-minute client deadline meant for
+  request paths, and building a search index on a calls table that holds every
+  audio blob does not fit in five minutes. The client gave up and the server
+  refused to start — then, because MySQL commits DDL implicitly while the
+  ledger row went unwritten, every later start failed the same way with
+  "Duplicate key name", until the operator wrote that row by hand. Migrations
+  now run on their own connection with no deadline, and the index migration is
+  tolerant of a failure rather than fatal.
+
+- **Fixed: the import discarded every setting from an upstream database.**
+  Installs older than the option split store their settings as one JSON blob,
+  and the migration that converts it was already recorded as done on the
+  target, so the blob arrived unread and branding, email, maxClients, pruneDays
+  and the rest reverted to defaults. The admin password survived — it is read
+  by exact key — which is precisely what made this look like a clean import.
+
+- **Fixed: the import left data behind.** Talkgroup patches were never copied.
+  Neither were any plugin's own tables, which is where the transcript archive
+  lives after an earlier migration moved it out of the calls table — so a
+  migrated install silently lost every transcript it had ever made. Listener
+  history went too. All of it travels now; per-call plugin rows travel with
+  `-import_calls`, since on their own they would attach old transcripts to
+  unrelated new recordings.
+
+- **Fixed: three ways the import could damage a target.** Running it from
+  inside the base directory could delete the configuration out of the file it
+  was reading, because the same-database check compared a typed path against a
+  resolved one. A target holding API keys, downstreams or dirwatches but no
+  systems read as "fresh" and was overwritten without `-import_force`. And
+  resuming calls after the target's highest id silently skipped every source
+  call when those ids belonged to the target's own recordings — it now checks
+  whether the row at that id is the same call on both sides, and says how many
+  would have been skipped.
+
+- **Fixed: a failed import could report success.** A table missing from the
+  target, a permission error or a dropped connection were all reported as
+  "0 row(s)" alongside "import complete".
+
+- **Fixed: a permanent request for downtime that would reclaim nothing.** The
+  transcript migration gated on the number of calls rather than on whether the
+  legacy columns held anything, so an install upgrading from a version that
+  predates transcripts was asked to schedule downtime on every single start.
+
 ---
 
 ## Released
+
+## Version 6.14.2
+
+Began with one report — the server grew slower the longer it ran, and call
+search eventually timed out — and ended up repairing three unrelated causes.
+
+### Server
+
+- **Fixed: the calls table had lost its primary key.** On the affected install
+  `rdioScannerCalls` had no primary key at all, with constraint names still
+  carrying the v4 rebuild's prefix, so the likeliest story is a restore that
+  copied the rows and the column definitions but not the key. Every read of a
+  single call by id was therefore a sequential scan of the whole table: 1m7s to
+  play a call, 2m4s to forward one downstream, 1m12s for an ingest blocked
+  behind them. With several scans in flight the table was read end to end
+  repeatedly, which is why the whole server bogged down rather than one page.
+  The schema check now notices a missing primary key and rebuilds it, and
+  reports what it repaired.
+
+- **Fixed: the in-app update applied to disk and did nothing.** Applying an
+  update renamed the running binary and wrote the new one in its place, but the
+  restart re-resolved its own path afterwards — on Linux that reads
+  `/proc/self/exe`, which follows the inode — so it re-executed the binary that
+  had just been replaced. Same PID, banner reprints, no error.
+
+### Search Calls
+
+- **Fixed: the transcript filters timed out.** "Without transcript" walked the
+  calls table probing the plugin's rows once per call until it filled a page;
+  where nearly everything is transcribed, finding a hundred calls without one
+  meant examining ten thousand — around 60,600 buffer reads, which on slow
+  storage is the timeout. A date range barely helped, because the cost scaled
+  with calls walked rather than with the window. The scan is now bounded, and a
+  page that fills early costs exactly what it did before. When a bounded scan
+  stops with history still unsearched it says so: the footer reads "searched
+  back to a time" with the button relabelled "Keep searching", instead of
+  falsely claiming the results ended.
+
+- **Fixed: the search asked for an order the database could not serve**, so
+  paging sorted the whole table.
+
+- **Fixed: a text search paid for the date picker's range**, and the
+  time-of-day filter silently did nothing without a date while the panel showed
+  it as active. It now matches that slice of every day — over the last 30 days
+  when no dates are given, which the filter chip says plainly.
+
+- **Changed: picking several talkgroups is one search, not five.** The filter
+  panel no longer rebuilds every option on each click.
+
+- **Changed: cursor paging skips the row count**, which was the most expensive
+  statement in the search path and existed only to number pages that cursor
+  callers never draw.
+
+### Plugins
+
+- Plugin frontends load on the admin page, so a plugin's own settings UI
+  appears there instead of being served, listed and never run.
+- Plugins can draw outside the plugin manager, register a searchable column
+  that the search rail filters on — which is how the transcript filter is now
+  owned by the plugin rather than hardcoded — and keep slow work off their own
+  event loop.
+- An admin session survives the tab it was opened in, and a token the server
+  has stopped honouring is discarded rather than retried.
+
+### Transcripts
+
+- Pairs with transcripts 1.0.12, which records a call whose transcription
+  produced only silence as an answer rather than as nothing, so those calls
+  leave the "without transcript" list and it becomes a queue of calls genuinely
+  worth retranscribing. Forward-only: calls recorded before 1.0.12 are not
+  reclassified.
+- A retranscribe is queued instead of holding the request open, completes from
+  the push rather than the response, and transcription settings moved into the
+  system editor.
 
 ## Version 6.14.1
 
@@ -414,7 +549,9 @@ an HTTP 500 and lost the changes.
   and resume after the highest id already present, preserving call ids so share
   links keep working. Timestamps are re-parsed and booleans converted, since
   SQLite stores the former as text in its own layout and the latter as 0/1
-  integers — both of which PostgreSQL rejects outright.
+  integers — both of which PostgreSQL rejects outright. (Scope corrected later: as
+  shipped here it left patches, listener history and every plugin's tables
+  behind. See Unreleased.)
 
 - **Fixed: one unresponsive listener could wedge the whole server.** Calls
   stopped being broadcast *and* stopped being ingested, while the admin page
