@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+---
+
+## Released
+
+## Version 6.14.3
+
 ### Migrating from the original rdio-scanner
 
 The original project stopped at v6.6.3. Everything below came out of checking
@@ -63,9 +69,18 @@ were not.
   legacy columns held anything, so an install upgrading from a version that
   predates transcripts was asked to schedule downtime on every single start.
 
----
+### Dependencies
 
-## Released
+- **Fixed: 28 known vulnerabilities on code paths the server actually
+  reaches.** Dependabot alerts are switched off for the repository, so nothing
+  was reporting them. The standard library accounted for 17, reached through
+  ListenAndServe and the plugin tarball extractor, and included a
+  name-constraint comparison bug in crypto/x509; the toolchain is now pinned to
+  go1.26.9 in go.mod so a build uses it rather than whatever is installed. The
+  rest were golang.org/x/net (v0.60.0), golang-jwt (v4.5.2), gorilla/websocket
+  (v1.5.3) and golang.org/x/text (v0.42.0). The JWT pair is the reason this was
+  worth doing promptly: both are reachable from the token check every admin
+  request goes through. govulncheck now reports zero affected paths.
 
 ## Version 6.14.2
 
