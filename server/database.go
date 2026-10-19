@@ -82,6 +82,90 @@ type dbExecutor interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// migrateWithoutRequestDeadline runs the schema migrations on a connection
+// that carries no statement deadline, then puts the request pool back.
+//
+// The deadline the request pool carries exists so a server that accepts a
+// statement and never answers cannot pin a listener forever, and five minutes
+// is generous for anything a request does. Schema work is the exception:
+// building an index on a calls table that holds every audio blob, or scanning
+// that table once to move transcripts out of it, legitimately runs longer than
+// that on a large install.
+//
+// With the deadline in force the client gave up mid-statement and the server
+// refused to start. On MySQL that was unrecoverable rather than merely
+// annoying: DDL there is not transactional, so the index landed while the
+// ledger row did not, and since MySQL 8 rejects IF NOT EXISTS on CREATE INDEX
+// the next boot failed with "Duplicate key name" — and every boot after it,
+// until the operator wrote the ledger row by hand.
+//
+// Falling back to the request pool on any failure to open the second one keeps
+// the old behaviour rather than refusing to start.
+func (db *Database) migrateWithoutRequestDeadline(config *Config) error {
+	pool, err := openMigrationPool(config)
+
+	switch {
+	case err != nil:
+		log.Printf("could not open a deadline-free connection for migrations, using the request pool: %v", err)
+		return db.migrate()
+
+	case pool == nil:
+		// A backend with no deadline to escape in the first place.
+		return db.migrate()
+	}
+
+	defer pool.Close()
+
+	request := db.Sql
+	db.Sql = pool
+	defer func() { db.Sql = request }()
+
+	return db.migrate()
+}
+
+// openMigrationPool opens a second connection pool with no statement deadline,
+// or returns nil when the backend's pool never had one.
+func openMigrationPool(config *Config) (*sql.DB, error) {
+	var driver, dsn string
+
+	switch config.DbType {
+	case DbTypeSqlite:
+		// SQLite is in-process: no deadline was ever set, so the request pool
+		// is already the right one to migrate on.
+		return nil, nil
+
+	case DbTypeMariadb, DbTypeMysql:
+		driver = "mysql"
+		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
+			config.DbUsername, config.DbPassword, config.DbHost, config.DbPort, config.DbName)
+
+	case DbTypePostgres:
+		driver = "postgres"
+		password := strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(config.DbPassword)
+		dsn = fmt.Sprintf("host=%s port=%d user=%s password='%s' dbname=%s sslmode=disable",
+			config.DbHost, config.DbPort, config.DbUsername, password, config.DbName)
+
+	default:
+		return nil, fmt.Errorf("unknown database type %s", config.DbType)
+	}
+
+	pool, err := sql.Open(driver, dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	// One connection: migrations are strictly sequential, and some backends
+	// tie session state to the connection that set it.
+	pool.SetMaxOpenConns(1)
+
+	if err := pool.Ping(); err != nil {
+		pool.Close()
+		return nil, err
+	}
+
+	return pool, nil
+}
+
 func NewDatabase(config *Config) *Database {
 	var err error
 
@@ -150,7 +234,7 @@ func NewDatabase(config *Config) *Database {
 	database.Sql.SetMaxIdleConns(25)
 	database.Sql.SetMaxOpenConns(25)
 
-	if err = database.migrate(); err != nil {
+	if err = database.migrateWithoutRequestDeadline(config); err != nil {
 		log.Fatal(err)
 	}
 
@@ -2026,22 +2110,47 @@ func (db *Database) migration20260422150000(verbose bool) error {
 }
 
 func (db *Database) migration20260422140000(verbose bool) error {
-	var queries []string
-	switch db.Config.DbType {
-	case DbTypePostgres:
-		queries = []string{
-			`create index if not exists "rdio_scanner_calls_system_talkgroup_date_time" on "rdioScannerCalls" ("system", "talkgroup", "dateTime", "id")`,
-		}
-	case DbTypeSqlite:
-		queries = []string{
-			"create index if not exists `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`, `id`)",
-		}
-	default:
-		queries = []string{
-			"create index `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`, `id`)",
-		}
+	const name = "20260422140000-calls-system-talkgroup-datetime-idx"
+
+	if done, err := db.migrationDone(name); err != nil {
+		return err
+	} else if done {
+		return nil
 	}
-	return db.migrateWithSchema("20260422140000-calls-system-talkgroup-datetime-idx", queries, verbose)
+
+	if verbose {
+		log.Printf("running database migration %s", name)
+	}
+
+	// Tolerant, because an index is an optimisation and a server that will not
+	// start is not.
+	//
+	// Building this on a calls table of any size takes minutes — the audio
+	// blobs live in the same table — and the MySQL driver carries a five
+	// minute read deadline, so on a large upgrade the client gives up while
+	// the server keeps going. DDL is not transactional there: the index lands,
+	// the ledger row does not, and because MySQL 8 rejects IF NOT EXISTS on
+	// CREATE INDEX the next boot hits "Duplicate key name" and fails the same
+	// way, forever. That left the operator editing the ledger by hand to get
+	// their server back.
+	//
+	// So a failure here is logged and recorded as done. Search falls back to
+	// the dateTime-leading index, and migration20260822100000 ensures this same
+	// index again later by the same tolerant route.
+	query := db.formatQuery("create index `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`, `id`)")
+	if db.Config.DbType == DbTypePostgres || db.Config.DbType == DbTypeSqlite {
+		// MySQL 8 rejects IF NOT EXISTS on CREATE INDEX where MariaDB accepts
+		// it, so only the two backends that take it get it.
+		query = db.formatQuery("create index if not exists `rdio_scanner_calls_system_talkgroup_date_time` on `rdioScannerCalls` (`system`, `talkgroup`, `dateTime`, `id`)")
+	}
+
+	if _, err := db.Sql.Exec(query); err != nil {
+		log.Printf("%s: could not create the (system, talkgroup, dateTime, id) index on rdioScannerCalls; calls search will use the dateTime-leading index instead: %v", name, err)
+	} else if verbose {
+		log.Printf("%s: (system, talkgroup, dateTime, id) index ensured", name)
+	}
+
+	return db.recordMigration(name)
 }
 
 func (db *Database) migration20260421130000(verbose bool) error {

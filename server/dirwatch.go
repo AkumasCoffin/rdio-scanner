@@ -931,7 +931,7 @@ func (dirwatches *Dirwatches) Write(db *Database) error {
 			s := string(b)
 			s = strings.ReplaceAll(s, "[", "(")
 			s = strings.ReplaceAll(s, "]", ")")
-			q := fmt.Sprintf("delete from `rdioScannerDirwatches` where `_id` in %v", s)
+			q := fmt.Sprintf("delete from `rdioScannerDirWatches` where `_id` in %v", s)
 			if _, err = db.Exec(q); err != nil {
 				return formatError(err)
 			}

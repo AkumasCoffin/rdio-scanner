@@ -257,7 +257,7 @@ func (apikeys *Apikeys) Write(db *Database) error {
 			s := string(b)
 			s = strings.ReplaceAll(s, "[", "(")
 			s = strings.ReplaceAll(s, "]", ")")
-			q := fmt.Sprintf("delete from `rdioScannerApikeys` where `_id` in %v", s)
+			q := fmt.Sprintf("delete from `rdioScannerApiKeys` where `_id` in %v", s)
 			if _, err = db.Exec(q); err != nil {
 				return formatError(err)
 			}
