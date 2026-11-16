@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lib/pq"
 )
@@ -283,5 +284,37 @@ func TestAnUnownedSequenceIsStillRealigned(t *testing.T) {
 	}
 	if id != 6 {
 		t.Errorf("the realigned sequence handed out %d; want 6", id)
+	}
+}
+
+// Deleting the newest rows must not make their keys available again. The
+// startup repair used to set the sequence to the highest surviving key
+// whether or not it was already past it.
+func TestSequenceRepairNeverMovesBackward(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if db.Config.DbType != DbTypePostgres {
+		t.Skipf("sequences are repaired on Postgres only; suite is running on %s", db.Config.DbType)
+	}
+
+	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+
+	var last uint
+	for i := 0; i < 3; i++ {
+		last = insertSearchTestCall(t, db, base.Add(time.Duration(i)*time.Minute), 1, 100)
+	}
+
+	if _, err := db.Exec("delete from `rdioScannerCalls` where `id` = ?", last); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.repairSequences(); err != nil {
+		t.Fatal(err)
+	}
+
+	next := insertSearchTestCall(t, db, base.Add(time.Hour), 1, 100)
+	if next <= last {
+		t.Fatalf("after the newest call (id %d) was deleted and the server restarted, the next call was given id %d", last, next)
 	}
 }

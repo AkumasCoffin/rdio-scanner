@@ -374,6 +374,17 @@ func (db *Database) repairSequence(table string, column string) (string, error) 
 		fmt.Sprintf(`select pg_sequence_last_value('%s'::regclass)`, seq),
 	).Scan(&last)
 
+	// Forward only. A sequence already at or past the table's highest key is
+	// healthy, and setting it to that key anyway moves it backward whenever
+	// the highest rows have been deleted — a call back-filled with an old
+	// timestamp and pruned within the hour is enough. The next call was then
+	// handed that call's id again, and found whatever a plugin had stored
+	// under it: the old call's transcript on the new call, which was then
+	// never transcribed because it "already had" one.
+	if last.Valid && last.Int64 >= maxId.Int64 {
+		return "", nil
+	}
+
 	set := fmt.Sprintf(
 		`select setval('%s'::regclass, (select max("%s") from "%s"), true)`,
 		seq, column, table,
@@ -388,13 +399,6 @@ func (db *Database) repairSequence(table string, column string) (string, error) 
 		if advErr := db.advanceSequence(seq, maxId.Int64); advErr != nil {
 			return "", fmt.Errorf("setval: %v (nextval fallback: %v)", err, advErr)
 		}
-	}
-
-	// Only worth a line when it actually moved. The is_called case cannot be
-	// told apart from a healthy sequence here, so it is reported as a repair
-	// only when last_value was genuinely behind or unused.
-	if last.Valid && last.Int64 >= maxId.Int64 {
-		return "", nil
 	}
 
 	from := "unused"
