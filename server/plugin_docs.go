@@ -152,7 +152,7 @@ var pluginCapabilities = []struct {
 	{"routes", "Serve HTTP endpoints. A handler runs on your plugin's one event loop, so slow work in it delays every other thing your plugin does — including its other requests. Return a promise and do the waiting off the loop. A handler has 90 seconds; past that, or once the loop is far enough behind, the caller is answered without you (503, and it is told to retry).", []string{
 		"register(method, path, handler)", "registerAbsolute(path, handler)",
 	}},
-	{"ws", "Your own websocket commands, over the connection clients already have.", []string{
+	{"ws", "Your own websocket commands, over the connection clients already have. `emit`'s filter is `{client}` to answer one client, `{system, talkgroup}` to reach everyone whose access code allows that talkgroup, or all three to answer one client only if its access code allows the call — which is what a reply carrying a call's data should use.", []string{
 		"on(command, handler)", "emit(filter, command, payload)",
 	}},
 	{"apikeys", "Validate an API key someone handed you.", []string{"verify(key, system, talkgroup)"}},

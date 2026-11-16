@@ -905,6 +905,18 @@ func (rt *PluginRuntime) emitWs(filter goja.Value, command string, payload any) 
 	}
 
 	if targetClient != nil {
+		// A reply to one client is still about some call, and the client may
+		// not be allowed that call. Naming the client used to skip the scope
+		// check altogether, which left a plugin answering a request no way to
+		// respect an access code even if it wanted to: on a server restricted
+		// by code, a listener scoped to one system could ask a plugin for any
+		// call's data by id and be sent it. Giving the system and talkgroup
+		// alongside the client now applies the same test a broadcast gets.
+		if scoped && rt.controller.Accesses.IsRestricted() && targetClient.Access != nil &&
+			!targetClient.Access.HasAccess(&Call{System: system, Talkgroup: talkgroup}) {
+			return
+		}
+
 		targetClient.enqueue(message)
 		return
 	}
