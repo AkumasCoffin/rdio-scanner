@@ -1,4 +1,8 @@
-<form *ngIf="form" autocomplete="off" [formGroup]="form" (ngSubmit)="save()">
+<!-- No (ngSubmit): the Save button lives in the page header, outside this form, and
+     checks that the form is valid first. A submit handler here was reachable only by
+     pressing Enter in a field — the talkgroup search box, most often — and saved the
+     whole configuration unvalidated, half-finished rows included. -->
+<form *ngIf="form" autocomplete="off" [formGroup]="form">
     <ng-container [ngSwitch]="section">
         <rdio-scanner-admin-options *ngSwitchCase="'options'" [form]="options" [ffmpegAvailable]="ffmpegAvailable"
             [ffmpegInstallHint]="ffmpegInstallHint"></rdio-scanner-admin-options>
