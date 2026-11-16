@@ -27,7 +27,6 @@ import { RdioScannerNativeComponent } from './native/native.component';
 import { RdioScannerPublicStatsComponent } from './stats/public-stats.component';
 import { RdioScannerPluginHostService, RegisteredPluginView } from './plugins/plugin-host.service';
 import { RdioScannerSearchComponent } from './search/search.component';
-import { StreamLayoutService } from './stream/stream-layout.service';
 
 @Component({
     selector: 'rdio-scanner',
@@ -38,15 +37,6 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
     private eventSubscription = this.rdioScannerService.event.subscribe((event: RdioScannerEvent) => this.eventHandler(event));
 
     private livefeedMode: RdioScannerLivefeedMode = RdioScannerLivefeedMode.Offline;
-
-    // True while at least one /stream window is open (detected over the
-    // stream-sync channel). Gates the Stream edit-mode toggle.
-    streamOpen = false;
-
-    // Mirror of the stream layout's edit (move) mode, so the toggle button
-    // reflects the current state. Synced live across windows.
-    streamEditMode = false;
-    private streamLayoutSub: Subscription | undefined;
 
     @ViewChild('searchPanel') private searchPanel: MatSidenav | undefined;
 
@@ -72,7 +62,6 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
         private ngElementRef: ElementRef,
         private pluginHost: RdioScannerPluginHostService,
         private rdioScannerService: RdioScannerService,
-        private streamLayoutService: StreamLayoutService,
     ) {
         this.pluginViewsSub = this.pluginHost.views.subscribe((views) => {
             this.pluginViews = views;
@@ -118,10 +107,6 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
 
     private openPanel = 'none';
 
-    // Toggle the /stream page's edit mode (drag/resize/right-click editing).
-    toggleStreamEdit(): void {
-        this.streamLayoutService.update({ moveMode: !this.streamEditMode });
-    }
 
     @HostListener('window:beforeunload', ['$event'])
     exitNotification(event: BeforeUnloadEvent): void {
@@ -149,20 +134,10 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
 
     ngOnDestroy(): void {
         this.eventSubscription.unsubscribe();
-        this.streamLayoutSub?.unsubscribe();
         this.pluginViewsSub?.unsubscribe();
     }
 
     ngOnInit(): void {
-        // Seed from the service in case a /stream window was already open
-        // before this component subscribed to the event stream.
-        this.streamOpen = this.rdioScannerService.isStreamOpen;
-
-        // Reflect the live edit-mode state in the toggle button.
-        this.streamEditMode = this.streamLayoutService.getLayout().moveMode;
-        this.streamLayoutSub = this.streamLayoutService.changes.subscribe((layout) => {
-            this.streamEditMode = layout.moveMode;
-        });
 
         /*
          * BEGIN OF RED TAPE:
@@ -253,10 +228,6 @@ export class RdioScannerComponent implements AfterViewInit, OnDestroy, OnInit {
     private eventHandler(event: RdioScannerEvent): void {
         if (event.livefeedMode) {
             this.livefeedMode = event.livefeedMode;
-        }
-
-        if (typeof event.streamOpen === 'boolean') {
-            this.streamOpen = event.streamOpen;
         }
 
         if (typeof event.deepLinkCall === 'number' && event.deepLinkCall > 0) {

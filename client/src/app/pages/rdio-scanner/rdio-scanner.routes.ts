@@ -19,7 +19,6 @@
 
 import { Routes } from '@angular/router';
 import { RdioScannerMainPageComponent } from './rdio-scanner-main.component';
-import { RdioScannerStreamPageComponent } from './rdio-scanner-stream.component';
 import { RdioScannerPageComponent } from './rdio-scanner.component';
 
 export const routes: Routes = [
@@ -31,10 +30,10 @@ export const routes: Routes = [
                 component: RdioScannerMainPageComponent,
                 path: '',
             },
-            {
-                component: RdioScannerStreamPageComponent,
-                path: 'stream',
-            },
+            // No `stream` page here. The OBS overlay is the stream plugin's
+            // now, and a route declared in this list is matched before any
+            // page a plugin claims — so while one was, the plugin's overlay
+            // could never appear at /stream, installed or not.
             {
                 loadChildren: () => import('./admin/admin.module').then((module) => module.RdioScannerAdminPageModule),
                 path: 'admin',

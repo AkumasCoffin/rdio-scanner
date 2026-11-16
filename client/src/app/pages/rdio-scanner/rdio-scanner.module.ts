@@ -22,7 +22,6 @@ import { RdioScannerModule } from '../../components/rdio-scanner';
 import { AppSharedModule } from '../../shared/shared.module';
 import { RdioScannerPageComponent } from './rdio-scanner.component';
 import { RdioScannerMainPageComponent } from './rdio-scanner-main.component';
-import { RdioScannerStreamPageComponent } from './rdio-scanner-stream.component';
 import { routes } from './rdio-scanner.routes';
 
 // Nothing imports this module — the page components are reached through the
@@ -35,7 +34,6 @@ import { routes } from './rdio-scanner.routes';
     declarations: [
         RdioScannerPageComponent,
         RdioScannerMainPageComponent,
-        RdioScannerStreamPageComponent,
     ],
     exports: [RdioScannerPageComponent],
     imports: [

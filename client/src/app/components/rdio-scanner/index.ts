@@ -19,4 +19,3 @@
 
 export * from './rdio-scanner.component';
 export * from './rdio-scanner.module';
-export * from './stream/stream.component';

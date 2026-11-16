@@ -46,7 +46,6 @@ var pluginAnchors = []string{
 	"panel-stats",
 	"panel-plugin",
 	"fab-plugin-views",
-	"fab-stream-edit",
 
 	// Main screen.
 	"status",
