@@ -583,6 +583,18 @@ func (plugins *Plugins) startPlugin(controller *Controller, plugin *Plugin) erro
 
 	if err := runtime.Start(); err != nil {
 		runtime.Stop()
+
+		// And whatever it registered before it failed. main.js runs top to
+		// bottom, so a throw on line 40 follows thirty-nine lines that may
+		// already have claimed extension points and RPC methods. Stopping
+		// the runtime does not withdraw those: they stayed, answering for a
+		// plugin that was not there — an override on call.convert failed
+		// every call's conversion, a filter on call.emit failed once per
+		// listener per call and logged each one.
+		controller.PluginDispatch.Unregister(plugin.PluginId)
+		controller.PluginRpc.Unregister(plugin.PluginId)
+		controller.InvalidatePluginExtensions()
+
 		return err
 	}
 
