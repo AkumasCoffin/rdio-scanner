@@ -318,3 +318,60 @@ func TestSequenceRepairNeverMovesBackward(t *testing.T) {
 		t.Fatalf("after the newest call (id %d) was deleted and the server restarted, the next call was given id %d", last, next)
 	}
 }
+
+// The admin form numbers a new group itself, one past the highest it can see,
+// and the row is inserted under that number — which leaves the table's own
+// sequence where it was. The next group the server adds by itself, for a
+// talkgroup that arrives naming a group nobody has made, takes the sequence's
+// next number: the one the form already used. That insert failed on the
+// primary key, and it happens on the ingest path, where a failed write of the
+// groups means the call that carried the new group is dropped.
+func TestAnAutoCreatedRowDoesNotCollideWithOnesTheAdminNumbered(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	groups := NewGroups()
+	if err := groups.Read(db); err != nil {
+		t.Fatal(err)
+	}
+
+	highest := uint(0)
+	list := []any{}
+	for _, group := range groups.List {
+		id := group.Id.(uint)
+		if id > highest {
+			highest = id
+		}
+		list = append(list, map[string]any{"_id": float64(id), "label": group.Label})
+	}
+
+	// Two groups added in the admin form, numbered by it.
+	list = append(list,
+		map[string]any{"_id": float64(highest + 1), "label": "Added in the form"},
+		map[string]any{"_id": float64(highest + 2), "label": "And another"},
+	)
+
+	groups.FromMap(list)
+	if err := groups.Write(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := groups.Read(db); err != nil {
+		t.Fatal(err)
+	}
+
+	// What ingest does for a talkgroup naming a group that does not exist.
+	groups.List = append(groups.List, &Group{Label: "Arrived with a call"})
+	if err := groups.Write(db); err != nil {
+		t.Fatalf("the server could not add a group of its own after the admin added two: %v", err)
+	}
+	if err := groups.Read(db); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := groups.GetGroup("Arrived with a call"); !ok {
+		t.Fatal("the auto-created group was not stored")
+	}
+	if len(groups.List) != len(list)+1 {
+		t.Fatalf("%d groups after adding one to %d", len(groups.List), len(list))
+	}
+}

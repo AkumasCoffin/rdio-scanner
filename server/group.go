@@ -281,7 +281,12 @@ func (groups *Groups) Write(db *Database) error {
 		if count == 0 {
 			idVal, hasId := group.Id.(uint)
 			if db.Config.DbType == DbTypePostgres && (!hasId || idVal == 0) {
-				_, err = db.Exec("insert into `rdioScannerGroups` (`label`) values (?)", group.Label)
+				// Through ExecInsert, which realigns the sequence and tries again
+				// if the key it was dealt is taken. Rows the admin form numbers
+				// itself are inserted under those numbers and never advance the
+				// sequence, so the first row the server adds on its own was handed
+				// a number already in use.
+				err = db.ExecInsert("rdioScannerGroups", "_id", "insert into `rdioScannerGroups` (`label`) values (?)", group.Label)
 			} else {
 				_, err = db.Exec("insert into `rdioScannerGroups` (`_id`, `label`) values (?, ?)", group.Id, group.Label)
 			}

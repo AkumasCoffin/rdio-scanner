@@ -564,7 +564,7 @@ func (downstreams *Downstreams) Write(db *Database) error {
 		if count == 0 {
 			idVal, hasId := downstream.Id.(uint)
 			if db.Config.DbType == DbTypePostgres && (!hasId || idVal == 0) {
-				_, err = db.Exec("insert into `rdioScannerDownstreams` (`apiKey`, `disabled`, `order`, `systems`, `url`) values (?, ?, ?, ?, ?)", downstream.Apikey, downstream.Disabled, downstream.Order, systems, downstream.Url)
+				err = db.ExecInsert("rdioScannerDownstreams", "_id", "insert into `rdioScannerDownstreams` (`apiKey`, `disabled`, `order`, `systems`, `url`) values (?, ?, ?, ?, ?)", downstream.Apikey, downstream.Disabled, downstream.Order, systems, downstream.Url)
 			} else {
 				_, err = db.Exec("insert into `rdioScannerDownstreams` (`_id`, `apiKey`, `disabled`, `order`, `systems`, `url`) values (?, ?, ?, ?, ?, ?)", downstream.Id, downstream.Apikey, downstream.Disabled, downstream.Order, systems, downstream.Url)
 			}

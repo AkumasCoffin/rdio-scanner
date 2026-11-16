@@ -557,7 +557,7 @@ func (systems *Systems) Write(db *Database) error {
 		if count == 0 {
 			rowIdVal, hasRowId := system.RowId.(uint)
 			if db.Config.DbType == DbTypePostgres && (!hasRowId || rowIdVal == 0) {
-				_, err = db.Exec("insert into `rdioScannerSystems` (`autoPopulate`, `blacklists`, `id`, `label`, `led`, `led2`, `order`, `delay`, `alert`) values (?, ?, ?, ?, ?, ?, ?, ?, ?)", system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Led2, system.Order, system.Delay, system.Alert)
+				err = db.ExecInsert("rdioScannerSystems", "_id", "insert into `rdioScannerSystems` (`autoPopulate`, `blacklists`, `id`, `label`, `led`, `led2`, `order`, `delay`, `alert`) values (?, ?, ?, ?, ?, ?, ?, ?, ?)", system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Led2, system.Order, system.Delay, system.Alert)
 			} else {
 				_, err = db.Exec("insert into `rdioScannerSystems` (`_id`, `autoPopulate`, `blacklists`, `id`, `label`, `led`, `led2`, `order`, `delay`, `alert`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", system.RowId, system.AutoPopulate, blacklists, system.Id, system.Label, system.Led, system.Led2, system.Order, system.Delay, system.Alert)
 			}

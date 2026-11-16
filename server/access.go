@@ -364,7 +364,7 @@ func (accesses *Accesses) Write(db *Database) error {
 		if count == 0 {
 			idVal, hasId := access.Id.(uint)
 			if db.Config.DbType == DbTypePostgres && (!hasId || idVal == 0) {
-				_, err = db.Exec("insert into `rdioScannerAccesses` (`code`, `expiration`, `ident`, `limit`, `order`, `systems`) values (?, ?, ?, ?, ?, ?)", access.Code, access.Expiration, access.Ident, access.Limit, access.Order, systems)
+				err = db.ExecInsert("rdioScannerAccesses", "_id", "insert into `rdioScannerAccesses` (`code`, `expiration`, `ident`, `limit`, `order`, `systems`) values (?, ?, ?, ?, ?, ?)", access.Code, access.Expiration, access.Ident, access.Limit, access.Order, systems)
 			} else {
 				_, err = db.Exec("insert into `rdioScannerAccesses` (`_id`, `code`, `expiration`, `ident`, `limit`, `order`, `systems`) values (?, ?, ?, ?, ?, ?, ?)", access.Id, access.Code, access.Expiration, access.Ident, access.Limit, access.Order, systems)
 			}

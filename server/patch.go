@@ -368,7 +368,7 @@ func (patches *Patches) Write(db *Database) error {
 			idVal, hasId := patch.Id.(uint)
 
 			if db.Config.DbType == DbTypePostgres && (!hasId || idVal == 0) {
-				_, err = db.Exec("insert into `rdioScannerPatches` (`disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups`, `delay`) values (?, ?, ?, ?, ?, ?, ?, ?)",
+				err = db.ExecInsert("rdioScannerPatches", "_id", "insert into `rdioScannerPatches` (`disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups`, `delay`) values (?, ?, ?, ?, ?, ?, ?, ?)",
 					patch.Disabled, patch.Label, patch.Order, patch.SystemId, patch.TalkgroupId, patch.PrimaryTalkgroupId, talkgroups, patch.Delay)
 			} else {
 				_, err = db.Exec("insert into `rdioScannerPatches` (`_id`, `disabled`, `label`, `order`, `systemId`, `talkgroupId`, `primaryTalkgroupId`, `talkgroups`, `delay`) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",

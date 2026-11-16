@@ -285,7 +285,7 @@ func (apikeys *Apikeys) Write(db *Database) error {
 		if count == 0 {
 			idVal, hasId := apikey.Id.(uint)
 			if db.Config.DbType == DbTypePostgres && (!hasId || idVal == 0) {
-				_, err = db.Exec("insert into `rdioScannerApiKeys` (`disabled`, `ident`, `key`, `order`, `systems`) values (?, ?, ?, ?, ?)", apikey.Disabled, apikey.Ident, apikey.Key, apikey.Order, systems)
+				err = db.ExecInsert("rdioScannerApiKeys", "_id", "insert into `rdioScannerApiKeys` (`disabled`, `ident`, `key`, `order`, `systems`) values (?, ?, ?, ?, ?)", apikey.Disabled, apikey.Ident, apikey.Key, apikey.Order, systems)
 			} else {
 				_, err = db.Exec("insert into `rdioScannerApiKeys` (`_id`, `disabled`, `ident`, `key`, `order`, `systems`) values (?, ?, ?, ?, ?, ?)", apikey.Id, apikey.Disabled, apikey.Ident, apikey.Key, apikey.Order, systems)
 			}

@@ -274,7 +274,7 @@ func (tags *Tags) Write(db *Database) error {
 		if count == 0 {
 			idVal, hasId := tag.Id.(uint)
 			if db.Config.DbType == DbTypePostgres && (!hasId || idVal == 0) {
-				_, err = db.Exec("insert into `rdioScannerTags` (`label`) values (?)", tag.Label)
+				err = db.ExecInsert("rdioScannerTags", "_id", "insert into `rdioScannerTags` (`label`) values (?)", tag.Label)
 			} else {
 				_, err = db.Exec("insert into `rdioScannerTags` (`_id`, `label`) values (?, ?)", tag.Id, tag.Label)
 			}
