@@ -1024,8 +1024,13 @@ func (controller *Controller) ProcessMessageCommandListCall(client *Client, mess
 		// returns an empty result rather than an error, because a search that a
 		// plugin decided not to answer is not a failure of the request.
 		if !controller.PluginDispatch.FilterSearch(&searchOptions, client) {
+			// With the options echoed back, as every other answer has them.
+			// Left out they serialise as null, which the Android app cannot
+			// decode into its options object — it drops the connection and
+			// reconnects into the same answer.
 			client.enqueue(&Message{Command: MessageCommandListCall, Payload: &CallsSearchResults{
 				Count:   0,
+				Options: &searchOptions,
 				Results: []CallsSearchResult{},
 			}})
 			return nil

@@ -117,6 +117,15 @@ func (call *Call) MarshalJSON() ([]byte, error) {
 	audio := fmt.Sprintf("%v", call.Audio)
 	audio = strings.ReplaceAll(audio, " ", ",")
 
+	// Always a list. A call read back from a row whose patches column is
+	// empty has none set, and null here is not something every client
+	// survives: the Android app declares a list, fails to decode the frame,
+	// and drops its connection.
+	patches := call.Patches
+	if b, err := json.Marshal(patches); err != nil || string(b) == "null" {
+		patches = []uint{}
+	}
+
 	out := map[string]any{
 		"id": call.Id,
 		"audio": map[string]any{
@@ -128,7 +137,7 @@ func (call *Call) MarshalJSON() ([]byte, error) {
 		"dateTime":    call.DateTime.UTC().Format(time.RFC3339),
 		"frequencies": call.Frequencies,
 		"frequency":   call.Frequency,
-		"patches":     call.Patches,
+		"patches":     patches,
 		"source":      call.Source,
 		"sources":     call.Sources,
 		"system":      call.System,

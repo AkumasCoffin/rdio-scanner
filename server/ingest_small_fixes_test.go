@@ -93,3 +93,32 @@ func TestUploadedSourceTagsBecomeUnits(t *testing.T) {
 		t.Fatalf("the source tags were not learned as units: %v", labels)
 	}
 }
+
+// Clients decode `patches` as a list. A call with none must say so with an
+// empty list, not null.
+func TestACallWithNoPatchesSerialisesAnEmptyList(t *testing.T) {
+	for name, patches := range map[string]any{
+		"never set":  nil,
+		"a nil list": []uint(nil),
+	} {
+		call := NewCall()
+		call.Patches = patches
+
+		b, err := call.MarshalJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !bytes.Contains(b, []byte(`"patches":[]`)) {
+			t.Errorf("%s: patches is not an empty list in %s", name, b)
+		}
+	}
+
+	call := NewCall()
+	call.Patches = []uint{200, 300}
+
+	b, _ := call.MarshalJSON()
+	if !bytes.Contains(b, []byte(`"patches":[200,300]`)) {
+		t.Errorf("a call's patches were not kept: %s", b)
+	}
+}
