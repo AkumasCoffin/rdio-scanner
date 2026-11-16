@@ -130,7 +130,11 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 		}
 	}
 
-	df := p.Controller.Database.DateTimeFormat
+	// Bound as UTC times rather than written into the statement. As text they
+	// kept the offset the caller sent, compared against rows stored in UTC —
+	// so a window given in local time missed its calls by that offset.
+	whereArgs := []any{}
+
 	parseTime := func(v string) (time.Time, bool) {
 		for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z", "2006-01-02 15:04:05", "2006-01-02"} {
 			if t, err := time.Parse(layout, v); err == nil {
@@ -144,12 +148,14 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 	}
 	if s := q.Get("from"); s != "" {
 		if t, ok := parseTime(s); ok {
-			where = append(where, fmt.Sprintf("`dateTime` >= '%s'", t.Format(df)))
+			where = append(where, "`dateTime` >= ?")
+			whereArgs = append(whereArgs, t.UTC())
 		}
 	}
 	if s := q.Get("to"); s != "" {
 		if t, ok := parseTime(s); ok {
-			where = append(where, fmt.Sprintf("`dateTime` <= '%s'", t.Format(df)))
+			where = append(where, "`dateTime` <= ?")
+			whereArgs = append(whereArgs, t.UTC())
 		}
 	}
 	// Free-text search runs over whatever columns plugins registered as
@@ -157,7 +163,6 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 	// call, so this correctly matches nothing rather than ignoring the filter
 	// and returning everything.
 	searchExtensions := p.Controller.PluginSearchExtensions()
-	whereArgs := []any{}
 	if s := strings.TrimSpace(q.Get("q")); s != "" {
 		// Bound, and escaped as a pattern, for the reasons likeContains gives:
 		// spliced in with only its apostrophes doubled, a backslash in the

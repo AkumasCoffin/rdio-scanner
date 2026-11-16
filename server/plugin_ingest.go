@@ -143,12 +143,19 @@ func applyPluginCallValue(call *Call, value any) {
 		case "dateTime":
 			// Handed out as RFC3339 UTC, so that is what comes back. A plugin
 			// that echoes the value unchanged must not shift the timestamp.
+			//
+			// Always converted to UTC, whatever it arrives as. A string with
+			// an offset, or a JavaScript Date — which goja hands over in the
+			// host's zone — is the right instant in the wrong zone, and the
+			// zone does not survive storage: Postgres drops it and keeps the
+			// wall clock, so on a server in Sydney the call was filed eleven
+			// hours into the future, ahead of every real one.
 			if text, ok := raw.(string); ok {
 				if parsed, err := time.Parse(time.RFC3339, text); err == nil {
-					call.DateTime = parsed
+					call.DateTime = parsed.UTC()
 				}
 			} else if when, ok := raw.(time.Time); ok {
-				call.DateTime = when
+				call.DateTime = when.UTC()
 			}
 
 		case "system":
