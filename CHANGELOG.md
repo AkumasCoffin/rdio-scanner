@@ -2,6 +2,114 @@
 
 ## Unreleased
 
+Everything below is in 6.14.4-beta.1. It came out of an end-to-end sweep of the
+server, the webapp, the Android app and the plugins: each item was reproduced
+first — by a failing test, or against a running server — and the server suite
+now runs clean on SQLite, PostgreSQL 16 and MariaDB 10.11, and under the race
+detector.
+
+### Security and access
+
+- **Fixed: the admin configuration could be read without logging in.** The
+  admin WebSocket added a connection to its broadcast list before asking for a
+  token, so a connection that never sent one received the full configuration —
+  access codes, API keys, downstream credentials — on the next save. A token is
+  now required first. The same loop could also stop for good on one failed
+  write, hanging every later save.
+- **Fixed: the search box could run SQL on MySQL and MariaDB.** Search text was
+  spliced into the statement. It is now a bound parameter, in the webapp search
+  and in `/api/v1/calls?q=`. On Postgres a `?` in the term found nothing, and on
+  every backend `%` and `_` acted as wildcards; all three are fixed with it.
+- **Fixed: an expired, over-limit or deleted access code still worked** for a
+  client that ignored the refusal. The connection limit was also off by one.
+- **Fixed: a transcript could be read by id without access to its call.**
+  Needs transcripts 1.0.13 or later.
+- **Fixed: Logout did not reach the server**, so the session stayed valid.
+- Built with Go 1.26.11, which clears two standard-library vulnerabilities.
+
+### Calls lost, or the server stopped
+
+- **Fixed: one new unit could stall ingest for seconds.** A call that taught
+  the server anything — a single unit id it had not seen — rewrote every unit
+  and talkgroup of every system while no other call was taken in: two seconds
+  on Postgres for 1,500 talkgroups and 3,000 units. Only what changed is
+  written now; the same case takes four milliseconds.
+- **Fixed on Postgres: after a group or tag was added in the admin, the next
+  one the server created itself failed, and the call carrying it was dropped.**
+- **Fixed: a plugin calling a server function from a timer with an argument
+  missing crashed the whole server.**
+- **Fixed: a file with no underscore in a DSDPlus folder crashed the server.**
+- **Fixed: saving any setting stopped every directory watch until restart**,
+  and a burst of files could end a watch for good.
+- **Fixed: the duplicate-call window was a second wide on one side and zero on
+  the other** on Postgres and MySQL, discarding real calls and keeping true
+  duplicates.
+- **Fixed: an upload with `source=-1` was dropped**, and calls created by a
+  plugin were stored without their units or frequencies.
+- **Fixed on MySQL and MariaDB: a server stopped during a migration could not
+  start again.**
+- **Changed: an upload with no usable timestamp is refused** with "no
+  datetime". It used to be stored dated year 1 and deleted by the next prune.
+
+### Configuration
+
+- **Fixed: deleting an entry and adding one in the same save kept the deleted
+  one** — including a revoked API key or access code.
+- **Fixed: a failed read of the configuration could empty it.** The next write
+  then deleted every system and talkgroup; a server with access codes became
+  open to everyone; and the admin password fell back to the default.
+- **Fixed: an API key limited to particular systems was refused during every
+  config save**, and `user-add` / `user-remove` failed once any entry was
+  scoped.
+- **Fixed: a failed save threw away the admin's unsaved edits**, pressing Enter
+  in a search box saved the whole configuration unvalidated, the bulk talkgroup
+  editor's Group and Tag menus were empty, and editing a patch's members reset
+  its ranking.
+- **Fixed: a plugin editing one system deleted every talkgroup and unit.**
+
+### Retention, search and logs
+
+- **Fixed: retention ran off the server's local clock.** A server in Sydney
+  pruned calls and logs eleven hours early.
+- **Fixed: transcripts were never deleted with their calls.** They are now
+  removed after each prune, in batches — the first prunes after upgrading will
+  clear what has accumulated.
+- **Fixed on Postgres: a restart could give a new call a deleted call's id**,
+  and with it that call's transcript.
+- **Fixed on Postgres: the transcript search index was built twice.** The
+  duplicate is dropped on the first start.
+- **Fixed on SQLite: the time-of-day filter matched nothing.**
+- **Fixed: the Logs date filter showed the wrong day** when reading newest
+  first.
+
+### Plugins
+
+- **Removed: the built-in stream overlay.** `/stream` belongs to the stream
+  plugin now; the webapp's own copy was still there and always won the address,
+  so the plugin's overlay never appeared. Layouts carry over unchanged, from
+  browser storage and from exported files. Edit with Ctrl+E on the overlay; the
+  edit button on the main screen went with the built-in page. A server without
+  the plugin has no overlay page.
+- **Fixed: Uninstall → "Remove data" removed nothing.**
+- **Fixed on MySQL and MariaDB: a plugin read a stored `false` as true**, so
+  the transcripts "don't transcribe this system" switch never took effect.
+- **Fixed on Postgres: text inside quotes in a plugin's SQL was rewritten**,
+  backticks to double quotes and `?` to a placeholder.
+- **Fixed: an auto-increment column was given no key**, and a table name too
+  long for the database was accepted and then cut off.
+- **Fixed: a plugin that failed to start left its handlers registered.**
+
+### Import and migration
+
+- **Fixed: importing a database from before 6.14 left its transcripts behind**,
+  with the per-system switches and provider settings.
+- **Fixed: a refused import had already replaced the target's transcripts.**
+
+### Android
+
+- **Fixed: the app could get stuck reconnecting** on two frames the server
+  sends. The server no longer sends them either, for installed builds.
+
 ---
 
 ## Released
