@@ -320,23 +320,33 @@ func (logs *Logs) Search(searchOptions *LogsSearchOptions, db *Database) (*LogsS
 
 	switch v := searchOptions.Date.(type) {
 	case time.Time:
-		var (
-			df    string = db.DateTimeFormat
-			start time.Time
-			stop  time.Time
-		)
+		// A day of log, anchored on the picked minute: the day that starts
+		// there when reading oldest first, the day that ends there when
+		// reading newest first — whichever way, the picked time is where the
+		// list begins.
+		//
+		// The newest-first branch used to subtract the hours and minutes from
+		// both ends a second time, which made the window
+		// [midnight before last, last midnight minus the picked time of day):
+		// the wrong day, and shorter the later in the day one looked. Picking
+		// 23:00 showed a single hour from two days earlier.
+		//
+		// Bound as times in UTC rather than formatted, for the reason
+		// Calls.Prune gives.
+		at := v.UTC().Truncate(time.Minute)
+
+		var start, stop time.Time
 
 		if order == ascOrder {
-			start = time.Date(v.Year(), v.Month(), v.Day(), v.Hour(), v.Minute(), 0, 0, time.UTC)
-			stop = start.Add(time.Hour*24 - time.Millisecond)
-
+			start = at
+			stop = at.Add(24*time.Hour - time.Millisecond)
 		} else {
-			start = time.Date(v.Year(), v.Month(), v.Day(), v.Hour(), v.Minute(), 0, 0, time.UTC).Add(time.Hour*-24 - time.Hour*time.Duration(v.Hour())).Add(time.Minute * time.Duration(-v.Minute()))
-			stop = start.Add(time.Hour*24 - time.Millisecond - time.Hour*time.Duration(v.Hour())).Add(time.Minute * time.Duration(-v.Minute()))
+			start = at.Add(-24*time.Hour + time.Millisecond)
+			stop = at
 		}
 
 		where += " and (`dateTime` between ? and ?)"
-		args = append(args, start.Format(df), stop.Format(df))
+		args = append(args, start, stop)
 	}
 
 	switch v := searchOptions.Limit.(type) {
