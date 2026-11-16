@@ -1065,38 +1065,60 @@ func (controller *Controller) ProcessMessageCommandPin(client *Client, message *
 			// plugin never invalidates the accounts already configured.
 			found, _ := controller.Accesses.GetAccess(code)
 
+			// Every refusal below leaves the connection holding no access at
+			// all, including one it was granted earlier.
+			//
+			// The grant used to be attached to the connection first and
+			// checked afterwards, and the gate in ProcessMessage only asks
+			// whether one is attached. So an expired code, a code over its
+			// connection limit and a locked-out code were all answered with a
+			// refusal the client was free to ignore: ask for the config next
+			// and it arrived, with the live feed, search and audio behind it.
+			// And a code deleted by the admin kept working for whoever was
+			// already connected with it, because failing the fresh prompt
+			// took nothing away.
+			refuse := func(command string) error {
+				client.Access = &Access{}
+				client.enqueue(&Message{Command: command})
+				return nil
+			}
+
 			access, allowed := controller.PluginDispatch.CheckAccess(code, client.GetRemoteAddr(), found)
 			if !allowed {
 				controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("invalid access code %s for ip %s", code, client.GetRemoteAddr()))
-				client.enqueue(&Message{Command: MessageCommandPin})
-				return nil
+				return refuse(MessageCommandPin)
 			}
 
 			// Re-scope now the client has a real identity: the grant it just
 			// authenticated with is a different question from what that grant
 			// should be allowed to see.
-			client.Access = controller.PluginDispatch.ScopeAccess(access, client.GetRemoteAddr(), true)
+			granted := controller.PluginDispatch.ScopeAccess(access, client.GetRemoteAddr(), true)
 
 			if client.AuthCount == maxAuthCount {
-				controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("locked access for ident %s locked", client.Access.Ident))
-				client.enqueue(&Message{Command: MessageCommandPin})
-				return nil
+				controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("locked access for ident %s locked", granted.Ident))
+				return refuse(MessageCommandPin)
 			}
 
-			if client.Access.HasExpired() {
-				controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("expired access for ident %s", client.Access.Ident))
-				client.enqueue(&Message{Command: MessageCommandExpired})
-				return nil
+			if granted.HasExpired() {
+				controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("expired access for ident %s", granted.Ident))
+				return refuse(MessageCommandExpired)
 			}
 
-			switch v := client.Access.Limit.(type) {
+			// How many others are connected on this code, not counting the
+			// one asking. Counting it made the limit mean two things: a new
+			// connection was not on the list yet, so a limit of one admitted
+			// two; a seated connection answering a fresh prompt was, so after
+			// any config change every listener at the limit found itself over
+			// it and all of them were refused together.
+			switch v := granted.Limit.(type) {
 			case uint:
-				if controller.Clients.AccessCount(client) > int(v) {
-					controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("too many concurrent connections for ident %s, limit is %d", client.Access.Ident, client.Access.Limit))
-					client.enqueue(&Message{Command: MessageCommandMax})
-					return nil
+				if controller.Clients.OthersOnAccess(client, granted) >= int(v) {
+					controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf("too many concurrent connections for ident %s, limit is %d", granted.Ident, granted.Limit))
+					return refuse(MessageCommandMax)
 				}
 			}
+
+			client.Access = granted
 		}
 
 		client.AuthCount = 0

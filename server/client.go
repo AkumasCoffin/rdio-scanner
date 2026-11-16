@@ -410,6 +410,32 @@ func (clients *Clients) AccessCount(client *Client) int {
 	return count
 }
 
+// OthersOnAccess counts the registered connections holding the given access,
+// leaving out the one asking. It takes the access rather than reading the
+// client's own, because the question is asked before the grant is attached.
+func (clients *Clients) OthersOnAccess(client *Client, access *Access) int {
+	identity, ok := accessIdentity(access)
+	if !ok {
+		return 0
+	}
+
+	count := 0
+
+	clients.mutex.RLock()
+	defer clients.mutex.RUnlock()
+
+	for c := range clients.Map {
+		if c == client {
+			continue
+		}
+		if other, ok := accessIdentity(c.Access); ok && other == identity {
+			count++
+		}
+	}
+
+	return count
+}
+
 func (clients *Clients) Add(client *Client) {
 	clients.mutex.Lock()
 	defer clients.mutex.Unlock()
