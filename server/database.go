@@ -631,17 +631,45 @@ func (db *Database) formatQuery(query string) string {
 	if db.Config.DbType != DbTypePostgres {
 		return query
 	}
-	query = strings.ReplaceAll(query, "`", "\"")
+	// Backticks become double quotes and each `?` becomes the next numbered
+	// placeholder — outside string literals only.
+	//
+	// It used to rewrite every one it met. Text inside quotes is data, and a
+	// plugin that wrote 'see `x`, is it ok?' into one of its own tables found
+	// 'see "x", is it ok$2' stored there, with nothing reported; where the
+	// literal held the statement's only question mark, the statement failed
+	// on a parameter count instead. A doubled quote inside a literal is an
+	// escaped quote and stays inside it, which toggling on each one handles
+	// by itself: the first closes, the second reopens.
 	var result strings.Builder
+	result.Grow(len(query) + 16)
+
 	counter := 0
+	inLiteral := false
+
 	for i := 0; i < len(query); i++ {
-		if query[i] == '?' {
+		c := query[i]
+
+		switch {
+		case c == '\'':
+			inLiteral = !inLiteral
+			result.WriteByte(c)
+
+		case inLiteral:
+			result.WriteByte(c)
+
+		case c == '`':
+			result.WriteByte('"')
+
+		case c == '?':
 			counter++
 			result.WriteString(fmt.Sprintf("$%d", counter))
-		} else {
-			result.WriteByte(query[i])
+
+		default:
+			result.WriteByte(c)
 		}
 	}
+
 	return result.String()
 }
 

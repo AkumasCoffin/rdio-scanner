@@ -41,6 +41,12 @@ var pluginIdRegexp = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
 // established by that point.
 var pluginTableNameRegexp = regexp.MustCompile(`^[a-z][a-z0-9_]{1,31}$`)
 
+// pluginIdentifierLimit is the longest name a table or index may have and
+// still mean the same thing on every backend: Postgres keeps 63 bytes of an
+// identifier and silently discards the rest, MySQL and MariaDB refuse a table
+// name over 64.
+const pluginIdentifierLimit = 63
+
 var pluginColumnNameRegexp = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
 
 // CurrentPluginApiVersion is the version of the plugin API this server speaks.
@@ -299,6 +305,17 @@ func (manifest *PluginManifest) Validate() error {
 		// storage out from under the admin panel.
 		if table.Name == pluginConfigTableName {
 			return fmt.Errorf("plugin %s: table name %q is reserved", manifest.Id, table.Name)
+		}
+		// The real table is plugin_<id>_<name>, and an id and a name at their
+		// own limits make 72 characters of it. Postgres keeps the first 63
+		// and drops the rest in silence, so two of a plugin's tables could
+		// become one — the second "create if not exists" finding the first,
+		// its columns then added to it, both sets of rows landing together.
+		// MySQL and MariaDB refuse the name instead, and the plugin will not
+		// install. Refused here, where the author is told which name it is.
+		if full := manifest.TableName(table.Name); len(full) > pluginIdentifierLimit {
+			return fmt.Errorf("plugin %s: table name %q is too long: with the plugin id it becomes %q, %d characters, and the limit is %d",
+				manifest.Id, table.Name, full, len(full), pluginIdentifierLimit)
 		}
 		if seenTables[table.Name] {
 			return fmt.Errorf("plugin %s: duplicate table %q", manifest.Id, table.Name)

@@ -16,6 +16,7 @@
 package main
 
 import (
+	"crypto/sha1"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -461,7 +462,14 @@ func pluginColumnSql(db *Database, column *PluginColumn, singlePrimaryKey bool) 
 
 	// A single-column primary key that isn't auto-increment can be declared
 	// inline; composite keys need the table-level constraint instead.
-	if column.PrimaryKey && singlePrimaryKey && !column.AutoIncrement && db.Config.DbType != DbTypeSqlite {
+	//
+	// Auto-increment columns included. They were left out here, and the
+	// table-level constraint is only written for composite keys, so on
+	// Postgres an auto-increment "primary key" was a bare serial with no key
+	// at all — two rows could share an id — and on MySQL and MariaDB the
+	// table could not be created, because they require an auto column to be
+	// a key. SQLite never reaches this: its form returned above.
+	if column.PrimaryKey && singlePrimaryKey && db.Config.DbType != DbTypeSqlite {
 		sqlText += " primary key"
 	}
 
@@ -555,9 +563,18 @@ func pluginTableSql(db *Database, manifest *PluginManifest, table *PluginTable) 
 		// Index names share the table's namespace so two plugins can declare
 		// the same column name without colliding on Postgres, where index
 		// names are database-wide rather than per-table.
+		//
+		// MySQL has no IF NOT EXISTS on CREATE INDEX — MariaDB does, MySQL 8
+		// rejects it — so it is left off there and CreatePluginSchema
+		// forgives the "already exists" that a second run produces.
+		ifNotExists := "if not exists "
+		if db.Config.DbType == DbTypeMysql || db.Config.DbType == DbTypeMariadb {
+			ifNotExists = ""
+		}
+
 		indexes = append(indexes, fmt.Sprintf(
-			"create index if not exists `%s_%s_idx` on `%s` (`%s`)",
-			name, column.Name, name, column.Name,
+			"create index %s`%s` on `%s` (`%s`)",
+			ifNotExists, pluginIndexName(name, column.Name), name, column.Name,
 		))
 	}
 
@@ -617,11 +634,35 @@ func CreatePluginSchema(db *Database, manifest *PluginManifest) error {
 
 	for _, query := range indexes {
 		if _, err := db.Exec(query); err != nil {
+			// An index that is already there, on the backends that cannot be
+			// asked to check first.
+			if db.alreadyApplied(err) {
+				continue
+			}
 			return fmt.Errorf("%v while doing %s", err, query)
 		}
 	}
 
 	return nil
+}
+
+// pluginIndexName names the index on one column of a plugin table.
+//
+// "<table>_<column>_idx" where that fits in the 63 bytes Postgres allows an
+// identifier — which is what every index made so far is called, so nothing
+// existing is renamed. Longer than that, Postgres would cut the name off
+// without a word and two indexes on one table could be cut to the same name,
+// the second then silently never created; MySQL refuses outright at 64. Those
+// get the front of the name and a hash of the whole of it instead.
+func pluginIndexName(table string, column string) string {
+	name := fmt.Sprintf("%s_%s_idx", table, column)
+	if len(name) <= pluginIdentifierLimit {
+		return name
+	}
+
+	sum := sha1.Sum([]byte(name))
+
+	return fmt.Sprintf("%s_%x_idx", name[:pluginIdentifierLimit-13], sum[:4])
 }
 
 // addMissingPluginColumns adds manifest columns that the live table does not
