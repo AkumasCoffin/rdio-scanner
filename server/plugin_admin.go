@@ -16,6 +16,7 @@
 package main
 
 import (
+	"errors"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -477,11 +478,24 @@ func (admin *Admin) pluginUninstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	controller := admin.Controller
-
-	if _, ok := controller.Plugins.Get(body.PluginId); !ok {
-		writeJsonError(w, http.StatusNotFound, "no such plugin")
+	status, err := admin.Controller.uninstallPlugin(body.PluginId, body.Purge)
+	if err != nil {
+		writeJsonError(w, status, err.Error())
 		return
+	}
+
+	admin.Controller.EmitConfig()
+
+	writeJson(w, map[string]any{"pluginId": body.PluginId, "restartRequired": true, "purged": body.Purge})
+}
+
+// uninstallPlugin stops a plugin and removes its code and its registry row,
+// and its tables and data directory too when purge is set. On failure it
+// returns the HTTP status that describes it.
+func (controller *Controller) uninstallPlugin(pluginId string, purge bool) (int, error) {
+	plugin, ok := controller.Plugins.Get(pluginId)
+	if !ok {
+		return http.StatusNotFound, errors.New("no such plugin")
 	}
 
 	// Stop it before the files go. Removing the code from under a running
@@ -489,37 +503,54 @@ func (admin *Admin) pluginUninstall(w http.ResponseWriter, r *http.Request) {
 	// methods stay registered, and every extension point keeps dispatching
 	// into it — for the rest of the process's life, since nothing afterwards
 	// holds a reference to stop it with.
-	controller.Plugins.StopOne(controller, body.PluginId)
+	controller.Plugins.StopOne(controller, pluginId)
 
 	// Its measurements go too, so an uninstalled plugin does not linger in the
 	// panel claiming time nothing is spending.
-	controller.PluginDispatch.metrics.Forget(body.PluginId)
+	controller.PluginDispatch.metrics.Forget(pluginId)
 
-	if err := controller.Plugins.RemoveFiles(controller.Config, body.PluginId); err != nil {
-		writeJsonError(w, http.StatusInternalServerError, err.Error())
-		return
+	// The data, while the manifest that names its tables is still to hand.
+	//
+	// The request has carried this flag since the dialog offered "Remove
+	// data", and nothing ever read it: the tables and the data directory were
+	// left where they were, the webapp reported them deleted, and with the
+	// registry row gone the purge endpoint answered "no such plugin" from then
+	// on. The one moment the data could be removed was the moment it was
+	// skipped.
+	//
+	// Before the files and the row, so a purge that fails leaves a plugin
+	// that is still installed and can be purged again, rather than orphans.
+	if purge {
+		if err := controller.Plugins.PurgeData(controller.Database, controller.Config, plugin); err != nil {
+			return http.StatusInternalServerError, err
+		}
 	}
 
-	if err := controller.Plugins.Delete(controller.Database, body.PluginId); err != nil {
-		writeJsonError(w, http.StatusInternalServerError, err.Error())
-		return
+	if err := controller.Plugins.RemoveFiles(controller.Config, pluginId); err != nil {
+		return http.StatusInternalServerError, err
+	}
+
+	if err := controller.Plugins.Delete(controller.Database, pluginId); err != nil {
+		return http.StatusInternalServerError, err
 	}
 
 	if err := controller.Plugins.Read(controller.Database, controller.Config); err != nil {
-		writeJsonError(w, http.StatusInternalServerError, err.Error())
-		return
+		return http.StatusInternalServerError, err
 	}
 
-	// The plugin's tables are deliberately left in place. Reinstalling brings
-	// the settings and data straight back; removing them is a separate,
-	// explicit action.
-	controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf(
-		"plugin %s uninstalled; its settings and data were kept", body.PluginId,
-	))
+	if purge {
+		controller.Logs.LogEvent(LogLevelWarn, fmt.Sprintf(
+			"plugin %s uninstalled and its settings and data removed", pluginId,
+		))
+	} else {
+		// Left in place on purpose: reinstalling brings the settings and data
+		// straight back.
+		controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf(
+			"plugin %s uninstalled; its settings and data were kept", pluginId,
+		))
+	}
 
-	controller.EmitConfig()
-
-	writeJson(w, map[string]any{"pluginId": body.PluginId, "restartRequired": true})
+	return http.StatusOK, nil
 }
 
 func (admin *Admin) pluginPurge(w http.ResponseWriter, r *http.Request) {
