@@ -188,8 +188,9 @@ func (logs *Logs) Prune(db *Database, pruneDays uint) error {
 	logs.mutex.Lock()
 	defer logs.mutex.Unlock()
 
-	date := time.Now().Add(-24 * time.Hour * time.Duration(pruneDays)).Format(db.DateTimeFormat)
-	_, err := db.Exec("delete from `rdioScannerLogs` where `dateTime` < ?", date)
+	// In UTC and bound as a time, for the reason Calls.Prune gives.
+	cutoff := time.Now().UTC().Add(-24 * time.Hour * time.Duration(pruneDays))
+	_, err := db.Exec("delete from `rdioScannerLogs` where `dateTime` < ?", cutoff)
 
 	return err
 }

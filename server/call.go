@@ -767,8 +767,13 @@ func (calls *Calls) GetIdByKey(system uint, talkgroup uint, dateTime time.Time, 
 }
 
 func (calls *Calls) Prune(db *Database, pruneDays uint) error {
-	date := time.Now().Add(-24 * time.Hour * time.Duration(pruneDays)).Format(db.DateTimeFormat)
-	_, err := db.Exec("delete from `rdioScannerCalls` where `dateTime` < ?", date)
+	// A time, in UTC, handed to the driver — not the host's wall clock written
+	// out as text. Rows are stored in UTC, and the formatted form carried no
+	// zone on Postgres and MySQL (and the wrong text altogether on SQLite), so
+	// the cutoff sat off by the host's UTC offset: a server in Sydney pruned
+	// eleven hours early, one in Los Angeles kept eight hours too many.
+	cutoff := time.Now().UTC().Add(-24 * time.Hour * time.Duration(pruneDays))
+	_, err := db.Exec("delete from `rdioScannerCalls` where `dateTime` < ?", cutoff)
 
 	return err
 }
