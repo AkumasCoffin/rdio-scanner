@@ -304,3 +304,20 @@ func (talkgroups *Talkgroups) Write(db *Database, systemId uint) error {
 }
 
 type TalkgroupsMap []TalkgroupMap
+
+// MarshalJSON renders the talkgroups as the list they are.
+//
+// Without it a system encodes as `"talkgroups": {"List": [...]}`, which is
+// the struct, not the data — and that is what plugins were handed through
+// rdio.models.systems. Worse than unreadable: the model's set and remove
+// encode the systems, change one, and decode them back, and decoding only
+// accepts a list. Every system came back with no talkgroups, the write that
+// followed deleted the rows, and one plugin adding one system emptied the
+// talkgroup and unit tables for the whole server.
+func (talkgroups *Talkgroups) MarshalJSON() ([]byte, error) {
+	if talkgroups == nil || talkgroups.List == nil {
+		return []byte("[]"), nil
+	}
+
+	return json.Marshal(talkgroups.List)
+}

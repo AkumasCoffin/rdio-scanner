@@ -235,3 +235,13 @@ func (units *Units) Write(db *Database, systemId uint) error {
 
 	return nil
 }
+
+// MarshalJSON renders the units as the list they are, for the reason
+// Talkgroups.MarshalJSON gives.
+func (units *Units) MarshalJSON() ([]byte, error) {
+	if units == nil || units.List == nil {
+		return []byte("[]"), nil
+	}
+
+	return json.Marshal(units.List)
+}
