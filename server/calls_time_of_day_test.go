@@ -58,13 +58,26 @@ func TestTimeOfDayPredicateSelectsTheRightHours(t *testing.T) {
 
 	// One call every hour across two days, at UTC midnight boundaries, so each
 	// hour of the clock is represented exactly twice.
+	//
+	// Bound as a time.Time on the first day and as formatted text on the
+	// second, because both are in real databases and they are not the same
+	// text on SQLite: ingest binds the time, and the driver stores it in Go's
+	// own rendering ("2026-03-01 04:00:00 +0000 UTC"), which SQLite's date
+	// functions cannot read. Seeding only the formatted form is how this
+	// filter passed its test while matching nothing on a live SQLite install.
 	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 48; i++ {
 		at := base.Add(time.Duration(i) * time.Hour)
+
+		var stored any = at
+		if i >= 24 {
+			stored = at.Format(db.DateTimeFormat)
+		}
+
 		if _, err := db.Exec(
 			"insert into `rdioScannerCalls` (`audio`, `audioName`, `audioType`, `dateTime`, `frequencies`, `patches`, `sources`, `system`, `talkgroup`) "+
 				"values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			[]byte{}, "x.m4a", "audio/mp4", at.Format(db.DateTimeFormat), "[]", "[]", "[]", 1, 100,
+			[]byte{}, "x.m4a", "audio/mp4", stored, "[]", "[]", "[]", 1, 100,
 		); err != nil {
 			t.Fatalf("cannot seed hour %d: %v", i, err)
 		}

@@ -1920,9 +1920,16 @@ func timeOfDayPredicate(db *Database, startMinute int, stopMinute int, offsetMin
 			offsetMinutes)
 
 	case DbTypeSqlite:
+		// The first nineteen characters, not the column. SQLite has no
+		// datetime type; the column holds whatever text the driver wrote, and
+		// for a bound time.Time that is Go's own rendering —
+		// "2026-03-01 04:00:00.123 +0000 UTC" — which strftime cannot parse,
+		// so it returned NULL and the filter matched no call ingest had ever
+		// stored. Every form that has been written here starts with
+		// "YYYY-MM-DD HH:MM:SS" in UTC, and that prefix is one strftime reads.
 		minuteOfDay = fmt.Sprintf(
-			"(cast(strftime('%%H', `rdioScannerCalls`.`dateTime`, '%d minutes') as integer) * 60 + "+
-				"cast(strftime('%%M', `rdioScannerCalls`.`dateTime`, '%d minutes') as integer))",
+			"(cast(strftime('%%H', substr(`rdioScannerCalls`.`dateTime`, 1, 19), '%d minutes') as integer) * 60 + "+
+				"cast(strftime('%%M', substr(`rdioScannerCalls`.`dateTime`, 1, 19), '%d minutes') as integer))",
 			offsetMinutes, offsetMinutes)
 
 	default:
