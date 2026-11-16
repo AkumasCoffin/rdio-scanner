@@ -171,7 +171,8 @@ func (tags *Tags) Read(db *Database) error {
 	tags.mutex.Lock()
 	defer tags.mutex.Unlock()
 
-	tags.List = []*Tag{}
+	// Built aside and swapped in on success: see Groups.Read.
+	list := []*Tag{}
 
 	formatError := func(err error) error {
 		return fmt.Errorf("tags read: %v", err)
@@ -192,7 +193,11 @@ func (tags *Tags) Read(db *Database) error {
 			tag.Id = uint(id.Float64)
 		}
 
-		tags.List = append(tags.List, tag)
+		list = append(list, tag)
+	}
+
+	if err == nil {
+		err = rows.Err()
 	}
 
 	rows.Close()
@@ -200,6 +205,8 @@ func (tags *Tags) Read(db *Database) error {
 	if err != nil {
 		return formatError(err)
 	}
+
+	tags.List = list
 
 	return nil
 }

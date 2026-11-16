@@ -419,7 +419,8 @@ func (downstreams *Downstreams) Read(db *Database) error {
 	downstreams.mutex.Lock()
 	defer downstreams.mutex.Unlock()
 
-	downstreams.List = []*Downstream{}
+	// Built aside and swapped in on success: see Groups.Read.
+	list := []*Downstream{}
 
 	formatError := func(err error) error {
 		return fmt.Errorf("downstreams.read: %v", err)
@@ -456,7 +457,11 @@ func (downstreams *Downstreams) Read(db *Database) error {
 			continue
 		}
 
-		downstreams.List = append(downstreams.List, downstream)
+		list = append(list, downstream)
+	}
+
+	if err == nil {
+		err = rows.Err()
 	}
 
 	rows.Close()
@@ -464,6 +469,8 @@ func (downstreams *Downstreams) Read(db *Database) error {
 	if err != nil {
 		return formatError(err)
 	}
+
+	downstreams.List = list
 
 	return nil
 }

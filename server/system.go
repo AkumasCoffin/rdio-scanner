@@ -376,7 +376,8 @@ func (systems *Systems) Read(db *Database) error {
 	systems.mutex.Lock()
 	defer systems.mutex.Unlock()
 
-	systems.List = []*System{}
+	// Built aside and swapped in on success: see Groups.Read.
+	list := []*System{}
 
 	formatError := func(err error) error {
 		return fmt.Errorf("systems.read: %v", err)
@@ -433,7 +434,11 @@ func (systems *Systems) Read(db *Database) error {
 			system.Order = uint(order.Float64)
 		}
 
-		systems.List = append(systems.List, system)
+		list = append(list, system)
+	}
+
+	if err == nil {
+		err = rows.Err()
 	}
 
 	rows.Close()
@@ -444,7 +449,7 @@ func (systems *Systems) Read(db *Database) error {
 
 	// Cursor is closed and its connection returned to the pool — safe to run
 	// the per-system reads now, and safe for them to return early on error.
-	for _, system := range systems.List {
+	for _, system := range list {
 		if err = system.Talkgroups.Read(db, system.Id); err != nil {
 			return err
 		}
@@ -454,9 +459,11 @@ func (systems *Systems) Read(db *Database) error {
 		}
 	}
 
-	sort.Slice(systems.List, func(i int, j int) bool {
-		return systems.List[i].Order < systems.List[j].Order
+	sort.Slice(list, func(i int, j int) bool {
+		return list[i].Order < list[j].Order
 	})
+
+	systems.List = list
 
 	return nil
 }

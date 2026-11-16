@@ -120,7 +120,8 @@ func (units *Units) Read(db *Database, systemId uint) error {
 	units.mutex.Lock()
 	defer units.mutex.Unlock()
 
-	units.List = []*Unit{}
+	// Built aside and swapped in on success: see Groups.Read.
+	list := []*Unit{}
 
 	formatError := func(err error) error {
 		return fmt.Errorf("units.read: %v", err)
@@ -137,7 +138,11 @@ func (units *Units) Read(db *Database, systemId uint) error {
 			break
 		}
 
-		units.List = append(units.List, unit)
+		list = append(list, unit)
+	}
+
+	if err == nil {
+		err = rows.Err()
 	}
 
 	rows.Close()
@@ -146,9 +151,11 @@ func (units *Units) Read(db *Database, systemId uint) error {
 		return formatError(err)
 	}
 
-	sort.Slice(units.List, func(i int, j int) bool {
-		return units.List[i].Order < units.List[j].Order
+	sort.Slice(list, func(i int, j int) bool {
+		return list[i].Order < list[j].Order
 	})
+
+	units.List = list
 
 	return nil
 }

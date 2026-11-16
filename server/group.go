@@ -171,7 +171,11 @@ func (groups *Groups) Read(db *Database) error {
 	groups.mutex.Lock()
 	defer groups.mutex.Unlock()
 
-	groups.List = []*Group{}
+	// Built aside and swapped in only once the whole read has succeeded. The
+	// list used to be emptied first, so a read that failed — or ended early,
+	// which nothing checked for — left memory holding nothing while the table
+	// held everything, and the next write deletes whatever memory lacks.
+	list := []*Group{}
 
 	formatError := func(err error) error {
 		return fmt.Errorf("groups.read: %v", err)
@@ -196,7 +200,11 @@ func (groups *Groups) Read(db *Database) error {
 			continue
 		}
 
-		groups.List = append(groups.List, group)
+		list = append(list, group)
+	}
+
+	if err == nil {
+		err = rows.Err()
 	}
 
 	rows.Close()
@@ -204,6 +212,8 @@ func (groups *Groups) Read(db *Database) error {
 	if err != nil {
 		return formatError(err)
 	}
+
+	groups.List = list
 
 	return nil
 }

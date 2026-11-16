@@ -240,7 +240,8 @@ func (patches *Patches) Read(db *Database) error {
 	patches.mutex.Lock()
 	defer patches.mutex.Unlock()
 
-	patches.List = []*Patch{}
+	// Built aside and swapped in on success: see Groups.Read.
+	list := []*Patch{}
 
 	formatError := func(err error) error {
 		return fmt.Errorf("patches.read: %v", err)
@@ -271,7 +272,11 @@ func (patches *Patches) Read(db *Database) error {
 
 		patch.normalize()
 
-		patches.List = append(patches.List, patch)
+		list = append(list, patch)
+	}
+
+	if err == nil {
+		err = rows.Err()
 	}
 
 	rows.Close()
@@ -279,6 +284,8 @@ func (patches *Patches) Read(db *Database) error {
 	if err != nil {
 		return formatError(err)
 	}
+
+	patches.List = list
 
 	return nil
 }

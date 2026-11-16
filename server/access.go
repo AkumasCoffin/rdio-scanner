@@ -213,7 +213,8 @@ func (accesses *Accesses) Read(db *Database) error {
 	accesses.mutex.Lock()
 	defer accesses.mutex.Unlock()
 
-	accesses.List = []*Access{}
+	// Built aside and swapped in on success: see Groups.Read.
+	list := []*Access{}
 
 	formatError := func(err error) error {
 		return fmt.Errorf("accesses.read: %v", err)
@@ -258,7 +259,11 @@ func (accesses *Accesses) Read(db *Database) error {
 			access.Systems = []any{}
 		}
 
-		accesses.List = append(accesses.List, access)
+		list = append(list, access)
+	}
+
+	if err == nil {
+		err = rows.Err()
 	}
 
 	rows.Close()
@@ -266,6 +271,8 @@ func (accesses *Accesses) Read(db *Database) error {
 	if err != nil {
 		return formatError(err)
 	}
+
+	accesses.List = list
 
 	return nil
 }

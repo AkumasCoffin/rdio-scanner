@@ -822,7 +822,8 @@ func (dirwatches *Dirwatches) Read(db *Database) error {
 
 	dirwatches.Stop()
 
-	dirwatches.List = []*Dirwatch{}
+	// Built aside and swapped in on success: see Groups.Read.
+	list := []*Dirwatch{}
 
 	formatError := func(err error) error {
 		return fmt.Errorf("dirwatches.read: %v", err)
@@ -875,7 +876,11 @@ func (dirwatches *Dirwatches) Read(db *Database) error {
 			dirwatch.Kind = kind.String
 		}
 
-		dirwatches.List = append(dirwatches.List, dirwatch)
+		list = append(list, dirwatch)
+	}
+
+	if err == nil {
+		err = rows.Err()
 	}
 
 	rows.Close()
@@ -883,6 +888,8 @@ func (dirwatches *Dirwatches) Read(db *Database) error {
 	if err != nil {
 		return formatError(err)
 	}
+
+	dirwatches.List = list
 
 	return nil
 }

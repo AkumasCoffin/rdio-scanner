@@ -170,7 +170,8 @@ func (talkgroups *Talkgroups) Read(db *Database, systemId uint) error {
 	talkgroups.mutex.Lock()
 	defer talkgroups.mutex.Unlock()
 
-	talkgroups.List = []*Talkgroup{}
+	// Built aside and swapped in on success: see Groups.Read.
+	list := []*Talkgroup{}
 
 	formatError := func(err error) error {
 		return fmt.Errorf("talkgroups.read: %v", err)
@@ -204,7 +205,11 @@ func (talkgroups *Talkgroups) Read(db *Database, systemId uint) error {
 			talkgroup.Led2 = led2.String
 		}
 
-		talkgroups.List = append(talkgroups.List, talkgroup)
+		list = append(list, talkgroup)
+	}
+
+	if err == nil {
+		err = rows.Err()
 	}
 
 	rows.Close()
@@ -213,9 +218,11 @@ func (talkgroups *Talkgroups) Read(db *Database, systemId uint) error {
 		return formatError(err)
 	}
 
-	sort.Slice(talkgroups.List, func(i int, j int) bool {
-		return talkgroups.List[i].Order < talkgroups.List[j].Order
+	sort.Slice(list, func(i int, j int) bool {
+		return list[i].Order < list[j].Order
 	})
+
+	talkgroups.List = list
 
 	return nil
 }

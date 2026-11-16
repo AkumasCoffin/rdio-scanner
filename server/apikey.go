@@ -163,7 +163,8 @@ func (apikeys *Apikeys) Read(db *Database) error {
 	apikeys.mutex.Lock()
 	defer apikeys.mutex.Unlock()
 
-	apikeys.List = []*Apikey{}
+	// Built aside and swapped in on success: see Groups.Read.
+	list := []*Apikey{}
 
 	formatError := func(err error) error {
 		return fmt.Errorf("apikeys.read: %v", err)
@@ -200,7 +201,11 @@ func (apikeys *Apikeys) Read(db *Database) error {
 			apikey.Systems = []any{}
 		}
 
-		apikeys.List = append(apikeys.List, apikey)
+		list = append(list, apikey)
+	}
+
+	if err == nil {
+		err = rows.Err()
 	}
 
 	rows.Close()
@@ -208,6 +213,8 @@ func (apikeys *Apikeys) Read(db *Database) error {
 	if err != nil {
 		return formatError(err)
 	}
+
+	apikeys.List = list
 
 	return nil
 }

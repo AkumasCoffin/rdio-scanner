@@ -232,6 +232,46 @@ func (options *Options) Read(db *Database) error {
 	options.mutex.Lock()
 	defer options.mutex.Unlock()
 
+	// Everything is fetched before anything is changed, and a failure leaves
+	// the options exactly as they were.
+	//
+	// This used to install the defaults first and then run one query per
+	// setting, ignoring every error — and report success regardless. A read
+	// that failed part way, which only takes the database being briefly
+	// unavailable during a config save or a password change, therefore left
+	// the server running on defaults: the admin password "rdio-scanner",
+	// seven days of retention whatever was configured — applied by the next
+	// prune — and the next save wrote those defaults back as the truth.
+	rows, err := db.Query("select `key`, `val` from `rdioScannerConfigs`")
+	if err != nil {
+		return fmt.Errorf("options.read: %v", err)
+	}
+
+	all := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err = rows.Scan(&k, &v); err != nil {
+			break
+		}
+		all[k] = v
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+
+	if err != nil {
+		return fmt.Errorf("options.read: %v", err)
+	}
+
+	// Stands in for the per-setting queries that used to be here.
+	lookup := func(key string) (string, error) {
+		if v, ok := all[key]; ok {
+			return v, nil
+		}
+		return "", sql.ErrNoRows
+	}
+
 	defaultPassword, _ = bcrypt.GenerateFromPassword([]byte(defaults.adminPassword), bcrypt.DefaultCost)
 
 	options.adminPassword = string(defaultPassword)
@@ -256,14 +296,14 @@ func (options *Options) Read(db *Database) error {
 	options.TagsToggle = defaults.options.tagsToggle
 	options.UpdatePrereleases = false
 
-	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'adminPassword'").Scan(&s)
+	s, err = lookup("adminPassword")
 	if err == nil {
 		if err = json.Unmarshal([]byte(s), &s); err == nil {
 			options.adminPassword = s
 		}
 	}
 
-	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'adminPasswordNeedChange'").Scan(&s)
+	s, err = lookup("adminPasswordNeedChange")
 	if err == nil {
 		var b bool
 		if err = json.Unmarshal([]byte(s), &b); err == nil {
@@ -272,16 +312,13 @@ func (options *Options) Read(db *Database) error {
 	}
 
 	// Load each option from its own row. Missing rows keep the defaults set above.
-	rows, err := db.Query("select `key`, `val` from `rdioScannerConfigs` where `key` like 'option.%'")
-	if err == nil {
+	{
 		stored := map[string]string{}
-		for rows.Next() {
-			var k, v string
-			if err := rows.Scan(&k, &v); err == nil {
+		for k, v := range all {
+			if strings.HasPrefix(k, optionRowPrefix) {
 				stored[strings.TrimPrefix(k, optionRowPrefix)] = v
 			}
 		}
-		rows.Close()
 
 		applyStr := func(key string, dest *string) {
 			if raw, ok := stored[key]; ok {
@@ -342,7 +379,7 @@ func (options *Options) Read(db *Database) error {
 		applyStr("pluginRepos", &options.PluginRepos)
 	}
 
-	err = db.QueryRow("select `val` from `rdioScannerConfigs` where `key` = 'secret'").Scan(&s)
+	s, err = lookup("secret")
 	if err == nil {
 		if err = json.Unmarshal([]byte(s), &s); err == nil {
 			options.secret = s
