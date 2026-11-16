@@ -2,7 +2,7 @@ module rdio-scanner/server
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.11
 
 require (
 	github.com/dhowden/tag v0.0.0-20220618230019-adf36e896086
