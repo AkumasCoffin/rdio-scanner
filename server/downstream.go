@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -354,6 +355,13 @@ func (downstream *Downstream) Send(call *Call) error {
 		req.Header.Set("User-Agent", "Rdio-Scanner")
 
 		if res, err := c.Do(req); err == nil {
+			// Read to the end and closed, which is what returns the
+			// connection for the next call. Left open, every forwarded call
+			// dialled a fresh connection — a TLS handshake each time — and
+			// its predecessor lingered until the 30-second timeout reaped it.
+			defer res.Body.Close()
+			io.Copy(io.Discard, io.LimitReader(res.Body, 64<<10))
+
 			if res.StatusCode != http.StatusOK {
 				return formatError(fmt.Errorf("bad status: %s", res.Status))
 			}
