@@ -70,9 +70,8 @@ func (access *Access) FromMap(m map[string]any) *Access {
 
 	switch v := m["systems"].(type) {
 	case []any:
-		if b, err := json.Marshal(v); err == nil {
-			access.Systems = string(b)
-		}
+		// Kept as a list: see Apikey.FromMap.
+		access.Systems = v
 	case string:
 		access.Systems = v
 	}
@@ -349,12 +348,7 @@ func (accesses *Accesses) Write(db *Database) error {
 	}
 
 	for _, access := range accesses.List {
-		switch access.Systems {
-		case "*":
-			systems = `"*"`
-		default:
-			systems = access.Systems
-		}
+		systems = scopeColumnValue(access.Systems)
 
 		if err = db.QueryRow("select count(*) from `rdioScannerAccesses` where `_id` = ?", access.Id).Scan(&count); err != nil {
 			break

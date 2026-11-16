@@ -60,9 +60,12 @@ func (apikey *Apikey) FromMap(m map[string]any) *Apikey {
 
 	switch v := m["systems"].(type) {
 	case []any:
-		if b, err := json.Marshal(v); err == nil {
-			apikey.Systems = string(b)
-		}
+		// Kept as the list it is, the shape a read from the database gives
+		// and the only one HasAccess understands. It used to be turned into
+		// its JSON text here and stay that way until the save finished and
+		// re-read the table — so for the length of every config save a
+		// scoped entry matched nothing.
+		apikey.Systems = v
 	case string:
 		apikey.Systems = v
 	}
@@ -266,12 +269,7 @@ func (apikeys *Apikeys) Write(db *Database) error {
 	}
 
 	for _, apikey := range apikeys.List {
-		switch apikey.Systems {
-		case "*":
-			systems = `"*"`
-		default:
-			systems = apikey.Systems
-		}
+		systems = scopeColumnValue(apikey.Systems)
 
 		if err = db.QueryRow("select count(*) from `rdioScannerApiKeys` where `_id` = ?", apikey.Id).Scan(&count); err != nil {
 			break
@@ -298,4 +296,34 @@ func (apikeys *Apikeys) Write(db *Database) error {
 	}
 
 	return nil
+}
+
+// scopeColumnValue renders a systems scope for the `systems` column of the
+// accesses, API keys and downstreams tables, which hold it as JSON text.
+//
+// The scope lives in memory as "*" or as the decoded list. The writers used to
+// bind whatever they were holding, which was only ever right for a value fresh
+// from a config save: anything read back from the database is a list, and a
+// list is not something a driver can bind. Every write that did not come
+// straight from the admin form — the user-add and user-remove commands, a
+// plugin editing accesses, keys or downstreams — therefore failed outright as
+// soon as one entry on the server was scoped to particular systems.
+func scopeColumnValue(scope any) any {
+	switch v := scope.(type) {
+	case nil:
+		return nil
+
+	case string:
+		if v == "*" {
+			return `"*"`
+		}
+		return v
+
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil
+		}
+		return string(b)
+	}
 }

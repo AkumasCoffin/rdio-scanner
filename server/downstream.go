@@ -62,9 +62,8 @@ func (downstream *Downstream) FromMap(m map[string]any) *Downstream {
 
 	switch v := m["systems"].(type) {
 	case []any:
-		if b, err := json.Marshal(v); err == nil {
-			downstream.Systems = string(b)
-		}
+		// Kept as a list: see Apikey.FromMap.
+		downstream.Systems = v
 	case string:
 		downstream.Systems = v
 	}
@@ -549,12 +548,7 @@ func (downstreams *Downstreams) Write(db *Database) error {
 	}
 
 	for _, downstream := range downstreams.List {
-		switch downstream.Systems {
-		case "*":
-			systems = `"*"`
-		default:
-			systems = downstream.Systems
-		}
+		systems = scopeColumnValue(downstream.Systems)
 
 		if err = db.QueryRow("select count(*) from `rdioScannerDownstreams` where `_id` = ?", downstream.Id).Scan(&count); err != nil {
 			break
