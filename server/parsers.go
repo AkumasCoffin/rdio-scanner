@@ -102,6 +102,16 @@ func ParseDSDPlusMeta(call *Call, fp string) error {
 		}
 	}
 
+	// A DSDPlus name is underscore-separated and the talkgroup is its
+	// second-to-last part. A file with no underscore at all — anything dropped
+	// into the watched folder that DSDPlus did not write — has only one part,
+	// and indexing the one before it panicked. The dirwatch goroutine that
+	// calls this has no recover, so one stray file ended the server, and with
+	// "delete after" off it ended it again on the next start.
+	if len(meta) < 2 {
+		return nil
+	}
+
 	if s := regexp.MustCompile(`[^\[\]]+`).FindAllString(meta[len(meta)-2], -1); len(s) > 0 {
 		if i, err := strconv.Atoi(s[0]); err == nil && i > 0 {
 			call.Talkgroup = uint(i)
@@ -366,13 +376,16 @@ func ParseMultipartContent(call *Call, p *multipart.Part, b []byte) {
 								src["src"] = uint(s)
 								switch t := v["tag"].(type) {
 								case string:
+									// Into the list being built. This used to
+									// add to call.units, which is not assigned
+									// until after the loop, so every tag was
+									// dropped and the call left carrying an
+									// empty unit list: unit names sent with an
+									// upload were never learned.
 									if units == nil {
 										units = NewUnits()
 									}
-									switch units := call.units.(type) {
-									case *Units:
-										units.Add(uint(s), t)
-									}
+									units.Add(uint(s), t)
 								}
 							}
 						}

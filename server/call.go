@@ -90,7 +90,12 @@ func (call *Call) IsValid() (ok bool, err error) {
 		err = errors.New("no audio")
 	}
 
-	if call.DateTime.Unix() == 0 {
+	// IsZero as well as the epoch. A time that was never set is year 1, not
+	// 1970, so comparing its Unix value with zero never matched and a call
+	// with no timestamp — none sent, or one that would not parse — passed. It
+	// was stored dated 0001-01-01, became the oldest call in every search, and
+	// was deleted by the next prune.
+	if call.DateTime.IsZero() || call.DateTime.Unix() == 0 {
 		ok = false
 		err = errors.New("no datetime")
 	}

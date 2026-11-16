@@ -650,8 +650,13 @@ func (controller *Controller) IngestCall(call *Call) {
 
 		switch v := call.units.(type) {
 		case *Units:
-			if v != nil {
-				populated = system.Units.Merge(v)
+			// Or-ed in, not assigned. Assigning threw away everything
+			// decided above: a call that created a talkgroup while carrying
+			// only units already known set this back to false, so the new
+			// talkgroup was never written or sent to listeners and was gone
+			// at the next restart.
+			if v != nil && system.Units.Merge(v) {
+				populated = true
 			}
 		}
 	}
