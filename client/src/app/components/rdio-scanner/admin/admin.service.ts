@@ -684,11 +684,23 @@ export class RdioScannerAdminService implements OnDestroy {
 
     async logout(): Promise<boolean> {
         try {
-            this.ngHttpClient.post(
-                this.getUrl(url.logout),
-                null,
-                { headers: this.getHeaders(), responseType: 'text' },
-            );
+            // Awaited, which is also what sends it. HttpClient builds a cold
+            // observable: nothing goes on the wire until something subscribes,
+            // and this call was left unsubscribed — so Logout cleared the
+            // token from this browser and never told the server, where it
+            // stayed valid until a restart or five later logins pushed it out.
+            //
+            // A failure here must not keep someone signed in on this screen,
+            // so it is swallowed and the local sign-out below still happens.
+            try {
+                await firstValueFrom(this.ngHttpClient.post(
+                    this.getUrl(url.logout),
+                    null,
+                    { headers: this.getHeaders(), responseType: 'text' },
+                ));
+            } catch {
+                // The server is unreachable or already forgot the token.
+            }
 
             this.configWebSocketClose();
 
