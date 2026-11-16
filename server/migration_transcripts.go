@@ -410,7 +410,22 @@ func (db *Database) copyTranscriptData(verbose bool) error {
 		}
 	}
 
-	// Settings. Values are stored as JSON in both places, so they carry across
+	if moved := db.moveTranscriptSettings(); moved > 0 && verbose {
+		log.Printf("transcript migration: moved %d settings into the plugin's configuration", moved)
+	}
+
+	return nil
+}
+
+// moveTranscriptSettings copies the transcription settings that used to be
+// server options into the transcripts plugin's configuration, leaving alone
+// any the plugin already has, and reports how many it moved.
+//
+// Its own function because the import needs it too: a database imported from
+// an older install arrives with those options and no plugin configuration,
+// after the migration that would have moved them has long since run here.
+func (db *Database) moveTranscriptSettings() int {
+	// Values are stored as JSON in both places, so they carry across
 	// unchanged and keep their types.
 	moved := 0
 	for optionKey, pluginKey := range transcriptOptionMapping {
@@ -438,11 +453,7 @@ func (db *Database) copyTranscriptData(verbose bool) error {
 		}
 	}
 
-	if moved > 0 && verbose {
-		log.Printf("transcript migration: moved %d settings into the plugin's configuration", moved)
-	}
-
-	return nil
+	return moved
 }
 
 // dropTranscriptColumns removes the originals. Failures are logged rather than

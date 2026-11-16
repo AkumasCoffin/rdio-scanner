@@ -266,6 +266,11 @@ func ImportSqlite(target *Database, sqliteFile string, withCalls bool, force boo
 		return err
 	}
 
+	// After the calls, for the same reason as the tables above.
+	if err := importLegacyTranscripts(source, target, withCalls); err != nil {
+		return err
+	}
+
 	// Keys were preserved, so on Postgres every sequence is now behind its
 	// table and the next insert would collide.
 	if err := target.repairSequences(); err != nil {
@@ -957,4 +962,151 @@ func placeholders(n int) string {
 		marks[i] = "?"
 	}
 	return strings.Join(marks, ", ")
+}
+
+// importLegacyTranscripts brings across what an install older than 6.14 kept
+// in the core tables and a current one keeps in the transcripts plugin's:
+// the transcripts themselves, the per-system and per-talkgroup switches, and
+// the provider settings.
+//
+// The ordinary copy matches columns by name and leaves behind any the target
+// does not have. For these that meant everything: the target dropped the old
+// columns when it moved the data to the plugin, on its own first start, so
+// importing an older file discarded the whole transcript archive with one
+// line saying a column was being ignored — the one thing in the database that
+// costs money to make again.
+//
+// A source that has already made the move has none of these columns and this
+// does nothing; its plugin tables are copied as tables, by the caller.
+func importLegacyTranscripts(source *Database, target *Database, withCalls bool) error {
+	has := func(db *Database, table string, column string) bool {
+		columns, err := tableColumns(db, table)
+		return err == nil && contains(columns, column)
+	}
+
+	// Nowhere to put them: the target has no transcripts tables.
+	if !has(target, "plugin_transcripts_calls", "callId") {
+		return nil
+	}
+
+	prefix := target.insertIgnorePrefix()
+	suffix := target.insertIgnoreSuffix()
+
+	// copyRows streams one query's rows from the source into one insert on the
+	// target. Rows already there are left as they are, so a resumed import
+	// neither duplicates nor fails.
+	//
+	// boolean is the position of a column holding an on/off value, or -1.
+	// SQLite keeps those as 0 and 1, which Postgres will not take for a
+	// boolean column.
+	copyRows := func(what string, query string, insert string, width int, boolean int) error {
+		rows, err := source.Query(query)
+		if err != nil {
+			return fmt.Errorf("import: reading %s: %v", what, err)
+		}
+		defer rows.Close()
+
+		tx, err := target.Sql.Begin()
+		if err != nil {
+			return fmt.Errorf("import: %s: %v", what, err)
+		}
+
+		statement := target.formatQuery(insert)
+		n := 0
+
+		for rows.Next() {
+			values := make([]any, width)
+			holders := make([]any, width)
+			for i := range values {
+				holders[i] = &values[i]
+			}
+
+			if err := rows.Scan(holders...); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("import: reading %s: %v", what, err)
+			}
+
+			// SQLite hands text back as bytes when the column has no declared
+			// affinity; the target wants text.
+			for i, value := range values {
+				if b, ok := value.([]byte); ok {
+					values[i] = string(b)
+				}
+			}
+
+			if boolean >= 0 {
+				// An absent switch meant "on" where these came from.
+				if values[boolean] == nil {
+					values[boolean] = true
+				} else {
+					values[boolean] = truthy(values[boolean])
+				}
+			}
+
+			if _, err := tx.Exec(statement, values...); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("import: writing %s: %v", what, err)
+			}
+			n++
+		}
+
+		if err := rows.Err(); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("import: reading %s: %v", what, err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("import: %s: %v", what, err)
+		}
+
+		if n > 0 {
+			fmt.Printf("  %-24s %d row(s), from before transcripts moved to the plugin\n", what, n)
+		}
+
+		return nil
+	}
+
+	if has(source, "rdioScannerSystems", "transcribe") {
+		prompt := "''"
+		if has(source, "rdioScannerSystems", "transcriptionPrompt") {
+			prompt = "coalesce(`transcriptionPrompt`, '')"
+		}
+
+		if err := copyRows("transcription by system",
+			fmt.Sprintf("select `id`, `transcribe`, %s from `rdioScannerSystems`", prompt),
+			fmt.Sprintf("%s `plugin_transcripts_systems` (`systemId`, `transcribe`, `prompt`) values (?, ?, ?)%s", prefix, suffix),
+			3, 1,
+		); err != nil {
+			return err
+		}
+	}
+
+	if has(source, "rdioScannerTalkgroups", "transcribe") {
+		if err := copyRows("transcription by talkgroup",
+			"select `systemId`, `id`, `transcribe` from `rdioScannerTalkgroups`",
+			fmt.Sprintf("%s `plugin_transcripts_talkgroups` (`systemId`, `talkgroupId`, `transcribe`) values (?, ?, ?)%s", prefix, suffix),
+			3, 2,
+		); err != nil {
+			return err
+		}
+	}
+
+	// The options were copied with the rest of the configuration; this is the
+	// step that hands them to the plugin.
+	if moved := target.moveTranscriptSettings(); moved > 0 {
+		fmt.Printf("  %-24s %d setting(s), from before transcripts moved to the plugin\n", "transcription settings", moved)
+	}
+
+	// Keyed by call id, so only beside the calls they were made for.
+	if withCalls && has(source, "rdioScannerCalls", "transcript") {
+		if err := copyRows("transcripts",
+			"select `id`, `transcript` from `rdioScannerCalls` where `transcript` is not null and `transcript` <> ''",
+			fmt.Sprintf("%s `plugin_transcripts_calls` (`callId`, `transcript`) values (?, ?)%s", prefix, suffix),
+			2, -1,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
