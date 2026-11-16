@@ -74,6 +74,15 @@ func (scheduler *Scheduler) pruneDatabase() error {
 			// Rows are gone, so the cached earliest-call bounds are wrong in
 			// the one direction a TTL cannot heal.
 			scheduler.Controller.Calls.InvalidateSearchMeta()
+
+			// And what plugins kept against the calls that just went. Logged
+			// and carried on from: leftovers are untidy, not a reason to skip
+			// the log pruning below.
+			if removed, err := pruneCallExtensionRows(db, scheduler.Controller.PluginSearchExtensions()); err != nil {
+				scheduler.Controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("pruning plugin data for removed calls: %v", err))
+			} else if removed > 0 {
+				scheduler.Controller.Logs.LogEvent(LogLevelInfo, fmt.Sprintf("removed %d plugin rows belonging to pruned calls", removed))
+			}
 		}
 	}
 

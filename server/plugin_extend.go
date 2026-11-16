@@ -234,3 +234,88 @@ func (controller *Controller) PluginCapabilities() []string {
 
 	return features
 }
+
+// Per-call plugin rows are removed in slices of this many call ids, at most
+// this many slices per prune cycle, so the first cycle after an upgrade —
+// which may find months of leftovers — cannot hold a connection for minutes
+// or bloat a single transaction. A cycle that does not finish carries on at
+// the next one, an hour later.
+const (
+	pluginOrphanSlice     = 50000
+	pluginOrphanMaxSlices = 20
+)
+
+// pruneCallExtensionRows deletes what plugins stored against calls that
+// retention has since removed.
+//
+// A plugin that registers a searchable column keeps one row per call, keyed by
+// the call's id. Pruning deleted the calls and nothing deleted those rows: the
+// transcripts table kept every transcript ever made, its search index with
+// it, for as long as the install lived — and a call id handed out again after
+// a restart found the old call's text already waiting for it.
+//
+// Only rows keyed below the oldest surviving call are taken. Ids rise with
+// time and retention removes the oldest, so that is nearly all of them, and it
+// is a range the primary key answers directly on every backend — where
+// "every key with no matching call" is an anti-join over both tables, hourly,
+// on the largest table there is. A call back-filled out of order and pruned
+// early leaves its row behind until the ids around it age out too.
+func pruneCallExtensionRows(db *Database, extensions []pluginResolvedSearch) (int64, error) {
+	var oldest sql.NullInt64
+
+	if err := db.QueryRow("select min(`id`) from `rdioScannerCalls`").Scan(&oldest); err != nil {
+		return 0, err
+	}
+
+	// No calls at all says nothing about what is stale — a fresh database and
+	// an emptied one look the same from here — so nothing is removed.
+	if !oldest.Valid {
+		return 0, nil
+	}
+
+	var removed int64
+	seen := map[string]bool{}
+
+	for _, extension := range extensions {
+		// Two fields of one plugin are commonly columns of the same table.
+		target := extension.table + "\x00" + extension.key
+		if seen[target] {
+			continue
+		}
+		seen[target] = true
+
+		if !pluginIndexIdentifier.MatchString(extension.table) || !pluginIndexIdentifier.MatchString(extension.key) {
+			continue
+		}
+
+		for slice := 0; slice < pluginOrphanMaxSlices; slice++ {
+			var first sql.NullInt64
+
+			query := fmt.Sprintf("select min(`%s`) from `%s`", extension.key, extension.table)
+			if err := db.QueryRow(query).Scan(&first); err != nil {
+				return removed, fmt.Errorf("%s: %v", extension.table, err)
+			}
+
+			if !first.Valid || first.Int64 >= oldest.Int64 {
+				break
+			}
+
+			until := first.Int64 + pluginOrphanSlice
+			if until > oldest.Int64 {
+				until = oldest.Int64
+			}
+
+			query = fmt.Sprintf("delete from `%s` where `%s` < ?", extension.table, extension.key)
+			result, err := db.Exec(query, until)
+			if err != nil {
+				return removed, fmt.Errorf("%s: %v", extension.table, err)
+			}
+
+			if n, err := result.RowsAffected(); err == nil {
+				removed += n
+			}
+		}
+	}
+
+	return removed, nil
+}
