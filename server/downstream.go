@@ -511,7 +511,8 @@ func (downstreams *Downstreams) Write(db *Database) error {
 		}
 		remove := true
 		for _, downstream := range downstreams.List {
-			if downstream.Id == nil || downstream.Id == rowId {
+			// See Accesses.Write: a new entry must not keep every old row.
+			if downstream.Id == rowId {
 				remove = false
 				break
 			}

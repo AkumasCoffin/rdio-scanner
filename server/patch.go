@@ -312,7 +312,8 @@ func (patches *Patches) Write(db *Database) error {
 		remove := true
 
 		for _, patch := range patches.List {
-			if patch.Id == nil || patch.Id == rowId {
+			// See Accesses.Write: a new entry must not keep every old row.
+			if patch.Id == rowId {
 				remove = false
 				break
 			}

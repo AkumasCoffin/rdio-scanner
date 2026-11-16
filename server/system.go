@@ -490,7 +490,8 @@ func (systems *Systems) Write(db *Database) error {
 		}
 		remove := true
 		for _, system := range systems.List {
-			if system.RowId == nil || (system.RowId == rowId && system.Id == systemId) {
+			// See Accesses.Write: a new entry must not keep every old row.
+			if system.RowId == rowId && system.Id == systemId {
 				remove = false
 				break
 			}

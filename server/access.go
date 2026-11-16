@@ -314,7 +314,13 @@ func (accesses *Accesses) Write(db *Database) error {
 		}
 		remove := true
 		for _, access := range accesses.List {
-			if access.Id == nil || access.Id == id {
+			// Only a row this list still names is kept. The test used to
+			// begin `access.Id == nil ||`, so a single new entry — which has no id
+			// yet — made every existing row match, and nothing was deleted:
+			// remove one entry and add another in the same save, and the
+			// removed one came back. For an access code or an API key that
+			// is a revoked credential that goes on working.
+			if access.Id == id {
 				remove = false
 				break
 			}

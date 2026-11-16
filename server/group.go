@@ -234,7 +234,8 @@ func (groups *Groups) Write(db *Database) error {
 		}
 		remove := true
 		for _, group := range groups.List {
-			if group.Id == nil || group.Id == rowId {
+			// See Accesses.Write: a new entry must not keep every old row.
+			if group.Id == rowId {
 				remove = false
 				break
 			}

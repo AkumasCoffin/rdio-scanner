@@ -230,7 +230,8 @@ func (tags *Tags) Write(db *Database) error {
 		}
 		remove := true
 		for _, tag := range tags.List {
-			if tag.Id == nil || tag.Id == rowId {
+			// See Accesses.Write: a new entry must not keep every old row.
+			if tag.Id == rowId {
 				remove = false
 				break
 			}

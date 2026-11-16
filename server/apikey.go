@@ -236,7 +236,8 @@ func (apikeys *Apikeys) Write(db *Database) error {
 		}
 		remove := true
 		for _, apikey := range apikeys.List {
-			if apikey.Id == nil || apikey.Id == id {
+			// See Accesses.Write: a new entry must not keep every old row.
+			if apikey.Id == id {
 				remove = false
 				break
 			}

@@ -910,7 +910,8 @@ func (dirwatches *Dirwatches) Write(db *Database) error {
 		}
 		remove := true
 		for _, dirwatch := range dirwatches.List {
-			if dirwatch.Id == nil || dirwatch.Id == rowId {
+			// See Accesses.Write: a new entry must not keep every old row.
+			if dirwatch.Id == rowId {
 				remove = false
 				break
 			}
