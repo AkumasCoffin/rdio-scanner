@@ -268,3 +268,56 @@ func TestImportGuardsMoreThanSystems(t *testing.T) {
 		t.Fatalf("-import_force should proceed: %v", err)
 	}
 }
+
+// The refusal has to come before anything keyed by call id is touched. The
+// target's transcripts used to be replaced with the source's first — under
+// ids that belong to different calls here — and only then did the import
+// notice the calls were not its own and stop.
+func TestARefusedImportLeavesTheTargetsTranscriptsAlone(t *testing.T) {
+	dir := t.TempDir()
+	source := seedSource(t, dir, "source.db", 6)
+
+	sourceDb := newSqliteAt(t, dir, "source.db")
+	if _, err := sourceDb.Exec("insert into `plugin_transcripts_calls` (`callId`, `transcript`) values (1, 'from the source file')"); err != nil {
+		t.Fatalf("seeding the source transcript: %v", err)
+	}
+	sourceDb.Sql.Close()
+
+	target := newSqliteAt(t, dir, "target.db")
+	defer target.Sql.Close()
+
+	if err := ImportSqlite(target, source, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// A week of the target's own calls, with their own transcripts.
+	store := NewCalls()
+	for i := 1; i <= 3; i++ {
+		call := &Call{
+			Audio:     []byte("local"),
+			AudioName: "local.wav",
+			AudioType: "audio/wav",
+			DateTime:  time.Date(2030, 1, 1, 0, 0, i, 0, time.UTC),
+			System:    42,
+			Talkgroup: 1001,
+		}
+		if _, err := store.WriteCall(call, target); err != nil {
+			t.Fatalf("seeding a local call: %v", err)
+		}
+	}
+	if _, err := target.Exec("insert into `plugin_transcripts_calls` (`callId`, `transcript`) values (1, 'the target''s own')"); err != nil {
+		t.Fatalf("seeding the target transcript: %v", err)
+	}
+
+	if err := ImportSqlite(target, source, true, true); err == nil {
+		t.Fatal("the import accepted a target holding its own calls")
+	}
+
+	var transcript string
+	if err := target.QueryRow("select `transcript` from `plugin_transcripts_calls` where `callId` = 1").Scan(&transcript); err != nil {
+		t.Fatalf("the target's transcript is gone: %v", err)
+	}
+	if transcript != "the target's own" {
+		t.Fatalf("after a refused import, call 1 on the target carries the transcript %q", transcript)
+	}
+}

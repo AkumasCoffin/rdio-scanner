@@ -218,18 +218,40 @@ func ImportSqlite(target *Database, sqliteFile string, withCalls bool, force boo
 		return err
 	}
 
-	for _, table := range pluginTables {
-		if table.perCall && !withCalls {
-			fmt.Printf("  %-24s skipped — keyed by call id, and the calls are staying behind\n", table.name)
-			continue
+	// Two passes, with the calls between them.
+	//
+	// A plugin's per-call rows are keyed by call id, so they are only right
+	// beside the calls they were made for — and copyCalls is what establishes
+	// that, refusing a target whose calls did not come from this file. These
+	// tables used to be replaced before that check ran: the target's own
+	// transcripts were deleted, the source's were written under ids that
+	// belong to different calls here, and then the import refused and
+	// stopped, leaving exactly the cross-attachment the refusal exists to
+	// prevent.
+	copyTables := func(perCall bool) error {
+		for _, table := range pluginTables {
+			if table.perCall != perCall {
+				continue
+			}
+
+			if table.perCall && !withCalls {
+				fmt.Printf("  %-24s skipped — keyed by call id, and the calls are staying behind\n", table.name)
+				continue
+			}
+
+			n, err := copyPluginTable(source, target, table)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("  %-24s %d row(s)\n", table.name, n)
 		}
 
-		n, err := copyPluginTable(source, target, table)
-		if err != nil {
-			return err
-		}
+		return nil
+	}
 
-		fmt.Printf("  %-24s %d row(s)\n", table.name, n)
+	if err := copyTables(false); err != nil {
+		return err
 	}
 
 	if withCalls {
@@ -238,6 +260,10 @@ func ImportSqlite(target *Database, sqliteFile string, withCalls bool, force boo
 		}
 	} else {
 		fmt.Printf("recorded calls were NOT copied — re-run with -import_calls to include them\n")
+	}
+
+	if err := copyTables(true); err != nil {
+		return err
 	}
 
 	// Keys were preserved, so on Postgres every sequence is now behind its
