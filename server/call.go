@@ -811,7 +811,12 @@ type callsSearchPlan struct {
 	// pluginWhere means the flat form is the only form.
 	innerWhere  string
 	pluginWhere string
-	order       string
+	// pluginArgs are the values bound into pluginWhere — the search term, once
+	// per column it is matched against. Every statement places pluginWhere
+	// after the text its other arguments belong to, so these always go last:
+	// see countArgs and pageQueryArgs.
+	pluginArgs []any
+	order      string
 	limit       uint
 	offset      uint
 	// withCount is false once the caller has opted into cursor paging. count(*)
@@ -891,7 +896,52 @@ func intersectScopes(sets []map[uint][]uint) map[uint][]uint {
 // looks for — they drifted apart the moment the key stopped being the raw
 // where clause.
 func (plan callsSearchPlan) countKey() string {
-	return fmt.Sprintf("count:%v%v", plan.where, plan.whereArgs)
+	return fmt.Sprintf("count:%v%v", plan.where, plan.countArgs())
+}
+
+// countArgs are the arguments for `where`: the window, then whatever the
+// plugin predicates bind. Part of the count's cache key as well as its
+// statement — with the search term bound, two searches for different words
+// share one where text, and only the arguments tell them apart.
+func (plan callsSearchPlan) countArgs() []any {
+	return append(append([]any{}, plan.whereArgs...), plan.pluginArgs...)
+}
+
+// pageQueryArgs are the arguments for the page statement in either of its
+// forms. Flat, the text is pageWhere — the cheap filters, then the plugin
+// predicates. Bounded, it is innerWhere inside the derived table and
+// pluginWhere outside it. The plugin predicates come last both ways, so one
+// order serves both.
+func (plan callsSearchPlan) pageQueryArgs() []any {
+	return append(append([]any{}, plan.pageArgs...), plan.pluginArgs...)
+}
+
+// likeContains turns text someone typed into a LIKE pattern that finds it
+// anywhere in a column, as text.
+//
+// The term is bound, never spliced into the statement, and that is the part
+// that matters: it used to be interpolated with only its apostrophes doubled.
+// MySQL and MariaDB read a backslash as an escape inside a literal, so `\'`
+// ended the string early and the rest of the term ran as SQL — for anyone who
+// could open the search box. On Postgres a question mark in the term was
+// renumbered into a placeholder by formatQuery, so "ok?" searched for "ok$1".
+//
+// The escaping is the smaller half. `%` and `_` are wildcards to LIKE, so
+// "100%" matched 1000 and a lone "%" matched every transcript there is;
+// someone typing punctuation means the punctuation.
+//
+// escapeClause is empty on Postgres and MySQL, where backslash is already
+// LIKE's escape character, and spelled out on SQLite, which has none until
+// told. Naming it everywhere would be tidier and is not portable: MySQL reads
+// the backslash in `escape '\'` as escaping the quote after it.
+func likeContains(db *Database, term string) (pattern string, escapeClause string) {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(term)
+
+	if db.Config.DbType == DbTypeSqlite {
+		escapeClause = ` escape '\'`
+	}
+
+	return "%" + escaped + "%", escapeClause
 }
 
 // buildCallsSearchPlan turns search options into SQL fragments.
@@ -1111,13 +1161,14 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 	// them separate lets Search cap that walk (see the bounded page query),
 	// which it cannot do once they are fused into one where string.
 	pluginPredicates := []string{}
+	pluginArgs := []any{}
 
 	if q, ok := searchOptions.Q.(string); ok && q != "" {
 		// probeExact is deliberately left alone. It gates the fast per-pair
 		// form of the bound probes, and it goes false at any filter the probes
 		// cannot express — but the probes no longer see this one, so it no
 		// longer disqualifies them.
-		esc := strings.ReplaceAll(q, "'", "''")
+		pattern, escapeClause := likeContains(db, q)
 		op := "like"
 		if db.Config.DbType == DbTypePostgres {
 			op = "ilike"
@@ -1128,19 +1179,22 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 		// plugin installed a q= search correctly matches nothing rather than
 		// silently ignoring the filter.
 		predicates := []string{}
+		patterns := []any{}
 
 		for _, extension := range searchExtensions {
 			predicates = append(predicates, fmt.Sprintf(
-				"exists (select 1 from `%s` where `%s`.`%s` = `rdioScannerCalls`.`id` and `%s`.`%s` %s '%%%s%%')",
+				"exists (select 1 from `%s` where `%s`.`%s` = `rdioScannerCalls`.`id` and `%s`.`%s` %s ?%s)",
 				extension.table,
 				extension.table, extension.key,
 				extension.table, extension.text,
-				op, esc,
+				op, escapeClause,
 			))
+			patterns = append(patterns, pattern)
 		}
 
 		if len(predicates) > 0 {
 			pluginPredicates = append(pluginPredicates, fmt.Sprintf("(%s)", strings.Join(predicates, " or ")))
+			pluginArgs = append(pluginArgs, patterns...)
 		} else {
 			// Nothing searchable is registered. Matching nothing is the honest
 			// answer — quietly dropping the filter would return every call and
@@ -1282,10 +1336,11 @@ func buildCallsSearchPlan(searchOptions *CallsSearchOptions, client *Client, db 
 		plan.whereArgs = append(plan.whereArgs, dateStop.UTC())
 	}
 
-	// The plugin predicates carry no bound arguments — everything in them is
-	// interpolated — so they can sit anywhere in the where text without
-	// disturbing the argument order.
+	// The plugin predicates always follow the text the other arguments belong
+	// to, in every statement they appear in, so what they bind is kept apart
+	// and appended last — see countArgs and pageQueryArgs.
 	plan.pluginWhere = strings.Join(pluginPredicates, " and ")
+	plan.pluginArgs = pluginArgs
 
 	pluginClause := ""
 	if plan.pluginWhere != "" {
@@ -1529,7 +1584,7 @@ func (calls *Calls) searchWithExtensions(searchOptions *CallsSearchOptions, clie
 			}
 
 			countQuery := fmt.Sprintf("select count(*) from `rdioScannerCalls` where %v", plan.where)
-			if err := db.QueryRow(countQuery, plan.whereArgs...).Scan(&meta.count); err != nil && err != sql.ErrNoRows {
+			if err := db.QueryRow(countQuery, plan.countArgs()...).Scan(&meta.count); err != nil && err != sql.ErrNoRows {
 				return nil, fmt.Errorf("%v, %v", err, countQuery)
 			}
 
@@ -1570,7 +1625,7 @@ func (calls *Calls) searchWithExtensions(searchOptions *CallsSearchOptions, clie
 		query = fmt.Sprintf("select `id`, `dateTime`, `system`, `talkgroup`, `patches` from `rdioScannerCalls` where %v order by %v limit %v offset %v", plan.pageWhere, plan.order, plan.limit, plan.offset)
 	}
 
-	if rows, err = db.Query(query, plan.pageArgs...); err != nil {
+	if rows, err = db.Query(query, plan.pageQueryArgs()...); err != nil {
 		return nil, formatError(fmt.Errorf("%v, %v", err, query))
 	}
 	defer rows.Close()

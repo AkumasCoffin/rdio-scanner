@@ -157,15 +157,28 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 	// call, so this correctly matches nothing rather than ignoring the filter
 	// and returning everything.
 	searchExtensions := p.Controller.PluginSearchExtensions()
+	whereArgs := []any{}
 	if s := strings.TrimSpace(q.Get("q")); s != "" {
-		esc := strings.ReplaceAll(s, "'", "''")
+		// Bound, and escaped as a pattern, for the reasons likeContains gives:
+		// spliced in with only its apostrophes doubled, a backslash in the
+		// term ended the literal on MySQL and MariaDB and the rest ran as SQL,
+		// which let a key scoped to one system read past its scope.
+		pattern, escapeClause := likeContains(p.Controller.Database, s)
+
+		// Case-insensitive on every backend, as the webapp's search is. LIKE
+		// already is on SQLite and MySQL; Postgres needs the other spelling.
+		op := "like"
+		if p.Controller.Database.Config.DbType == DbTypePostgres {
+			op = "ilike"
+		}
 
 		predicates := []string{}
 		for _, extension := range searchExtensions {
 			predicates = append(predicates, fmt.Sprintf(
-				"exists (select 1 from `%s` where `%s`.`%s` = `rdioScannerCalls`.`id` and `%s`.`%s` like '%%%s%%')",
-				extension.table, extension.table, extension.key, extension.table, extension.text, esc,
+				"exists (select 1 from `%s` where `%s`.`%s` = `rdioScannerCalls`.`id` and `%s`.`%s` %s ?%s)",
+				extension.table, extension.table, extension.key, extension.table, extension.text, op, escapeClause,
 			))
+			whereArgs = append(whereArgs, pattern)
 		}
 
 		if len(predicates) > 0 {
@@ -209,7 +222,7 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 
 	var count uint
 	countQuery := fmt.Sprintf("select count(*) from `rdioScannerCalls` where %s", whereSQL)
-	if err := db.QueryRow(countQuery).Scan(&count); err != nil && err != sql.ErrNoRows {
+	if err := db.QueryRow(countQuery, whereArgs...).Scan(&count); err != nil && err != sql.ErrNoRows {
 		p.writeError(w, http.StatusInternalServerError, fmt.Sprintf("count: %v", err))
 		return
 	}
@@ -218,7 +231,7 @@ func (p *PublicApi) listCalls(w http.ResponseWriter, r *http.Request, apikey *Ap
 		"select `id`, `dateTime`, `system`, `talkgroup` from `rdioScannerCalls` where %s order by `dateTime` %s limit %d offset %d",
 		whereSQL, order, limit, offset,
 	)
-	rows, err := db.Query(listQuery)
+	rows, err := db.Query(listQuery, whereArgs...)
 	if err != nil && err != sql.ErrNoRows {
 		p.writeError(w, http.StatusInternalServerError, fmt.Sprintf("query: %v", err))
 		return
