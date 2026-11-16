@@ -717,7 +717,13 @@ export class RdioScannerAdminService implements OnDestroy {
         }
     }
 
-    async saveConfig(config: Config): Promise<Config> {
+    /**
+     * Sends a configuration change. Resolves with the configuration as the
+     * server stored it, or null if the save was refused or failed — the caller
+     * needs to tell those apart, and returning the request back, as this used
+     * to, made a failure look exactly like a success.
+     */
+    async saveConfig(config: Config): Promise<Config | null> {
         try {
             const res = await firstValueFrom(this.ngHttpClient.put<{ config: Config }>(
                 this.getUrl(url.config),
@@ -735,7 +741,7 @@ export class RdioScannerAdminService implements OnDestroy {
                 this.errorHandler(error);
             }
 
-            return config;
+            return null;
         }
     }
 

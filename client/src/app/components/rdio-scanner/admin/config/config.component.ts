@@ -200,6 +200,9 @@ export class RdioScannerAdminConfigComponent implements OnDestroy, OnInit {
         this.ngChangeDetectorRef.markForCheck();
     }
 
+    /** True while a save is on its way to the server. */
+    saving = false;
+
     async save(): Promise<void> {
         if (!this.form) return;
 
@@ -218,8 +221,37 @@ export class RdioScannerAdminConfigComponent implements OnDestroy, OnInit {
             return;
         }
 
-        this.form.markAsPristine();
+        // One save at a time: the form stays dirty until the server answers,
+        // so the button stays live, and a second click would send the same
+        // new rows twice.
+        if (this.saving) return;
 
-        await this.adminService.saveConfig(payload);
+        this.saving = true;
+
+        try {
+            const saved = await this.adminService.saveConfig(payload);
+
+            // Only a save the server accepted clears the edits. The form used
+            // to be marked pristine before the request went out and the answer
+            // was never looked at. A refused save then showed as saved, with
+            // Save disabled; a failed one was worse, because the server pushes
+            // its unchanged config after a failure and a pristine form takes
+            // that push as the new truth — every unsaved edit in every tab
+            // replaced, with a seven-second toast as the only trace.
+            //
+            // Rebuilt from what the server stored, so rows added in this save
+            // pick up the ids they were given and are not inserted again by
+            // the next one.
+            if (saved) {
+                this.config = saved;
+
+                this.reset();
+            }
+
+        } finally {
+            this.saving = false;
+
+            this.ngChangeDetectorRef.markForCheck();
+        }
     }
 }
