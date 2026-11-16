@@ -100,9 +100,17 @@ export class RdioScannerAdminSystemComponent {
         return this.formValue;
     }
 
-    @Input() groups: Group[] = [];
+    // Read from the form, as the single-talkgroup editor does. These were
+    // inputs that no template ever bound, so they stayed empty and the bulk
+    // editor's Group and Tag menus opened with nothing in them — a selection
+    // of talkgroups could not be regrouped or retagged at all.
+    get groups(): Group[] {
+        return (this.form?.root.get('groups')?.value as Group[]) || [];
+    }
 
-    @Input() tags: Tag[] = [];
+    get tags(): Tag[] {
+        return (this.form?.root.get('tags')?.value as Tag[]) || [];
+    }
 
     @Output() add = new EventEmitter<void>();
 
