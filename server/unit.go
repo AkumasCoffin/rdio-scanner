@@ -28,6 +28,16 @@ type Unit struct {
 	Id    uint   `json:"id"`
 	Label string `json:"label"`
 	Order uint   `json:"order"`
+
+	// stored is what this unit looked like when it was last read from the
+	// database: see Units.Write.
+	stored string
+}
+
+// signature is every stored field of the unit, as text, for telling whether
+// it has changed since it was read.
+func (unit *Unit) signature() string {
+	return fmt.Sprintf("%d\x00%s\x00%d", unit.Id, unit.Label, unit.Order)
 }
 
 func (unit *Unit) FromMap(m map[string]any) *Unit {
@@ -155,6 +165,10 @@ func (units *Units) Read(db *Database, systemId uint) error {
 		return list[i].Order < list[j].Order
 	})
 
+	for _, unit := range list {
+		unit.stored = unit.signature()
+	}
+
 	units.List = list
 
 	return nil
@@ -179,19 +193,22 @@ func (units *Units) Write(db *Database, systemId uint) error {
 		return formatError(err)
 	}
 
+	// Looked up by id rather than by walking the list for each row, which is
+	// the difference between a few thousand comparisons and a few million.
+	listed := make(map[uint]bool, len(units.List))
+	for _, unit := range units.List {
+		listed[unit.Id] = true
+	}
+
+	present := map[uint]bool{}
+
 	for rows.Next() {
 		var id uint
 		if err = rows.Scan(&id); err != nil {
 			break
 		}
-		remove := true
-		for _, unit := range units.List {
-			if unit.Id == id {
-				remove = false
-				break
-			}
-		}
-		if remove {
+		present[id] = true
+		if !listed[id] {
 			ids = append(ids, id)
 		}
 	}
@@ -215,6 +232,19 @@ func (units *Units) Write(db *Database, systemId uint) error {
 	}
 
 	for _, unit := range units.List {
+		// Untouched since it was read, and its row is still there: nothing
+		// to write.
+		//
+		// Every unit used to be looked up and rewritten on every write, and
+		// a write happens whenever a call teaches the server anything — one
+		// new unit id is enough. On a system with a few thousand units and
+		// talkgroups that was nine thousand statements, two seconds on
+		// Postgres, run on the goroutine that ingests calls: every other
+		// call waited behind it, each time a radio nobody had seen keyed up.
+		if unit.stored != "" && unit.stored == unit.signature() && present[unit.Id] {
+			continue
+		}
+
 		if err = db.QueryRow("select count(*) from `rdioScannerUnits` where `id` = ? and `systemId` = ?", unit.Id, systemId).Scan(&count); err != nil {
 			break
 		}

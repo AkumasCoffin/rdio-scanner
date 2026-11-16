@@ -38,6 +38,18 @@ type Talkgroup struct {
 	Delay      uint   `json:"delay"`
 	Alert      string `json:"alert"`
 	tag        string
+
+	// stored is what this talkgroup looked like when it was last read from
+	// the database: see Units.Write.
+	stored string
+}
+
+// signature is every stored field of the talkgroup, as text, for telling
+// whether it has changed since it was read.
+func (talkgroup *Talkgroup) signature() string {
+	return fmt.Sprintf("%v\x00%d\x00%d\x00%s\x00%v\x00%v\x00%s\x00%d\x00%d\x00%d\x00%s",
+		talkgroup.Frequency, talkgroup.GroupId, talkgroup.Id, talkgroup.Label, talkgroup.Led, talkgroup.Led2,
+		talkgroup.Name, talkgroup.Order, talkgroup.TagId, talkgroup.Delay, talkgroup.Alert)
 }
 
 func (talkgroup *Talkgroup) FromMap(m map[string]any) *Talkgroup {
@@ -222,6 +234,10 @@ func (talkgroups *Talkgroups) Read(db *Database, systemId uint) error {
 		return list[i].Order < list[j].Order
 	})
 
+	for _, talkgroup := range list {
+		talkgroup.stored = talkgroup.signature()
+	}
+
 	talkgroups.List = list
 
 	return nil
@@ -246,19 +262,20 @@ func (talkgroups *Talkgroups) Write(db *Database, systemId uint) error {
 		return formatError(err)
 	}
 
+	listed := make(map[uint]bool, len(talkgroups.List))
+	for _, talkgroup := range talkgroups.List {
+		listed[talkgroup.Id] = true
+	}
+
+	present := map[uint]bool{}
+
 	for rows.Next() {
 		var id uint
 		if err = rows.Scan(&id); err != nil {
 			break
 		}
-		remove := true
-		for _, talkgroup := range talkgroups.List {
-			if talkgroup.Id == id {
-				remove = false
-				break
-			}
-		}
-		if remove {
+		present[id] = true
+		if !listed[id] {
 			ids = append(ids, id)
 		}
 	}
@@ -282,6 +299,12 @@ func (talkgroups *Talkgroups) Write(db *Database, systemId uint) error {
 	}
 
 	for _, talkgroup := range talkgroups.List {
+		// Untouched since it was read, and its row is still there: nothing
+		// to write. See Units.Write for what rewriting all of them cost.
+		if talkgroup.stored != "" && talkgroup.stored == talkgroup.signature() && present[talkgroup.Id] {
+			continue
+		}
+
 		if err = db.QueryRow("select count(*) from `rdioScannerTalkgroups` where `id` = ? and `systemId` = ?", talkgroup.Id, systemId).Scan(&count); err != nil {
 			break
 		}
