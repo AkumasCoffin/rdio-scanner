@@ -575,6 +575,33 @@ func (rt *PluginRuntime) runOnLoop(label string, fn func(vm *goja.Runtime)) bool
 	})
 }
 
+// recoverLoopPanic keeps a Go panic raised under a timer from ending the
+// server, for `defer rt.recoverLoopPanic(label)`.
+//
+// goja turns a JavaScript throw into an error and hands it back, but a panic
+// in a host function is not a JavaScript throw: it passes straight through the
+// VM. Jobs queued with runOnLoop have always recovered it. Timers do not go
+// through runOnLoop — they are scheduled on the event loop directly, whose
+// goroutine has no recover of its own — so the same panic there unwound to the
+// top of the goroutine and took the whole process with it.
+//
+// It does not take much. goja passes an argument the script left out as a nil
+// value, and a host function that reads it dereferences nil: a plugin calling
+// rdio.config.set('key') with the value forgotten, from a setTimeout, stopped
+// rdio-scanner for every listener. So did the first line after any `await`
+// on a timer-based sleep, since the continuation runs inside the timer job.
+//
+// The job is lost and the error is logged against the plugin; the loop, the
+// plugin's other work and the server carry on.
+func (rt *PluginRuntime) recoverLoopPanic(label string) {
+	if r := recover(); r != nil {
+		rt.controller.Logs.LogEvent(
+			LogLevelError,
+			fmt.Sprintf("plugin %s panicked in %s: %v", rt.manifest.Id, label, r),
+		)
+	}
+}
+
 // timeLoopJob starts the clock on a job and returns the function that stops it,
 // for `defer rt.timeLoopJob(label)()`.
 //
@@ -634,6 +661,7 @@ func (rt *PluginRuntime) timeRawTimers(vm *goja.Runtime) {
 
 			timed := vm.ToValue(func(inner goja.FunctionCall) goja.Value {
 				defer rt.timeLoopJob(label)()
+				defer rt.recoverLoopPanic(label)
 
 				result, err := callback(goja.Undefined(), inner.Arguments...)
 				if err != nil {

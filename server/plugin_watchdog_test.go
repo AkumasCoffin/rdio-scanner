@@ -257,3 +257,52 @@ func TestObserverTimeoutFollowsThePoint(t *testing.T) {
 		t.Errorf("a point with no override gave an observer %v", got)
 	}
 }
+
+// A host function that panics under a timer must cost the plugin that job and
+// nothing more. Timers run on the event loop's own goroutine, outside the
+// recover every queued job gets, so this used to end the process — and a test
+// for it could not fail politely: before the fix, this one took the whole test
+// binary down with it.
+func TestAPanicUnderARawTimerDoesNotEndTheProcess(t *testing.T) {
+	rt := watchdogRuntime()
+	rt.controller = &Controller{Logs: &Logs{}}
+	rt.loopLogThrottle = NewLogThrottle(1, time.Minute)
+
+	rt.loop = eventloop.NewEventLoop(eventloop.EnableConsole(false))
+	rt.loop.Start()
+	defer rt.Stop()
+
+	if err := rt.runOnLoopAndWait(5*time.Second, func(vm *goja.Runtime) {
+		rt.vm = vm
+		rt.timeRawTimers(vm)
+
+		// What an omitted argument looks like to a host function: goja hands
+		// over a nil Value, and reading it is a nil dereference.
+		vm.Set("hostCall", func(value goja.Value) any {
+			return value.Export()
+		})
+
+		if _, err := vm.RunString(`
+			var after = 0;
+			setTimeout(function () { hostCall(); }, 10);
+			setInterval(function () { after++; }, 20);
+		`); err != nil {
+			t.Fatal(err)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	var after int64
+	if err := rt.runOnLoopAndWait(5*time.Second, func(vm *goja.Runtime) {
+		after = vm.Get("after").ToInteger()
+	}); err != nil {
+		t.Fatalf("the loop stopped taking work after the panic: %v", err)
+	}
+
+	if after == 0 {
+		t.Fatal("the plugin's other timer never ran after the panic")
+	}
+}

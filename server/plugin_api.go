@@ -272,6 +272,7 @@ func (rt *PluginRuntime) bindHostApi(vm *goja.Runtime) error {
 			// notices growing — is the one thing that could hold the loop
 			// without ever being named for it.
 			defer rt.timeLoopJob("schedule")()
+			defer rt.recoverLoopPanic("schedule")
 
 			stop := rt.armWatchdog(vm, "schedule", pluginCallTimeout)
 			defer stop()
