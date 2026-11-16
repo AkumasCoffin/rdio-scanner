@@ -21,6 +21,17 @@ import (
 	"time"
 )
 
+// The watcher field belongs to the watch's mutex; a test reads it the same way.
+func watcherOf(dirwatch *Dirwatch) any {
+	dirwatch.mutex.Lock()
+	defer dirwatch.mutex.Unlock()
+
+	if dirwatch.watcher == nil {
+		return nil
+	}
+	return dirwatch.watcher
+}
+
 func watchOn(t *testing.T) (*Controller, *Dirwatches) {
 	t.Helper()
 
@@ -47,7 +58,7 @@ func TestDirwatchesComeBackAfterAStopThatIsNotFollowedByANewList(t *testing.T) {
 	dirwatches.Start(controller)
 	defer dirwatches.Stop()
 
-	if dirwatches.List[0].watcher == nil {
+	if watcherOf(dirwatches.List[0]) == nil {
 		t.Fatal("the watch did not start")
 	}
 
@@ -60,7 +71,7 @@ func TestDirwatchesComeBackAfterAStopThatIsNotFollowedByANewList(t *testing.T) {
 
 	dirwatches.Start(controller)
 
-	if dirwatches.List[0].watcher == nil {
+	if watcherOf(dirwatches.List[0]) == nil {
 		t.Fatal("the watch did not come back after the save")
 	}
 }
@@ -76,7 +87,10 @@ func TestADirwatchSurvivesAWatcherError(t *testing.T) {
 	defer dirwatches.Stop()
 
 	watch := dirwatches.List[0]
+
+	watch.mutex.Lock()
 	watcher := watch.watcher
+	watch.mutex.Unlock()
 
 	send := func(n int) {
 		select {
@@ -91,7 +105,36 @@ func TestADirwatchSurvivesAWatcherError(t *testing.T) {
 	send(2)
 	send(3)
 
-	if watch.watcher == nil {
+	if watcherOf(watch) == nil {
 		t.Fatal("the watch was torn down by an error")
+	}
+}
+
+// Stopping and starting again straight away is what every config save does.
+// The loop that was stopped is still on its way out when the new one starts,
+// and it must not take the new watcher for its own and restart over it.
+func TestAStoppedWatchLoopLeavesItsReplacementAlone(t *testing.T) {
+	controller, dirwatches := watchOn(t)
+
+	dirwatches.Start(controller)
+	defer dirwatches.Stop()
+
+	watch := dirwatches.List[0]
+
+	for i := 0; i < 50; i++ {
+		dirwatches.Stop()
+		dirwatches.Start(controller)
+
+		started := watcherOf(watch)
+		if started == nil {
+			t.Fatalf("round %d: the watch did not start again", i)
+		}
+
+		// Long enough for the stopped loop to finish leaving.
+		time.Sleep(5 * time.Millisecond)
+
+		if now := watcherOf(watch); now != started {
+			t.Fatalf("round %d: the watcher that was just started was replaced behind it", i)
+		}
 	}
 }

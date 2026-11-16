@@ -605,16 +605,29 @@ func (dirwatch *Dirwatch) Start(controller *Controller) error {
 		return nil
 	}
 
+	// The watcher field is shared with the loop below and with Stop, so it is
+	// only read or written under the mutex — and the loop works from its own
+	// copy. Without that, a save that stops the watches and starts them again
+	// could have the old loop, on its way out, mistake the new watcher for
+	// its own.
+	dirwatch.mutex.Lock()
+
 	if dirwatch.watcher != nil {
+		dirwatch.mutex.Unlock()
 		return errors.New("dirwatch.start: already started")
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		dirwatch.mutex.Unlock()
+		return err
 	}
 
 	dirwatch.controller = controller
 	dirwatch.dirs = map[string]bool{}
+	dirwatch.watcher = watcher
 
-	if dirwatch.watcher, err = fsnotify.NewWatcher(); err != nil {
-		return err
-	}
+	dirwatch.mutex.Unlock()
 
 	switch v := dirwatch.Delay.(type) {
 	case uint:
@@ -648,21 +661,26 @@ func (dirwatch *Dirwatch) Start(controller *Controller) error {
 			}
 
 			dirwatch.mutex.Lock()
-			defer dirwatch.mutex.Unlock()
 
 			for e, t := range dirwatch.timers {
 				t.Stop()
 				delete(dirwatch.timers, e)
 			}
 
-			// Still set means nobody stopped it — the loop ended on its
-			// own, by a panic. Start refuses a watch that looks started, so
-			// the old watcher has to be put down first or this restart is
-			// the "already started" error and nothing else.
-			if dirwatch.watcher != nil {
-				old := dirwatch.watcher
+			// Still this loop's own watcher means nobody stopped it — the
+			// loop ended by itself, on a panic. Stop clears the field and a
+			// later Start replaces it, and in either case there is nothing
+			// here to restart. Start refuses a watch that looks started, so
+			// the old watcher is put down first.
+			restart := dirwatch.watcher == watcher
+			if restart {
 				dirwatch.watcher = nil
-				old.Close()
+			}
+
+			dirwatch.mutex.Unlock()
+
+			if restart {
+				watcher.Close()
 
 				if err := dirwatch.Start(controller); err != nil {
 					controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("dirwatch: could not restart the watch on %s: %v", dirwatch.Directory, err))
@@ -671,12 +689,8 @@ func (dirwatch *Dirwatch) Start(controller *Controller) error {
 		}()
 
 		for {
-			if dirwatch.watcher == nil {
-				return
-			}
-
 			select {
-			case event, ok := <-dirwatch.watcher.Events:
+			case event, ok := <-watcher.Events:
 				if !ok {
 					return
 				}
@@ -699,7 +713,7 @@ func (dirwatch *Dirwatch) Start(controller *Controller) error {
 
 				case fsnotify.Remove:
 					if dirwatch.dirs[event.Name] {
-						if err := dirwatch.watcher.Remove(event.Name); err == nil {
+						if err := watcher.Remove(event.Name); err == nil {
 							delete(dirwatch.dirs, event.Name)
 						} else {
 							logError(err)
@@ -715,7 +729,7 @@ func (dirwatch *Dirwatch) Start(controller *Controller) error {
 					dirwatch.mutex.Unlock()
 				}
 
-			case err, ok := <-dirwatch.watcher.Errors:
+			case err, ok := <-watcher.Errors:
 				// A closed channel means the watcher was stopped. An error
 				// on it does not: the usual one is an overflow — more
 				// changes at once than the kernel's buffer holds — after
@@ -748,7 +762,7 @@ func (dirwatch *Dirwatch) Start(controller *Controller) error {
 
 			if dirwatch.isDir(fp) {
 				dirwatch.dirs[fp] = true
-				dirwatch.watcher.Add(fp)
+				watcher.Add(fp)
 
 			} else if dirwatch.DeleteAfter {
 				dirwatch.Ingest(fp)
@@ -764,9 +778,12 @@ func (dirwatch *Dirwatch) Start(controller *Controller) error {
 }
 
 func (dirwatch *Dirwatch) Stop() {
-	if dirwatch.watcher != nil {
-		w := dirwatch.watcher
-		dirwatch.watcher = nil
+	dirwatch.mutex.Lock()
+	w := dirwatch.watcher
+	dirwatch.watcher = nil
+	dirwatch.mutex.Unlock()
+
+	if w != nil {
 		w.Close()
 	}
 }
@@ -1012,12 +1029,21 @@ func (dirwatch *Dirwatch) isDir(d string) bool {
 func (dirwatch *Dirwatch) walkDir(d string) error {
 	dfs := os.DirFS(d)
 
+	dirwatch.mutex.Lock()
+	watcher := dirwatch.watcher
+	dirwatch.mutex.Unlock()
+
+	// Stopped while this directory was being noticed: nothing to add it to.
+	if watcher == nil {
+		return nil
+	}
+
 	return fs.WalkDir(dfs, ".", func(p string, _ fs.DirEntry, err error) error {
 		fp := filepath.Join(d, p)
 		if dirwatch.isDir(fp) {
 			if !dirwatch.dirs[fp] {
 				dirwatch.dirs[fp] = true
-				dirwatch.watcher.Add(fp)
+				watcher.Add(fp)
 			}
 		}
 		return err
