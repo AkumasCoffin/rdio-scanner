@@ -185,11 +185,17 @@ func truncateLogMessage(message string) string {
 }
 
 func (logs *Logs) Prune(db *Database, pruneDays uint) error {
+	return logs.pruneAsOf(db, pruneDays, time.Now())
+}
+
+// pruneAsOf is Prune as of a given moment, for the reason Calls.pruneAsOf
+// gives.
+func (logs *Logs) pruneAsOf(db *Database, pruneDays uint, now time.Time) error {
 	logs.mutex.Lock()
 	defer logs.mutex.Unlock()
 
-	// In UTC and bound as a time, for the reason Calls.Prune gives.
-	cutoff := time.Now().UTC().Add(-24 * time.Hour * time.Duration(pruneDays))
+	// In UTC and bound as a time, for the reason Calls.pruneAsOf gives.
+	cutoff := now.UTC().Add(-24 * time.Hour * time.Duration(pruneDays))
 	_, err := db.Exec("delete from `rdioScannerLogs` where `dateTime` < ?", cutoff)
 
 	return err

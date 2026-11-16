@@ -781,12 +781,20 @@ func (calls *Calls) GetIdByKey(system uint, talkgroup uint, dateTime time.Time, 
 }
 
 func (calls *Calls) Prune(db *Database, pruneDays uint) error {
+	return calls.pruneAsOf(db, pruneDays, time.Now())
+}
+
+// pruneAsOf deletes the calls older than pruneDays as of the given moment.
+// The moment is a parameter so a test can hand it one carrying any timezone:
+// what is deleted must depend on the instant and not on the zone it is
+// expressed in.
+func (calls *Calls) pruneAsOf(db *Database, pruneDays uint, now time.Time) error {
 	// A time, in UTC, handed to the driver — not the host's wall clock written
 	// out as text. Rows are stored in UTC, and the formatted form carried no
 	// zone on Postgres and MySQL (and the wrong text altogether on SQLite), so
 	// the cutoff sat off by the host's UTC offset: a server in Sydney pruned
 	// eleven hours early, one in Los Angeles kept eight hours too many.
-	cutoff := time.Now().UTC().Add(-24 * time.Hour * time.Duration(pruneDays))
+	cutoff := now.UTC().Add(-24 * time.Hour * time.Duration(pruneDays))
 	_, err := db.Exec("delete from `rdioScannerCalls` where `dateTime` < ?", cutoff)
 
 	return err

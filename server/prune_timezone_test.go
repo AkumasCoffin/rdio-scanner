@@ -25,12 +25,12 @@ import (
 // zone and compared against UTC rows, so a server east of Greenwich pruned
 // early by its offset — eleven hours early in Sydney in summer — and one west
 // of it kept everything that much longer.
-func withHostTimezone(t *testing.T, name string, offsetHours int) {
-	t.Helper()
-
-	original := time.Local
-	time.Local = time.FixedZone(name, offsetHours*3600)
-	t.Cleanup(func() { time.Local = original })
+//
+// The host's clock is handed in rather than set by changing time.Local: that
+// is a process-wide variable other goroutines read, and writing it from a test
+// is a data race with every one of them.
+func hostClockIn(name string, offsetHours int) time.Time {
+	return time.Now().In(time.FixedZone(name, offsetHours*3600))
 }
 
 func TestPruningCallsCountsFromNowWhateverTheHostTimezone(t *testing.T) {
@@ -42,8 +42,6 @@ func TestPruningCallsCountsFromNowWhateverTheHostTimezone(t *testing.T) {
 		{"west of UTC", -8},
 	} {
 		t.Run(zone.name, func(t *testing.T) {
-			withHostTimezone(t, zone.name, zone.offset)
-
 			db := newTestDatabase(t)
 			defer db.Sql.Close()
 
@@ -53,7 +51,7 @@ func TestPruningCallsCountsFromNowWhateverTheHostTimezone(t *testing.T) {
 			kept := insertSearchTestCall(t, db, now.Add(-20*time.Hour), 1, 100)
 			gone := insertSearchTestCall(t, db, now.Add(-30*time.Hour), 1, 100)
 
-			if err := NewCalls().Prune(db, 1); err != nil {
+			if err := NewCalls().pruneAsOf(db, 1, hostClockIn(zone.name, zone.offset)); err != nil {
 				t.Fatal(err)
 			}
 
@@ -84,8 +82,6 @@ func TestPruningLogsCountsFromNowWhateverTheHostTimezone(t *testing.T) {
 		{"west of UTC", -8},
 	} {
 		t.Run(zone.name, func(t *testing.T) {
-			withHostTimezone(t, zone.name, zone.offset)
-
 			db := newTestDatabase(t)
 			defer db.Sql.Close()
 
@@ -103,7 +99,7 @@ func TestPruningLogsCountsFromNowWhateverTheHostTimezone(t *testing.T) {
 				}
 			}
 
-			if err := (&Logs{}).Prune(db, 1); err != nil {
+			if err := (&Logs{}).pruneAsOf(db, 1, hostClockIn(zone.name, zone.offset)); err != nil {
 				t.Fatal(err)
 			}
 
