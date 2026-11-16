@@ -369,17 +369,48 @@ func (calls *Calls) CheckDuplicate(call *Call, msTimeFrame uint, db *Database) b
 //
 // The id is what lets a patched copy add the talkgroup it arrived on to the
 // call already stored, instead of being dropped without trace.
+// jsonListColumn renders a call's frequencies or sources for their text
+// column: the JSON of the list, or nothing for no list.
+//
+// The writer used to accept exactly one Go type, []map[string]any, and store
+// an empty string for anything else without a word. That is the type the
+// upload parsers build — but a call created by a plugin, or one whose list an
+// ingest filter rebuilt, carries the same data as []any. Listeners saw the
+// units on such a call live; the stored row had none, and neither did the
+// copy forwarded downstream.
+func jsonListColumn(list any) (string, error) {
+	if list == nil {
+		return "", nil
+	}
+
+	b, err := json.Marshal(list)
+	if err != nil {
+		return "", err
+	}
+
+	if string(b) == "null" {
+		return "", nil
+	}
+
+	return string(b), nil
+}
+
 func (calls *Calls) GetDuplicateId(call *Call, msTimeFrame uint, db *Database) (uint, bool) {
 	var id sql.NullFloat64
 
 	// Read-only — rely on the database driver's own concurrency guard.
 	d := time.Duration(msTimeFrame) * time.Millisecond
-	from := call.DateTime.Add(-d)
-	to := call.DateTime.Add(d)
+	// Bound as times, not written out as text. The text form has whole
+	// seconds on Postgres and MySQL, so both ends of the window were rounded
+	// down and "within half a second either side" became "up to a second
+	// before, and not after": a real call 1.3 seconds after another on a busy
+	// talkgroup was thrown away as its duplicate, and a true duplicate 200ms
+	// later was let through.
+	from := call.DateTime.UTC().Add(-d)
+	to := call.DateTime.UTC().Add(d)
 
-	df := db.DateTimeFormat
-	query := fmt.Sprintf("select `id` from `rdioScannerCalls` where (`dateTime` between '%v' and '%v') and `system` = %v and `talkgroup` = %v order by `id` limit 1", from.Format(df), to.Format(df), call.System, call.Talkgroup)
-	if err := db.QueryRow(query).Scan(&id); err != nil {
+	query := "select `id` from `rdioScannerCalls` where (`dateTime` between ? and ?) and `system` = ? and `talkgroup` = ? order by `id` limit 1"
+	if err := db.QueryRow(query, from, to, call.System, call.Talkgroup).Scan(&id); err != nil {
 		return 0, false
 	}
 
@@ -759,16 +790,17 @@ func (calls *Calls) getCall(id uint, db *Database, withAudio bool) (*Call, error
 func (calls *Calls) GetIdByKey(system uint, talkgroup uint, dateTime time.Time, db *Database) (uint, error) {
 	var id sql.NullFloat64
 	d := 500 * time.Millisecond
-	from := dateTime.UTC().Add(-d).Format(db.DateTimeFormat)
-	to := dateTime.UTC().Add(d).Format(db.DateTimeFormat)
-	query := fmt.Sprintf("select `id` from `rdioScannerCalls` where `system` = %v and `talkgroup` = %v and (`dateTime` between '%v' and '%v') limit 1",
-		system, talkgroup, from, to)
+	// Bound as times for the reason GetDuplicateId gives: as text the window
+	// slid a second early and could name the call before the one meant.
+	from := dateTime.UTC().Add(-d)
+	to := dateTime.UTC().Add(d)
+	query := "select `id` from `rdioScannerCalls` where `system` = ? and `talkgroup` = ? and (`dateTime` between ? and ?) limit 1"
 
 	ctx, cancel := context.WithTimeout(context.Background(), pluginLookupTimeout)
 	defer cancel()
 
 	// Safe to cancel on return: the row is scanned here and never handed on.
-	if err := db.QueryRowContext(ctx, query).Scan(&id); err != nil {
+	if err := db.QueryRowContext(ctx, query, system, talkgroup, from, to).Scan(&id); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, nil
 		}
@@ -1827,13 +1859,8 @@ func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 		return fmt.Errorf("call.write: %s", err.Error())
 	}
 
-	switch v := call.Frequencies.(type) {
-	case []map[string]any:
-		if b, err = json.Marshal(v); err == nil {
-			frequencies = string(b)
-		} else {
-			return 0, formatError(err)
-		}
+	if frequencies, err = jsonListColumn(call.Frequencies); err != nil {
+		return 0, formatError(err)
 	}
 
 	switch v := call.Patches.(type) {
@@ -1845,13 +1872,8 @@ func (calls *Calls) WriteCall(call *Call, db *Database) (uint, error) {
 		}
 	}
 
-	switch v := call.Sources.(type) {
-	case []map[string]any:
-		if b, err = json.Marshal(v); err == nil {
-			sources = string(b)
-		} else {
-			return 0, formatError(err)
-		}
+	if sources, err = jsonListColumn(call.Sources); err != nil {
+		return 0, formatError(err)
 	}
 
 	if db.Config.DbType == DbTypePostgres {

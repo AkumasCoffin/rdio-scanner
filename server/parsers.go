@@ -347,7 +347,11 @@ func ParseMultipartContent(call *Call, p *multipart.Part, b []byte) {
 		}
 
 	case "source":
-		if i, err := strconv.Atoi(string(b)); err == nil {
+		// Positive only, as the other parsers already insist. A recorder
+		// that sends -1 for "no unit" otherwise becomes the largest unsigned
+		// number there is, which SQLite and Postgres refuse to bind — and the
+		// whole call was dropped for the sake of a unit id that was not one.
+		if i, err := strconv.Atoi(string(b)); err == nil && i > 0 {
 			call.Source = uint(i)
 		}
 
