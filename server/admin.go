@@ -61,6 +61,14 @@ type AdminLoginAttempt struct {
 
 type AdminLoginAttempts map[string]*AdminLoginAttempt
 
+// How long a new admin socket has to present its token, how long one write to
+// it may take, and the largest message it may send.
+const (
+	adminSocketAuthTimeout  = 10 * time.Second
+	adminSocketWriteTimeout = 10 * time.Second
+	adminSocketReadLimit    = 8192
+)
+
 func NewAdmin(controller *Controller) *Admin {
 	return &Admin{
 		Attempts:         AdminLoginAttempts{},
@@ -128,10 +136,39 @@ func (admin *Admin) ConfigHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		admin.Register <- conn
+		// A token is a few hundred bytes and nothing larger is ever sent up
+		// this socket.
+		conn.SetReadLimit(adminSocketReadLimit)
 
 		go func() {
+			// The token first, and only then a place on the broadcast list.
+			//
+			// It used to be the other way round: the connection was registered
+			// as soon as it opened and asked for its token afterwards, with no
+			// deadline. One that never sent anything stayed registered, and the
+			// next config push — any admin save, any plugin toggle, any
+			// auto-populated talkgroup — sent it the whole configuration:
+			// every access code, every API key, the downstream credentials.
+			// No login needed, just the socket.
+			conn.SetReadDeadline(time.Now().Add(adminSocketAuthTimeout))
+
+			_, b, err := conn.ReadMessage()
+			if err != nil {
+				conn.Close()
+				return
+			}
+
+			if !admin.ValidateToken(string(b)) {
+				// 1000 is what tells the webapp its session is over rather
+				// than that the connection dropped and is worth retrying.
+				conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(1000, ""), time.Now().Add(adminSocketWriteTimeout))
+				conn.Close()
+				return
+			}
+
 			conn.SetReadDeadline(time.Time{})
+
+			admin.Register <- conn
 
 			for {
 				_, b, err := conn.ReadMessage()
@@ -677,32 +714,7 @@ func (admin *Admin) Start() error {
 	// Background auto-update checker (hourly).
 	go admin.updateChecker()
 
-	go func() {
-		for {
-			select {
-			case data, ok := <-admin.Broadcast:
-				if !ok {
-					return
-				}
-
-				for conn := range admin.Conns {
-					err := conn.WriteMessage(websocket.TextMessage, *data)
-					if err != nil {
-						admin.Unregister <- conn
-					}
-				}
-
-			case conn := <-admin.Register:
-				admin.Conns[conn] = true
-
-			case conn := <-admin.Unregister:
-				if _, ok := admin.Conns[conn]; ok {
-					delete(admin.Conns, conn)
-					conn.Close()
-				}
-			}
-		}
-	}()
+	go admin.serveSockets()
 
 	return nil
 }
@@ -812,4 +824,43 @@ func (admin *Admin) ValidateToken(sToken string) bool {
 	}
 
 	return token.Valid
+}
+
+// serveSockets owns admin.Conns: it is the only goroutine that reads or writes
+// the map, and everything else reaches it through the three channels.
+func (admin *Admin) serveSockets() {
+	for {
+		select {
+		case data, ok := <-admin.Broadcast:
+			if !ok {
+				return
+			}
+
+			for conn := range admin.Conns {
+				// Bounded, so one tab on a sleeping laptop cannot hold every
+				// other admin's push — and every caller of BroadcastConfig —
+				// behind a socket buffer that will never drain.
+				conn.SetWriteDeadline(time.Now().Add(adminSocketWriteTimeout))
+
+				if err := conn.WriteMessage(websocket.TextMessage, *data); err != nil {
+					// Dropped here, directly. This used to send the connection
+					// to admin.Unregister, which only this goroutine receives
+					// from, so the first failed write stopped the loop for
+					// good: no further pushes, and user-add, plugin install
+					// and plugin config all hung on their broadcast.
+					delete(admin.Conns, conn)
+					conn.Close()
+				}
+			}
+
+		case conn := <-admin.Register:
+			admin.Conns[conn] = true
+
+		case conn := <-admin.Unregister:
+			if _, ok := admin.Conns[conn]; ok {
+				delete(admin.Conns, conn)
+				conn.Close()
+			}
+		}
+	}
 }
