@@ -655,8 +655,18 @@ func (dirwatch *Dirwatch) Start(controller *Controller) error {
 				delete(dirwatch.timers, e)
 			}
 
+			// Still set means nobody stopped it — the loop ended on its
+			// own, by a panic. Start refuses a watch that looks started, so
+			// the old watcher has to be put down first or this restart is
+			// the "already started" error and nothing else.
 			if dirwatch.watcher != nil {
-				dirwatch.Start(controller)
+				old := dirwatch.watcher
+				dirwatch.watcher = nil
+				old.Close()
+
+				if err := dirwatch.Start(controller); err != nil {
+					controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("dirwatch: could not restart the watch on %s: %v", dirwatch.Directory, err))
+				}
 			}
 		}()
 
@@ -706,11 +716,19 @@ func (dirwatch *Dirwatch) Start(controller *Controller) error {
 				}
 
 			case err, ok := <-dirwatch.watcher.Errors:
-				if ok {
-					logError(err)
+				// A closed channel means the watcher was stopped. An error
+				// on it does not: the usual one is an overflow — more
+				// changes at once than the kernel's buffer holds — after
+				// which the watcher carries on. Returning here ended the
+				// watch for good on the first such burst, with one log line
+				// and every file still waiting on its debounce timer
+				// abandoned; the restart below could not help, because it
+				// found the watcher still set and refused to start again.
+				if !ok {
+					return
 				}
 
-				return
+				logError(err)
 			}
 		}
 	}()
@@ -877,11 +895,18 @@ func (dirwatches *Dirwatches) Start(controller *Controller) {
 	}
 }
 
+// Stop stops every watch and keeps the list.
+//
+// It used to empty the list as well. A config save stops the watches first
+// and starts them again at the end, refilling the list in between only if the
+// save carried a dirWatch section — and the admin form sends only the
+// sections that changed. So saving anything else, a single option, left
+// nothing to start: every directory watch stopped until the server was
+// restarted, and the Dirwatch tab showed none configured.
 func (dirwatches *Dirwatches) Stop() {
 	for i := range dirwatches.List {
 		dirwatches.List[i].Stop()
 	}
-	dirwatches.List = []*Dirwatch{}
 }
 
 func (dirwatches *Dirwatches) Write(db *Database) error {
