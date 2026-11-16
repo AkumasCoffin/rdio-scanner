@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -271,6 +272,16 @@ func (pluginDb *PluginDb) query(query string, args []any, timeout time.Duration)
 		return nil, err
 	}
 
+	// The declared type of each column, for normalizePluginValue. Best effort:
+	// a driver that cannot say leaves the names empty and the values are
+	// handed over as before.
+	databaseTypes := make([]string, len(columns))
+	if types, err := rows.ColumnTypes(); err == nil && len(types) == len(columns) {
+		for i, columnType := range types {
+			databaseTypes[i] = columnType.DatabaseTypeName()
+		}
+	}
+
 	results := []map[string]any{}
 
 	for rows.Next() {
@@ -293,7 +304,7 @@ func (pluginDb *PluginDb) query(query string, args []any, timeout time.Duration)
 
 		row := map[string]any{}
 		for i, name := range columns {
-			row[name] = normalizePluginValue(*(holders[i].(*any)))
+			row[name] = normalizePluginValue(*(holders[i].(*any)), databaseTypes[i])
 		}
 		results = append(results, row)
 	}
@@ -341,13 +352,35 @@ func (pluginDb *PluginDb) exec(query string, args []any, timeout time.Duration) 
 // JavaScript runtime can use directly. The main offender is []byte, which every
 // backend uses for text in at least some situations and which would otherwise
 // reach a plugin as an array of numbers.
-func normalizePluginValue(v any) any {
-	switch t := v.(type) {
-	case []byte:
-		return string(t)
-	default:
+//
+// It is also what MySQL and MariaDB use for numbers, some of the time. A query
+// with no arguments goes out as plain text and every column comes back as
+// text, integers and booleans included; the same query with an argument is
+// prepared and comes back typed. Turning all of it into strings meant a
+// boolean column holding 0 reached the plugin as "0" — which JavaScript
+// counts as true — so a switch read with no arguments could never be seen
+// off, and the same read with one argument behaved. databaseType is the
+// column's declared type, which is what settles it: bytes in a numeric column
+// are a number.
+func normalizePluginValue(v any, databaseType string) any {
+	raw, ok := v.([]byte)
+	if !ok {
 		return v
 	}
+
+	switch strings.TrimPrefix(strings.ToUpper(databaseType), "UNSIGNED ") {
+	case "TINYINT", "SMALLINT", "MEDIUMINT", "INT", "INTEGER", "BIGINT", "YEAR":
+		if n, err := strconv.ParseInt(string(raw), 10, 64); err == nil {
+			return n
+		}
+
+	case "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "REAL":
+		if f, err := strconv.ParseFloat(string(raw), 64); err == nil {
+			return f
+		}
+	}
+
+	return string(raw)
 }
 
 // --- schema creation ------------------------------------------------------
