@@ -70,6 +70,11 @@ object Wire {
         encodeDefaults = false
         explicitNulls = false
         isLenient = true
+        // A null where a field has a default takes the default. The server
+        // does send them: a search a plugin vetoed answers with
+        // `"options": null`, and a call whose patches column is empty arrives
+        // with `"patches": null`. Without this either one fails to decode.
+        coerceInputValues = true
     }
 
     /** Encode an outgoing array-framed message. Null payload/flag are omitted. */

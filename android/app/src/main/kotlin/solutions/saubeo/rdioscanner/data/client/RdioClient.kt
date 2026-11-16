@@ -331,7 +331,15 @@ class RdioClient(
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             if (!current()) return
-            val msg = Wire.decode(text) ?: return
+            // A frame this build cannot decode is dropped, not thrown. An
+            // exception leaving this callback makes OkHttp fail the socket,
+            // and the reconnect that follows receives the same frame again —
+            // when the frame is the config, that is a loop of about one
+            // attempt a second that never connects, with the wake and Wi-Fi
+            // locks held throughout.
+            val msg = runCatching { Wire.decode(text) }
+                .onFailure { Log.w(TAG, "dropping a frame that would not decode: ${it.message}") }
+                .getOrNull() ?: return
             handle(msg, gen)
         }
 
