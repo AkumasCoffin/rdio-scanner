@@ -19,13 +19,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
 	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/lib/pq"
 	_ "modernc.org/sqlite"
 )
@@ -988,6 +989,13 @@ func (db *Database) migrateWithSchema(name string, schemas []string, verbose boo
 
 		for _, query = range schemas {
 			if _, err = tx.Exec(db.formatQuery(query)); err != nil {
+				// The half of an interrupted migration that already landed.
+				// See alreadyApplied for why only MySQL and MariaDB get here.
+				if db.alreadyApplied(err) {
+					log.Printf("migration %s: already in place from an earlier interrupted run, continuing: %v", name, err)
+					continue
+				}
+
 				tx.Rollback()
 				return formatError(err, query)
 			}
@@ -1011,6 +1019,46 @@ func (db *Database) migrateWithSchema(name string, schemas []string, verbose boo
 	}
 
 	return nil
+}
+
+// alreadyApplied reports whether a migration statement failed only because
+// what it creates or drops is already that way.
+//
+// MySQL and MariaDB commit each DDL statement as it runs, so the transaction
+// migrateWithSchema wraps a migration in protects nothing there: a server
+// stopped part way through — a restart during a first boot, a service manager
+// that lost patience, a power cut — leaves the columns it had reached in
+// place and no ledger row to say so. Every boot after that re-ran the
+// migration from the top, hit "Duplicate column name" on the first statement,
+// and exited. Nothing short of editing the database by hand brought it back.
+//
+// Re-running is the right thing to do; failing on the part already done is
+// not. These four codes each mean the statement's outcome already holds:
+//
+//	1050  table already exists
+//	1060  duplicate column name
+//	1061  duplicate key name
+//	1091  cannot drop, the column or key does not exist
+//
+// SQLite and Postgres roll DDL back with the transaction, so an interrupted
+// migration there leaves nothing behind and the same errors would mean a
+// genuine conflict. They are deliberately not forgiven.
+func (db *Database) alreadyApplied(err error) bool {
+	if db.Config.DbType != DbTypeMysql && db.Config.DbType != DbTypeMariadb {
+		return false
+	}
+
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) {
+		return false
+	}
+
+	switch mysqlErr.Number {
+	case 1050, 1060, 1061, 1091:
+		return true
+	}
+
+	return false
 }
 
 func (db *Database) migration20191028144433(verbose bool) error {
