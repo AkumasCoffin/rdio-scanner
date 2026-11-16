@@ -65,7 +65,8 @@
                 </p>
                 <mat-form-field floatLabel="never">
                     <mat-select formControlName="talkgroups" placeholder="Talkgroups" multiple
-                        [disabled]="!patch.value.systemId" (selectionChange)="talkgroupsChanged(patch)">
+                        [disabled]="!patch.value.systemId" (openedChange)="rememberOrder(patch, $event)"
+                        (selectionChange)="talkgroupsChanged(patch)">
                         <mat-option *ngFor="let talkgroup of talkgroupsOf(patch)" [value]="talkgroup.value.id">
                             {{ talkgroup.value.id }} — {{ talkgroup.value.label }}
                         </mat-option>

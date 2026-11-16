@@ -123,6 +123,23 @@ export class RdioScannerAdminPatchesComponent {
     /** The arranged order per patch, so the select cannot reshuffle it. */
     private lastOrder = new Map<FormGroup, number[]>();
 
+    /**
+     * Notes the ranking as the member menu opens, before a tick can change it.
+     *
+     * By the time talkgroupsChanged runs, the control already holds the
+     * select's own value, which is in option order — so the arrangement has
+     * to be captured first or there is nothing left to keep. It was only ever
+     * recorded by an edit made in this session, which left a patch loaded from
+     * the server with no record at all: tick one more member and its saved
+     * ranking was replaced by talkgroup-list order, quietly changing which
+     * talkgroup the patch's calls are filed under.
+     */
+    rememberOrder(patch: FormGroup, opened: boolean): void {
+        if (opened && !this.lastOrder.has(patch)) {
+            this.lastOrder.set(patch, (patch.get('talkgroups')?.value || []).slice());
+        }
+    }
+
     /** Moves one member up or down the ranking. */
     moveMember(patch: FormGroup, index: number, delta: number): void {
         const ordered: number[] = (patch.get('talkgroups')?.value || []).slice();
