@@ -270,3 +270,109 @@ func TestEnsureSearchIndexBuildsThePresenceIndex(t *testing.T) {
 		t.Fatalf("%d rows qualify as having a transcript, want 196", indexed)
 	}
 }
+
+// searchIndexProbeTable makes a small table shaped like a plugin's searchable
+// one, for the tests below.
+func searchIndexProbeTable(t *testing.T, db *Database, table string) {
+	t.Helper()
+
+	if _, err := db.Sql.Exec(fmt.Sprintf(`drop table if exists %q`, table)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Sql.Exec(fmt.Sprintf(
+		`create table %q ("callId" int primary key, "transcript" text)`, table)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Sql.Exec(fmt.Sprintf(`drop table if exists %q`, table)) })
+
+	if _, err := db.Sql.Exec("create extension if not exists pg_trgm"); err != nil {
+		t.Skipf("pg_trgm is not available on this server: %v", err)
+	}
+}
+
+// waitForPresenceIndex waits for ensureSearchIndex to finish: the presence
+// index is the last thing it builds.
+func waitForPresenceIndex(t *testing.T, db *Database, table string) {
+	t.Helper()
+
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		var count int
+		if err := db.Sql.QueryRow(`
+			select count(*) from pg_index i
+			join pg_class c on c.oid = i.indexrelid
+			where c.relname = $1 and i.indisvalid and i.indisready`, table+"_transcript_present",
+		).Scan(&count); err == nil && count > 0 {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	t.Fatal("ensureSearchIndex did not finish")
+}
+
+// The transcripts migration indexes its table before any plugin starts. When
+// the plugin then registered the same column, a second identical index was
+// built beside the first, on every install.
+func TestEnsureSearchIndexDoesNotDuplicateAnExistingIndex(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if db.Config.DbType != DbTypePostgres {
+		t.Skipf("trigram indexes are Postgres-specific; suite is running on %s", db.Config.DbType)
+	}
+
+	table := "plugin_dupprobe_calls"
+	searchIndexProbeTable(t, db, table)
+
+	// What the migration leaves behind: the same index under another name.
+	if _, err := db.Sql.Exec(fmt.Sprintf(
+		`create index %q on %q using gin ("transcript" gin_trgm_ops)`, table+"_trgm", table)); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := &Controller{Database: db}
+	controller.ensureSearchIndex(table, "transcript", "callId")
+	waitForPresenceIndex(t, db, table)
+
+	names, err := trigramIndexes(db, table, "transcript", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 1 || names[0] != table+"_trgm" {
+		t.Fatalf("the column carries these trigram indexes: %v, want only the one that was already there", names)
+	}
+}
+
+// Installs that already ran the duplicating version have both. The one this
+// function built is the one it takes back.
+func TestEnsureSearchIndexRemovesTheDuplicateItBuiltBefore(t *testing.T) {
+	db := newTestDatabase(t)
+	defer db.Sql.Close()
+
+	if db.Config.DbType != DbTypePostgres {
+		t.Skipf("trigram indexes are Postgres-specific; suite is running on %s", db.Config.DbType)
+	}
+
+	table := "plugin_dupprobe2_calls"
+	searchIndexProbeTable(t, db, table)
+
+	for _, name := range []string{table + "_trgm", table + "_transcript_trgm"} {
+		if _, err := db.Sql.Exec(fmt.Sprintf(
+			`create index %q on %q using gin ("transcript" gin_trgm_ops)`, name, table)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	controller := &Controller{Database: db}
+	controller.ensureSearchIndex(table, "transcript", "callId")
+	waitForPresenceIndex(t, db, table)
+
+	names, err := trigramIndexes(db, table, "transcript", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 1 || names[0] != table+"_trgm" {
+		t.Fatalf("the column carries these trigram indexes: %v, want the duplicate gone", names)
+	}
+}

@@ -74,18 +74,69 @@ func (controller *Controller) ensureSearchIndex(table string, column string, key
 		// database-wide on Postgres.
 		name := indexName(fmt.Sprintf("%s_%s_trgm", table, column))
 
-		// CONCURRENTLY so an existing server keeps taking calls while this
-		// builds. It cannot run inside a transaction, which is why this uses
-		// the pool directly rather than the migration helper.
-		statement := fmt.Sprintf(
-			`create index concurrently if not exists %q on %q using gin (%q gin_trgm_ops)`,
-			name, table, column,
-		)
+		// A build that was interrupted leaves its index behind, invalid, and
+		// `if not exists` then steps over it on every later start while the
+		// log line below says the column is indexed. Clear it so this run
+		// builds a real one.
+		if invalid, err := trigramIndexes(db, table, column, false); err == nil {
+			for _, leftover := range invalid {
+				if leftover != name {
+					continue
+				}
+				if _, err := db.Sql.Exec(fmt.Sprintf(`drop index concurrently if exists %q`, leftover)); err != nil {
+					log.Printf("search index: could not clear the unfinished index %s: %v", leftover, err)
+				}
+			}
+		}
 
-		if _, err := db.Sql.Exec(statement); err != nil {
-			log.Printf("search index: could not index %s.%s, searches will scan — %s",
-				table, column, searchIndexUnavailableReason(err))
-			return
+		// Whatever already indexes this column this way. The transcripts
+		// migration builds exactly this index under its own name before any
+		// plugin has started, so on every install with that plugin this
+		// function went on to build a second, identical one beside it: twice
+		// the write cost on every transcript and twice the disk, for nothing.
+		existing, err := trigramIndexes(db, table, column, true)
+		if err != nil {
+			log.Printf("search index: could not look for an existing index on %s.%s: %v", table, column, err)
+		}
+
+		var others []string
+		ours := false
+		for _, found := range existing {
+			if found == name {
+				ours = true
+			} else {
+				others = append(others, found)
+			}
+		}
+
+		switch {
+		case len(others) > 0 && ours:
+			// Both are there, from a version that built the duplicate. Only
+			// ever the one this function made is removed; the other is not
+			// ours to touch.
+			if _, err := db.Sql.Exec(fmt.Sprintf(`drop index concurrently if exists %q`, name)); err != nil {
+				log.Printf("search index: %s duplicates %s but could not be dropped: %v", name, others[0], err)
+			} else {
+				log.Printf("search index: dropped %s, a duplicate of %s", name, others[0])
+			}
+
+		case len(others) > 0:
+			// Already indexed. Nothing to build.
+
+		default:
+			// CONCURRENTLY so an existing server keeps taking calls while this
+			// builds. It cannot run inside a transaction, which is why this
+			// uses the pool directly rather than the migration helper.
+			statement := fmt.Sprintf(
+				`create index concurrently if not exists %q on %q using gin (%q gin_trgm_ops)`,
+				name, table, column,
+			)
+
+			if _, err := db.Sql.Exec(statement); err != nil {
+				log.Printf("search index: could not index %s.%s, searches will scan — %s",
+					table, column, searchIndexUnavailableReason(err))
+				return
+			}
 		}
 
 		log.Printf("search index: %s.%s is indexed for text search", table, column)
@@ -99,7 +150,7 @@ func (controller *Controller) ensureSearchIndex(table string, column string, key
 		// to build its membership set instead of visiting the table.
 		presence := indexName(fmt.Sprintf("%s_%s_present", table, column))
 
-		statement = fmt.Sprintf(
+		statement := fmt.Sprintf(
 			`create index concurrently if not exists %q on %q (%q) where %q is not null and %q <> ''`,
 			presence, table, keyColumn, column, column,
 		)
@@ -112,6 +163,44 @@ func (controller *Controller) ensureSearchIndex(table string, column string, key
 
 		log.Printf("search index: %s.%s presence is indexed for the with/without filter", table, column)
 	}()
+}
+
+// trigramIndexes lists the single-column trigram GIN indexes on a column, by
+// name: the usable ones when valid is true, the ones an interrupted build left
+// unusable when it is false.
+func trigramIndexes(db *Database, table string, column string, valid bool) ([]string, error) {
+	rows, err := db.Sql.Query(`
+		select c.relname
+		from pg_index i
+		join pg_class c on c.oid = i.indexrelid
+		join pg_class t on t.oid = i.indrelid
+		join pg_am am on am.oid = c.relam
+		join pg_opclass opc on opc.oid = i.indclass[0]
+		join pg_attribute a on a.attrelid = t.oid and a.attnum = i.indkey[0]
+		where t.relname = $1
+		  and pg_table_is_visible(t.oid)
+		  and a.attname = $2
+		  and i.indnatts = 1
+		  and i.indpred is null
+		  and am.amname = 'gin'
+		  and opc.opcname = 'gin_trgm_ops'
+		  and (i.indisvalid and i.indisready) = $3
+		order by c.relname`, table, column, valid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	names := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+
+	return names, rows.Err()
 }
 
 // indexName keeps a derived name inside Postgres's 63-byte identifier limit,
