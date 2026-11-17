@@ -344,8 +344,15 @@ type AvailablePlugin struct {
 // branchCommit resolves a branch to the commit it currently points at, or
 // returns "" if GitHub would not say — in which case the caller falls back to
 // the branch name and accepts whatever the CDN has.
+//
+// The branch is asked for, not the commit. The commit endpoint answers with
+// every file the commit touched and a patch for each, so its size follows the
+// commit's: a release that adds a bundled library can run past any sensible
+// read limit, the decode fails, and the lookup gives up on exactly the pushes
+// it exists for. A branch's answer is a few kilobytes whatever was pushed. It
+// also cannot be taken for a tag of the same name.
 func (store *PluginStore) branchCommit(repo *PluginRepo, owner string, name string, branch string) string {
-	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s",
+	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/%s/branches/%s",
 		url.PathEscape(owner), url.PathEscape(name), escapeBranch(branch))
 
 	response, err := store.githubRequest(repo, endpoint)
@@ -354,19 +361,21 @@ func (store *PluginStore) branchCommit(repo *PluginRepo, owner string, name stri
 	}
 	defer response.Body.Close()
 
-	var commit struct {
-		Sha string `json:"sha"`
+	var answer struct {
+		Commit struct {
+			Sha string `json:"sha"`
+		} `json:"commit"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&commit); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&answer); err != nil {
 		return ""
 	}
 
 	// Only ever a hex digest: it goes into a URL.
-	if !pluginCommitSha.MatchString(commit.Sha) {
+	if !pluginCommitSha.MatchString(answer.Commit.Sha) {
 		return ""
 	}
 
-	return commit.Sha
+	return answer.Commit.Sha
 }
 
 // pluginCommitSha is a git object name: 40 hex characters, or 64 for SHA-256

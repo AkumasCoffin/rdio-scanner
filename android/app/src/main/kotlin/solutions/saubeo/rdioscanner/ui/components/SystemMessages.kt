@@ -71,9 +71,11 @@ fun SystemMessageStrip(
     onReopen: (SystemMessageDto) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (messages.isEmpty()) return
-
+    // Remembered before the early return, so that a list which empties for a
+    // moment and comes back does not forget that the card was open.
     var showAll by rememberSaveable { mutableStateOf(false) }
+
+    if (messages.isEmpty()) return
 
     val open = messages.filter { it.token !in closed }
     val closedCount = messages.size - open.size
@@ -167,7 +169,13 @@ private fun MessagesCard(
                     SYSTEM_MESSAGE_KIND_SYSTEM to "SYSTEM MESSAGES",
                     SYSTEM_MESSAGE_KIND_MAINTENANCE to "MAINTENANCE",
                 ).forEach { (kind, heading) ->
-                    val ofKind = messages.filter { it.kind == kind }
+                    // Anything that is not maintenance is listed as a system
+                    // message, as the strip labels it: a kind this build has
+                    // never heard of must still be reachable here, or closing
+                    // it would put it out of reach for good.
+                    val ofKind = messages.filter {
+                        (it.kind == SYSTEM_MESSAGE_KIND_MAINTENANCE) == (kind == SYSTEM_MESSAGE_KIND_MAINTENANCE)
+                    }
                     if (ofKind.isEmpty()) return@forEach
 
                     Text(

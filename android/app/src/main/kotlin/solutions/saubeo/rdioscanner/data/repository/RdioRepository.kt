@@ -10,7 +10,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -110,6 +112,10 @@ class RdioRepository(
      * never sends the frame.
      */
     private val _systemMessages = MutableStateFlow<List<SystemMessageDto>>(emptyList())
+
+    /** Whether a SYM frame has arrived since the list was last asked for. */
+    @Volatile
+    private var systemMessagesAnswered = false
     val systemMessages: StateFlow<List<SystemMessageDto>> = _systemMessages.asStateFlow()
 
     /** Websocket commands contributed by plugins, passed straight through. */
@@ -155,20 +161,45 @@ class RdioRepository(
             runCatching {
                 Wire.json.decodeFromJsonElement(SystemMessagesPayload.serializer(), payload)
             }.onSuccess { decoded ->
+                systemMessagesAnswered = true
                 _systemMessages.value = decoded.messages.filter { it.id > 0 && it.title.isNotBlank() }
             }
         }.launchIn(scope)
 
         // A push only reaches whoever was connected when it was sent, so ask
-        // for the list each time a connection is established. Away from
-        // Connected the list is dropped: it describes a server this app is no
-        // longer hearing from, and may be a different one on the next connect.
+        // for the list each time a connection is established.
+        //
+        // The list is kept while the connection is merely being re-made: a
+        // dropped socket passes through Error, Connecting and Authenticating
+        // on its way back, and emptying the list for that second would blank
+        // the strip and close the card under someone reading it. It is dropped
+        // when the session is really over, and when a reconnect is not
+        // answered — the plugin was switched off, or the server now has none —
+        // because nothing else would ever replace it.
         state.onEach { current ->
-            if (current is ConnectionState.Connected) {
-                client.sendPluginMessage(CMD_SYSTEM_MESSAGES)
-            } else {
-                _systemMessages.value = emptyList()
+            when (current) {
+                is ConnectionState.Connected -> {
+                    systemMessagesAnswered = false
+                    client.sendPluginMessage(CMD_SYSTEM_MESSAGES)
+                    scope.launch {
+                        delay(SYSTEM_MESSAGES_ANSWER_MS)
+                        if (!systemMessagesAnswered && state.value is ConnectionState.Connected) {
+                            _systemMessages.value = emptyList()
+                        }
+                    }
+                }
+                ConnectionState.Disconnected,
+                ConnectionState.AuthFailed,
+                ConnectionState.Expired,
+                ConnectionState.TooMany -> _systemMessages.value = emptyList()
+                else -> Unit
             }
+        }.launchIn(scope)
+
+        // A different server is a different set of messages, however the
+        // switch was made.
+        settings.serverUrl.distinctUntilChanged().onEach {
+            _systemMessages.value = emptyList()
         }.launchIn(scope)
 
         // Collect every TRX (request reply or push) into the transcript
@@ -418,6 +449,9 @@ class RdioRepository(
 
         /** The System Messages plugin's websocket command. */
         const val CMD_SYSTEM_MESSAGES = "SYM"
+
+        /** How long a server is given to answer before it is taken to have no messages. */
+        const val SYSTEM_MESSAGES_ANSWER_MS = 5_000L
     }
 }
 
