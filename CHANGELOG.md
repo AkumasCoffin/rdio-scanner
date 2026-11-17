@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### New in 6.14.4-beta.2
+
+- **The Android app shows system messages.** The new System Messages plugin
+  posts system and maintenance messages to listeners; the app now shows them
+  above the display as the webapp does — one row per message in its colour,
+  closable, with a card listing them all. Nothing changes on a server without
+  the plugin. Built and linted, not yet run on a device.
+- **Fixed: Check for updates offered the previous plugin version** for up to
+  five minutes after a plugin was published. Plugin manifests were read by
+  branch name through a cache that holds each path for five minutes; they are
+  now read at the commit the branch points to.
+
+### In 6.14.4-beta.1
+
 Everything below is in 6.14.4-beta.1. It came out of an end-to-end sweep of the
 server, the webapp, the Android app and the plugins: each item was reproduced
 first — by a failing test, or against a running server — and the server suite
