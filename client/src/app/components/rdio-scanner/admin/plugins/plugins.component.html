@@ -62,8 +62,13 @@
 
         <!-- Each installed plugin's card names its plugin, and its Settings
              button is marked, so a plugin whose settings are a panel of its
-             own can find both without matching on the text shown. -->
-        <div class="plugin-card" data-rdio="plugin-card" [attr.data-rdio-plugin]="plugin.pluginId"
+             own can find both without matching on the text shown.
+
+             The id is not under data-rdio-plugin. That attribute is how the
+             plugin host marks the containers it creates for a plugin, and
+             when a plugin is torn down it removes every div carrying it —
+             which would take the plugin's own card out of the list. -->
+        <div class="plugin-card" data-rdio="plugin-card" [attr.data-rdio-plugin-id]="plugin.pluginId"
             *ngFor="let plugin of plugins; trackBy: trackByPluginId">
             <div class="plugin-head">
                 <div class="plugin-identity">
