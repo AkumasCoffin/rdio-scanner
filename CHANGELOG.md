@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### New in 6.14.4-beta.3
+
+Follows a review of the system messages work. Pairs with system-messages 1.1.1.
+
+- **Android: system messages have their own colours per kind**, matching the
+  plugin from 1.1.0 — green, yellow or purple for system messages; blue, amber
+  or red for maintenance. Yellow was missing from the app and showed as blue.
+- **Fixed, Android: a dropped connection blanked the messages** and closed the
+  card under anyone reading it, and the card stayed closed. The list is kept
+  through a reconnect, and dropped when the session ends, the server changes,
+  or a reconnect goes unanswered.
+- **Fixed, Android: a message of a kind the app did not know could not be
+  reopened** once closed.
+- **Fixed: the plugin update check could still report the previous version**
+  after a large push. It found the branch's commit through an endpoint whose
+  answer grows with the commit, and gave up silently past a size limit. It now
+  asks for the branch.
+- **Plugin cards in the admin are marked** with their plugin id, and their
+  Settings button with a stable anchor, so a plugin with a settings panel of
+  its own can open it from there.
+
 ### New in 6.14.4-beta.2
 
 - **The Android app shows system messages.** The new System Messages plugin

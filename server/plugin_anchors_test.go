@@ -96,6 +96,8 @@ var pluginAnchors = []string{
 	"admin-stats",
 	"admin-config",
 	"admin-plugins",
+	"plugin-card",
+	"plugin-settings",
 	"admin-logs",
 	"admin-tools",
 	"admin-logout",
