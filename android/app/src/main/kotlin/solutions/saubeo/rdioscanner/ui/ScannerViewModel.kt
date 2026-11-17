@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.launchIn
@@ -22,6 +23,7 @@ import solutions.saubeo.rdioscanner.data.prefs.PresetDto
 import solutions.saubeo.rdioscanner.data.protocol.ConfigDto
 import solutions.saubeo.rdioscanner.data.protocol.SearchOptions
 import solutions.saubeo.rdioscanner.data.protocol.SearchResults
+import solutions.saubeo.rdioscanner.data.protocol.SystemMessageDto
 import solutions.saubeo.rdioscanner.data.repository.DownloadEvent
 import solutions.saubeo.rdioscanner.data.repository.HoldState
 
@@ -65,6 +67,33 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
      * piece of state hydrates the LCD, history rows, and search rows.
      */
     val transcripts: StateFlow<Map<Long, String>> = repo.transcripts
+
+    /** What the server's System Messages plugin is showing, in display order. */
+    val systemMessages: StateFlow<List<SystemMessageDto>> = repo.systemMessages
+
+    /**
+     * The messages this listener has closed on the server now connected to,
+     * as [SystemMessageDto.token]s. Stored per server, because message ids are
+     * only unique within one.
+     */
+    val closedSystemMessages: StateFlow<Set<String>> =
+        combine(rdioApp.settings.closedSystemMessages, rdioApp.settings.serverUrl) { closed, url ->
+            val prefix = "$url|"
+            closed.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }.toSet()
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    fun closeSystemMessage(message: SystemMessageDto) = setSystemMessageClosed(message, true)
+
+    fun reopenSystemMessage(message: SystemMessageDto) = setSystemMessageClosed(message, false)
+
+    private fun setSystemMessageClosed(message: SystemMessageDto, closed: Boolean) {
+        viewModelScope.launch {
+            // The saved address of the server in use — the same value the set
+            // above is filtered by — not the text in the Connect form.
+            val url = rdioApp.settings.serverUrl.first()
+            rdioApp.settings.setSystemMessageClosed("$url|${message.token}", closed)
+        }
+    }
 
     /** Ask the server for a transcript by call id (no-op if id <= 0). */
     fun requestTranscript(id: Long) = repo.requestTranscript(id)

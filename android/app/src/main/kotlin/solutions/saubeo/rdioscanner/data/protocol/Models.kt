@@ -253,6 +253,43 @@ data class SearchResults(
     val results: List<SearchResultCall> = emptyList(),
 )
 
+/**
+ * One message from the server's System Messages plugin, as it arrives in a
+ * `SYM` frame.
+ *
+ * Every field has a default, so a field a later plugin version adds, drops or
+ * sends as null cannot stop the list from decoding. The two times are doubles
+ * because they are milliseconds written by JavaScript, which may spell a whole
+ * number with an exponent.
+ */
+@Serializable
+data class SystemMessageDto(
+    val id: Long = 0,
+    val revision: Int = 1,
+    val kind: String = SYSTEM_MESSAGE_KIND_SYSTEM,
+    val color: String = "",
+    val title: String = "",
+    val body: String = "",
+    val linkUrl: String = "",
+    val linkLabel: String = "",
+    val startsAt: Double? = null,
+    val endsAt: Double? = null,
+) {
+    /**
+     * What "the listener closed this" is remembered against. The revision goes
+     * up when the message is edited, so an edited message shows again.
+     */
+    val token: String get() = "$id:$revision"
+}
+
+@Serializable
+data class SystemMessagesPayload(
+    val messages: List<SystemMessageDto> = emptyList(),
+)
+
+const val SYSTEM_MESSAGE_KIND_SYSTEM = "system"
+const val SYSTEM_MESSAGE_KIND_MAINTENANCE = "maintenance"
+
 /** `{sysId: {tgId: bool}}` selection payload for LFM. */
 typealias LivefeedMap = Map<Int, Map<Int, Boolean>>
 

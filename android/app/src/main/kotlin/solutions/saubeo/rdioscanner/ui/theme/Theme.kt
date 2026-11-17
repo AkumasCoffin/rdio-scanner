@@ -43,6 +43,22 @@ object RdioPalette {
     val Violet = Color(0xFF7C3AED)
 }
 
+/**
+ * The colour a system message is shown in. The seven names are the ones the
+ * System Messages plugin offers, in the same shades the webapp uses; a name
+ * this build does not know falls back to the default for the kind.
+ */
+fun systemMessageColor(name: String, kind: String): Color = when (name) {
+    "blue" -> Color(0xFF3884FF)
+    "green" -> Color(0xFF22AA62)
+    "amber" -> Color(0xFFF0B020)
+    "orange" -> Color(0xFFF57C20)
+    "red" -> Color(0xFFE84141)
+    "purple" -> Color(0xFF9D6AF5)
+    "grey" -> Color(0xFF8892A0)
+    else -> if (kind == "maintenance") Color(0xFFF0B020) else Color(0xFF3884FF)
+}
+
 object RdioShape {
     val MD = 12.dp
     val LG = 18.dp

@@ -62,6 +62,7 @@ import solutions.saubeo.rdioscanner.ui.components.RdioButton
 import solutions.saubeo.rdioscanner.ui.components.RdioButtonState
 import solutions.saubeo.rdioscanner.ui.components.RdioClickTone
 import solutions.saubeo.rdioscanner.ui.components.StatusBar
+import solutions.saubeo.rdioscanner.ui.components.SystemMessageStrip
 import solutions.saubeo.rdioscanner.ui.theme.RdioPalette
 import solutions.saubeo.rdioscanner.ui.theme.ledColor
 import java.text.SimpleDateFormat
@@ -87,6 +88,8 @@ fun LivefeedScreen(
     val livefeedEnabled by vm.livefeedEnabled.collectAsStateWithLifecycle()
     val avoided by vm.avoided.collectAsStateWithLifecycle()
     val transcripts by vm.transcripts.collectAsStateWithLifecycle()
+    val systemMessages by vm.systemMessages.collectAsStateWithLifecycle()
+    val closedSystemMessages by vm.closedSystemMessages.collectAsStateWithLifecycle()
     val delayMs by vm.delayMs.collectAsStateWithLifecycle()
     val jumpFlashMs by vm.jumpFlashMs.collectAsStateWithLifecycle()
     val autoJump by vm.autoJump.collectAsStateWithLifecycle()
@@ -136,6 +139,15 @@ fun LivefeedScreen(
             wigWag = config?.wigWagLed == true,
             onSwitchConnection = { vm.disconnect() },
             connectionLabel = activeProfileName ?: "Connections",
+        )
+
+        // System and maintenance messages from the server, above the display
+        // as in the webapp. Nothing is drawn when there are none.
+        SystemMessageStrip(
+            messages = systemMessages,
+            closed = closedSystemMessages,
+            onClose = vm::closeSystemMessage,
+            onReopen = vm::reopenSystemMessage,
         )
 
         // Live-transcript lookup: prefer the cache (latest TRX wins),

@@ -31,6 +31,9 @@ import solutions.saubeo.rdioscanner.data.protocol.ConfigDto
 import solutions.saubeo.rdioscanner.data.protocol.SearchOptions
 import solutions.saubeo.rdioscanner.data.protocol.SearchResults
 import solutions.saubeo.rdioscanner.data.protocol.ServerVersion
+import solutions.saubeo.rdioscanner.data.protocol.SystemMessageDto
+import solutions.saubeo.rdioscanner.data.protocol.SystemMessagesPayload
+import solutions.saubeo.rdioscanner.data.protocol.Wire
 import java.util.UUID
 
 /**
@@ -101,6 +104,14 @@ class RdioRepository(
     val pluginCallFields: StateFlow<Map<Long, Map<String, JsonElement>>> =
         _pluginCallFields.asStateFlow()
 
+    /**
+     * What the server's System Messages plugin is showing right now, in the
+     * order it should be shown. Empty on a server without the plugin, which
+     * never sends the frame.
+     */
+    private val _systemMessages = MutableStateFlow<List<SystemMessageDto>>(emptyList())
+    val systemMessages: StateFlow<List<SystemMessageDto>> = _systemMessages.asStateFlow()
+
     /** Websocket commands contributed by plugins, passed straight through. */
     val pluginMessages: SharedFlow<Pair<String, JsonElement?>> = client.pluginMessages
 
@@ -133,6 +144,30 @@ class RdioRepository(
                     sys.id to sys.talkgroups.associate { tg -> tg.id to true }
                 }
                 settings.setSelection(everything, markInitialized = true)
+            }
+        }.launchIn(scope)
+
+        // The System Messages plugin pushes its list whenever it changes, and
+        // each frame is the whole list, so the newest one simply replaces what
+        // was held.
+        client.pluginMessages.onEach { (command, payload) ->
+            if (command != CMD_SYSTEM_MESSAGES || payload == null) return@onEach
+            runCatching {
+                Wire.json.decodeFromJsonElement(SystemMessagesPayload.serializer(), payload)
+            }.onSuccess { decoded ->
+                _systemMessages.value = decoded.messages.filter { it.id > 0 && it.title.isNotBlank() }
+            }
+        }.launchIn(scope)
+
+        // A push only reaches whoever was connected when it was sent, so ask
+        // for the list each time a connection is established. Away from
+        // Connected the list is dropped: it describes a server this app is no
+        // longer hearing from, and may be a different one on the next connect.
+        state.onEach { current ->
+            if (current is ConnectionState.Connected) {
+                client.sendPluginMessage(CMD_SYSTEM_MESSAGES)
+            } else {
+                _systemMessages.value = emptyList()
             }
         }.launchIn(scope)
 
@@ -380,6 +415,9 @@ class RdioRepository(
     companion object {
         const val FLAG_PLAY = "p"
         const val FLAG_DOWNLOAD = "d"
+
+        /** The System Messages plugin's websocket command. */
+        const val CMD_SYSTEM_MESSAGES = "SYM"
     }
 }
 

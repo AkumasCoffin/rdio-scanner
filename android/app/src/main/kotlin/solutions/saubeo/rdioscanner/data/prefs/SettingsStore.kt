@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -68,6 +69,7 @@ class SettingsStore(private val context: Context) {
     private val keyBatteryOptAsked = booleanPreferencesKey("battery_opt_asked")
     private val keyAutoJump = booleanPreferencesKey("auto_jump")
     private val keyAutoJumpThreshold = intPreferencesKey("auto_jump_threshold")
+    private val keyClosedSystemMessages = stringSetPreferencesKey("closed_system_messages")
 
     val serverUrl: Flow<String> = context.dataStore.data.map { it[keyServerUrl].orEmpty() }
     val accessCode: Flow<String> = context.dataStore.data.map { it[keyAccessCode].orEmpty() }
@@ -103,6 +105,31 @@ class SettingsStore(private val context: Context) {
     /** Auto-jump: drop the oldest queued calls once the delay crosses the
      *  threshold so the listener catches back up toward live. */
     val autoJump: Flow<Boolean> = context.dataStore.data.map { it[keyAutoJump] == true }
+
+    /**
+     * System messages the listener has closed, as "server|id:revision".
+     *
+     * The server is part of the entry because message ids are only unique
+     * within one server: without it, closing message 3 on one profile would
+     * hide an unrelated message 3 on another.
+     */
+    val closedSystemMessages: Flow<Set<String>> =
+        context.dataStore.data.map { it[keyClosedSystemMessages] ?: emptySet() }
+
+    suspend fun setSystemMessageClosed(entry: String, closed: Boolean) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[keyClosedSystemMessages] ?: emptySet()
+            val next = if (closed) current + entry else current - entry
+            // Bounded, or it would only ever grow. Which ones go is arbitrary,
+            // and the cost of losing one is a message showing a second time.
+            prefs[keyClosedSystemMessages] =
+                if (next.size > MAX_CLOSED_SYSTEM_MESSAGES) {
+                    next.toList().takeLast(MAX_CLOSED_SYSTEM_MESSAGES).toSet()
+                } else {
+                    next
+                }
+        }
+    }
 
     /** Auto-jump buffer length in minutes (clamped 1..10, default 5). */
     val autoJumpThreshold: Flow<Int> = context.dataStore.data.map {
@@ -202,6 +229,7 @@ class SettingsStore(private val context: Context) {
         const val DEFAULT_AUTO_JUMP_MIN = 5
         const val MIN_AUTO_JUMP_MIN = 1
         const val MAX_AUTO_JUMP_MIN = 10
+        const val MAX_CLOSED_SYSTEM_MESSAGES = 200
 
         val json = Json {
             ignoreUnknownKeys = true
