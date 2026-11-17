@@ -60,7 +60,11 @@
             </button>
         </div>
 
-        <div class="plugin-card" *ngFor="let plugin of plugins; trackBy: trackByPluginId">
+        <!-- Each installed plugin's card names its plugin, and its Settings
+             button is marked, so a plugin whose settings are a panel of its
+             own can find both without matching on the text shown. -->
+        <div class="plugin-card" data-rdio="plugin-card" [attr.data-rdio-plugin]="plugin.pluginId"
+            *ngFor="let plugin of plugins; trackBy: trackByPluginId">
             <div class="plugin-head">
                 <div class="plugin-identity">
                     <span class="mat-body plugin-name">{{ plugin.name || plugin.pluginId }}</span>
@@ -146,7 +150,8 @@
                     (click)="update(plugin)">
                     Update to {{ updateFor(plugin)?.latestVersion }}
                 </button>
-                <button type="button" mat-button color="primary" [disabled]="busy || !plugin.manifest?.config?.length"
+                <button type="button" mat-button color="primary" data-rdio="plugin-settings"
+                    [disabled]="busy || !plugin.manifest?.config?.length"
                     (click)="toggleConfig(plugin)">
                     {{ expandedConfig === plugin.pluginId ? 'Close settings' : 'Settings' }}
                 </button>
