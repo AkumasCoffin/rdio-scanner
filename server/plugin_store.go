@@ -26,7 +26,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -341,6 +341,38 @@ type AvailablePlugin struct {
 	UpdateAvailable bool `json:"updateAvailable"`
 }
 
+// branchCommit resolves a branch to the commit it currently points at, or
+// returns "" if GitHub would not say — in which case the caller falls back to
+// the branch name and accepts whatever the CDN has.
+func (store *PluginStore) branchCommit(repo *PluginRepo, owner string, name string, branch string) string {
+	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s",
+		url.PathEscape(owner), url.PathEscape(name), escapeBranch(branch))
+
+	response, err := store.githubRequest(repo, endpoint)
+	if err != nil {
+		return ""
+	}
+	defer response.Body.Close()
+
+	var commit struct {
+		Sha string `json:"sha"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&commit); err != nil {
+		return ""
+	}
+
+	// Only ever a hex digest: it goes into a URL.
+	if !pluginCommitSha.MatchString(commit.Sha) {
+		return ""
+	}
+
+	return commit.Sha
+}
+
+// pluginCommitSha is a git object name: 40 hex characters, or 64 for SHA-256
+// repositories.
+var pluginCommitSha = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
 // Available lists the plugins a repository offers on a given branch.
 //
 // fresh defeats caching all the way down: this store's own listing cache, and
@@ -383,6 +415,23 @@ func (store *PluginStore) Available(rawUrl string, branch string, fresh bool) ([
 
 		manifests := []*PluginManifest{}
 
+		// Which commit the branch is on, asked of the API, which answers
+		// from the repository and not from a cache.
+		//
+		// The manifests come from raw.githubusercontent.com, whose CDN holds
+		// each path for five minutes. Addressed by branch name, that is five
+		// minutes during which a manifest just pushed is still served as the
+		// old one — so Check for updates, pressed straight after publishing,
+		// reported the previous version and called it the latest. A query
+		// string was added to get round it and does not: the CDN ignores it,
+		// and a URL nobody has ever requested comes back as a cache hit.
+		// Addressed by commit, the content can never be stale, because that
+		// URL has only ever meant one thing.
+		ref := escapeBranch(branch)
+		if commit := store.branchCommit(repo, owner, name, branch); commit != "" {
+			ref = commit
+		}
+
 		for _, entry := range contents {
 			if entry.Type != "dir" {
 				continue
@@ -392,12 +441,8 @@ func (store *PluginStore) Available(rawUrl string, branch string, fresh bool) ([
 			// the same way, and one plugin's broken manifest shouldn't stop the
 			// rest of the listing.
 			raw := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/plugins/%s/%s",
-				url.PathEscape(owner), url.PathEscape(name), escapeBranch(branch),
+				url.PathEscape(owner), url.PathEscape(name), ref,
 				url.PathEscape(entry.Name), PluginManifestName)
-
-			if fresh {
-				raw += "?rdio-refresh=" + strconv.FormatInt(time.Now().UnixNano(), 36)
-			}
 
 			manifestResponse, err := store.githubRequest(repo, raw)
 			if err != nil {
