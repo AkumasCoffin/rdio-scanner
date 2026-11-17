@@ -44,19 +44,24 @@ object RdioPalette {
 }
 
 /**
- * The colour a system message is shown in. The seven names are the ones the
- * System Messages plugin offers, in the same shades the webapp uses; a name
- * this build does not know falls back to the default for the kind.
+ * The colour a system message is shown in, in the same shades the webapp uses.
+ *
+ * The System Messages plugin gives each kind three colours of its own — green,
+ * yellow and purple for system messages; blue, amber and red for maintenance.
+ * Orange and grey are kept because version 1.0 of the plugin offered them and
+ * a message it stored may still carry one. A name this build does not know
+ * falls back to the first colour of the kind.
  */
 fun systemMessageColor(name: String, kind: String): Color = when (name) {
     "blue" -> Color(0xFF3884FF)
     "green" -> Color(0xFF22AA62)
-    "amber" -> Color(0xFFF0B020)
+    "amber" -> Color(0xFFF09614)
+    "yellow" -> Color(0xFFF0D028)
     "orange" -> Color(0xFFF57C20)
     "red" -> Color(0xFFE84141)
     "purple" -> Color(0xFF9D6AF5)
     "grey" -> Color(0xFF8892A0)
-    else -> if (kind == "maintenance") Color(0xFFF0B020) else Color(0xFF3884FF)
+    else -> if (kind == "maintenance") Color(0xFF3884FF) else Color(0xFF22AA62)
 }
 
 object RdioShape {
