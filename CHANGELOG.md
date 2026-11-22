@@ -1,6 +1,12 @@
 # Change log
 
-## Unreleased
+## Released
+
+## Version 6.14.4
+
+Three pre-releases led here; what each added is kept under its own heading.
+The Android app's system messages are built and linted but were not run on a
+device before release.
 
 ### Since 6.14.4-beta.3
 
@@ -158,10 +164,6 @@ detector.
 
 - **Fixed: the app could get stuck reconnecting** on two frames the server
   sends. The server no longer sends them either, for installed builds.
-
----
-
-## Released
 
 ## Version 6.14.3
 
