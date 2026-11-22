@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Since 6.14.4-beta.3
+
+Pairs with system-messages 1.2.1.
+
+- **Android: two more colours for each kind of system message**, matching the
+  plugin from 1.2.0 — teal and pink for system messages, orange and grey for
+  maintenance. The beta.3 app shows a teal or pink message in green.
+- **Fixed, Android: the messages card could open by itself.** Left open when
+  the last message went away, it came back over the display when the next
+  message arrived.
+- **Fixed, Android: the messages could still blink on a quick reconnect**,
+  when the wait for an answer from the connection before ran out during the
+  new one.
+
 ### New in 6.14.4-beta.3
 
 Follows a review of the system messages work. Pairs with system-messages 1.1.1.

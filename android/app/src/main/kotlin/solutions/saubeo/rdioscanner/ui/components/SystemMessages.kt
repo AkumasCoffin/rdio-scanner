@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,11 +72,18 @@ fun SystemMessageStrip(
     onReopen: (SystemMessageDto) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Remembered before the early return, so that a list which empties for a
-    // moment and comes back does not forget that the card was open.
     var showAll by rememberSaveable { mutableStateOf(false) }
 
-    if (messages.isEmpty()) return
+    // With nothing left to show the card is gone, and it stays gone: left set,
+    // it would open by itself over the display whenever a message next
+    // arrived, which may be hours later. A reconnect does not empty the list,
+    // so this does not close the card under someone reading it.
+    val empty = messages.isEmpty()
+    LaunchedEffect(empty) {
+        if (empty) showAll = false
+    }
+
+    if (empty) return
 
     val open = messages.filter { it.token !in closed }
     val closedCount = messages.size - open.size

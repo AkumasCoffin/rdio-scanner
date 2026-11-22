@@ -2,6 +2,7 @@ package solutions.saubeo.rdioscanner.data.repository
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -116,6 +117,7 @@ class RdioRepository(
     /** Whether a SYM frame has arrived since the list was last asked for. */
     @Volatile
     private var systemMessagesAnswered = false
+    private var systemMessagesWait: Job? = null
     val systemMessages: StateFlow<List<SystemMessageDto>> = _systemMessages.asStateFlow()
 
     /** Websocket commands contributed by plugins, passed straight through. */
@@ -179,9 +181,13 @@ class RdioRepository(
         state.onEach { current ->
             when (current) {
                 is ConnectionState.Connected -> {
+                    // One wait at a time: the wait from a connection that
+                    // has since dropped would otherwise run out during this
+                    // one and empty a list that is about to be answered.
+                    systemMessagesWait?.cancel()
                     systemMessagesAnswered = false
                     client.sendPluginMessage(CMD_SYSTEM_MESSAGES)
-                    scope.launch {
+                    systemMessagesWait = scope.launch {
                         delay(SYSTEM_MESSAGES_ANSWER_MS)
                         if (!systemMessagesAnswered && state.value is ConnectionState.Connected) {
                             _systemMessages.value = emptyList()
