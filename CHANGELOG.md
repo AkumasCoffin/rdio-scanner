@@ -5,8 +5,8 @@
 ## Version 6.14.4
 
 Three pre-releases led here; what each added is kept under its own heading.
-The Android app's system messages are built and linted but were not run on a
-device before release.
+The Android app's system messages were not run on a device before release;
+they were confirmed showing on a phone afterwards.
 
 ### Since 6.14.4-beta.3
 
