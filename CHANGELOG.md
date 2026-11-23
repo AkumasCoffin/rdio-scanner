@@ -1,6 +1,10 @@
 # Change log
 
-## Unreleased
+## Released
+
+## Version 6.14.5
+
+Pairs with stream 0.1.4.
 
 - **Fixed: a plugin's stylesheet could fail to apply when two plugins had
   styles.** The webapp keeps plugin styles at the end of the page head, and
@@ -10,8 +14,6 @@
   column of plain text, most often over a slower or uncached connection. The
   same loop ran on the main page, where it only cost work. Stream 0.1.4 avoids
   it on servers up to 6.14.4.
-
-## Released
 
 ## Version 6.14.4
 
