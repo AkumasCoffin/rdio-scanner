@@ -1,5 +1,16 @@
 # Change log
 
+## Unreleased
+
+- **Fixed: a plugin's stylesheet could fail to apply when two plugins had
+  styles.** The webapp keeps plugin styles at the end of the page head, and
+  with two or more it moved each behind the other on every frame, for as long
+  as the page was open. A stylesheet loaded from a file is fetched again each
+  time it is moved, so it never stayed applied: the stream overlay drew as a
+  column of plain text, most often over a slower or uncached connection. The
+  same loop ran on the main page, where it only cost work. Stream 0.1.4 avoids
+  it on servers up to 6.14.4.
+
 ## Released
 
 ## Version 6.14.4

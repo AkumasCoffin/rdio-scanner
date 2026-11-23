@@ -789,10 +789,24 @@ export class RdioScannerPluginHostService {
     }
 
     private keepStylesLast(): void {
+        // The tracked elements that already sit together at the end of <head>.
+        // They are where they should be, whatever their order among
+        // themselves.
+        const settled = new Set<Node>();
+        for (let node = document.head.lastChild; node && this.keepLast.has(node as HTMLElement); node = node.previousSibling) {
+            settled.add(node);
+        }
+
+        // Only the ones with something that is not a plugin stylesheet after
+        // them are moved. Testing for any next sibling at all, as this used
+        // to, is true of every tracked element but the last as soon as there
+        // are two: each was moved behind the other, which retriggered the
+        // observer, on every frame for the life of the page. A <link> that is
+        // moved is fetched again, so a plugin's stylesheet never stayed
+        // applied — the stream overlay drew with no styles whenever a second
+        // plugin had styles of its own.
         for (const element of this.keepLast) {
-            // Only when something actually follows it. Re-appending
-            // unconditionally would retrigger the observer forever.
-            if (element.parentNode === document.head && element.nextSibling) {
+            if (element.parentNode === document.head && !settled.has(element)) {
                 document.head.appendChild(element);
             }
         }
