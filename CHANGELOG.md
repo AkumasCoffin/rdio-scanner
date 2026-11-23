@@ -1,5 +1,17 @@
 # Change log
 
+## Unreleased
+
+### In 6.14.6-beta.1
+
+A test build, to find out why some calls arrive under the wrong system.
+
+- **A call rejected for having no matching system and talkgroup says what it
+  was uploaded as.** The log line now ends with the system, talkgroup and
+  group names the upload carried. A forwarding rdio sends those from its own
+  configuration, so they show whether the sender really holds the call under
+  that system number or the number changed on the way.
+
 ## Released
 
 ## Version 6.14.5
