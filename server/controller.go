@@ -464,6 +464,22 @@ func (controller *Controller) IngestCall(call *Call) {
 		controller.Logs.LogEvent(LogLevelError, fmt.Sprintf("controller.ingestcall: %v", err.Error()))
 	}
 
+	// The names the upload carried, read before a plugin or the stored
+	// configuration can replace them. Only used to explain a rejection.
+	sent := ""
+	if v, ok := call.systemLabel.(string); ok && v != "" {
+		sent += fmt.Sprintf(" system %q", v)
+	}
+	if v, ok := call.talkgroupLabel.(string); ok && v != "" {
+		sent += fmt.Sprintf(" talkgroup %q", v)
+	}
+	if v, ok := call.talkgroupGroup.(string); ok && v != "" {
+		sent += fmt.Sprintf(" group %q", v)
+	}
+	if sent != "" {
+		sent = " (uploaded as" + sent + ")"
+	}
+
 	// First sight of the call, before anything has been resolved about it. A
 	// filter here can rewrite system or talkgroup, which is what makes routing
 	// and re-tagging plugins possible, or drop it outright before any work is
@@ -676,7 +692,13 @@ func (controller *Controller) IngestCall(call *Call) {
 	}
 
 	if system == nil || talkgroup == nil {
-		logCall(call, LogLevelWarn, "no matching system/talkgroup")
+		// What the uploader called them, when it said. A forwarding rdio sends
+		// the labels from its own configuration beside the numbers, so a
+		// number that does not match here can be told apart: labels that
+		// belong to the number mean the sender really holds the call under
+		// it, and labels that belong to another system mean the number was
+		// changed, or mixed with another call's, on the way.
+		logCall(call, LogLevelWarn, "no matching system/talkgroup"+sent)
 		return
 	}
 
